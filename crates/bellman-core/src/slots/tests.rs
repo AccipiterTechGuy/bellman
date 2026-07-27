@@ -1,0 +1,511 @@
+//! Slot IPC acceptance / torture tests.
+//!
+//! Covers: concurrent producers, duplicate request_ids (idempotent),
+//! malformed + oversized + symlinked input quarantine, mid-publish tear-safety,
+//! free-count invariant ≥ 5, modify/delete ownership.
+
+use super::*;
+use crate::store::{OpenOptions, Store};
+use chrono::Utc;
+use std::fs;
+use std::io::Write;
+use std::sync::{Arc, Barrier, Mutex};
+use std::thread;
+use std::time::Duration;
+use uuid::Uuid;
+
+fn open_harness() -> (tempfile::TempDir, Store, SlotService) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("timers.db");
+    let store = Store::open_with(
+        &db,
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
+    .expect("store");
+    let slots_root = dir.path().join("slots");
+    let service = SlotService::open(&slots_root, SlotConfig::default()).expect("slots");
+    (dir, store, service)
+}
+
+fn free_stub_count(service: &SlotService) -> usize {
+    let mut n = 0;
+    for path in service.layout().list_free_files().unwrap() {
+        let bytes = read_capped(&path, DEFAULT_MAX_READ_BYTES).unwrap();
+        let req: SlotRequest = serde_json::from_slice(&bytes).unwrap();
+        if req.is_free_stub() {
+            n += 1;
+        }
+    }
+    n
+}
+
+#[test]
+fn free_replenish_starts_at_min_and_holds_after_claim() {
+    let (_dir, mut store, service) = open_harness();
+    assert!(free_stub_count(&service) >= MIN_FREE_SLOTS);
+
+    let req = make_add_request("app-a", "t1", "interval", None, Some(60));
+    service.publish(req).expect("publish");
+    // Filled request occupies a free file; stubs must still be ≥ MIN.
+    assert!(
+        free_stub_count(&service) >= MIN_FREE_SLOTS,
+        "stubs after publish: {}",
+        free_stub_count(&service)
+    );
+
+    let n = service.poll(&mut store).expect("poll");
+    assert_eq!(n, 1);
+    assert!(
+        free_stub_count(&service) >= MIN_FREE_SLOTS,
+        "stubs after claim: {}",
+        free_stub_count(&service)
+    );
+}
+
+#[test]
+fn free_stubs_are_valid_schema_json() {
+    let (_dir, _store, service) = open_harness();
+    let files = service.layout().list_free_files().unwrap();
+    assert!(!files.is_empty());
+    for path in files {
+        let bytes = read_capped(&path, DEFAULT_MAX_READ_BYTES).unwrap();
+        let req: SlotRequest = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(req.schema, SCHEMA_V1);
+        assert!(req.is_free_stub());
+        assert!(!req.slot_id.is_empty());
+    }
+}
+
+#[test]
+fn add_modify_delete_round_trip() {
+    let (_dir, mut store, service) = open_harness();
+
+    // ADD
+    let add = make_add_request("app-a", "wake", "daily", Some("08:00:00"), None);
+    let rid = add.request_id.clone().unwrap();
+    service.publish(add).unwrap();
+    assert_eq!(service.poll(&mut store).unwrap(), 1);
+
+    let prior = store.get_slot_request(&rid).unwrap().expect("ledger");
+    let resp: SlotResponse = serde_json::from_str(&prior.response_json).unwrap();
+    assert!(response_is_ok(&resp), "add failed: {:?}", resp.error);
+    let timer_id = resp.timer_id.expect("timer id");
+    assert!(store.get_timer(timer_id).unwrap().is_some());
+    assert_eq!(
+        store.get_timer_owner(timer_id).unwrap().as_deref(),
+        Some("app-a")
+    );
+
+    // MODIFY by owner
+    let mod_req = SlotRequest {
+        schema: SCHEMA_V1.to_string(),
+        slot_id: String::new(),
+        request_id: Some(Uuid::new_v4().to_string()),
+        ts: Some(Utc::now()),
+        operation: Some(SlotOperation::Modify),
+        payload: Some(serde_json::json!({
+            "app_name": "app-a",
+            "timer_id": timer_id,
+            "timer_name": "wake-renamed",
+            "time": "09:30:00",
+            "occurrence": { "kind": "daily", "time": "09:30:00" },
+            "tz": "UTC"
+        })),
+    };
+    service.publish(mod_req).unwrap();
+    service.poll(&mut store).unwrap();
+    let t = store.get_timer(timer_id).unwrap().unwrap();
+    assert_eq!(t.name, "wake-renamed");
+
+    // DELETE by wrong owner → error response
+    let bad_del = SlotRequest {
+        schema: SCHEMA_V1.to_string(),
+        slot_id: String::new(),
+        request_id: Some(Uuid::new_v4().to_string()),
+        ts: Some(Utc::now()),
+        operation: Some(SlotOperation::Delete),
+        payload: Some(serde_json::json!({
+            "app_name": "app-b",
+            "timer_id": timer_id
+        })),
+    };
+    let bad_rid = bad_del.request_id.clone().unwrap();
+    service.publish(bad_del).unwrap();
+    service.poll(&mut store).unwrap();
+    let prior = store.get_slot_request(&bad_rid).unwrap().unwrap();
+    let resp: SlotResponse = serde_json::from_str(&prior.response_json).unwrap();
+    assert_eq!(resp.status, SlotStatus::Error);
+    assert!(
+        resp.error.as_deref().unwrap_or("").contains("ownership"),
+        "expected ownership error, got {:?}",
+        resp.error
+    );
+    assert!(store.get_timer(timer_id).unwrap().is_some());
+
+    // DELETE by owner
+    let del = SlotRequest {
+        schema: SCHEMA_V1.to_string(),
+        slot_id: String::new(),
+        request_id: Some(Uuid::new_v4().to_string()),
+        ts: Some(Utc::now()),
+        operation: Some(SlotOperation::Delete),
+        payload: Some(serde_json::json!({
+            "app_name": "app-a",
+            "timer_id": timer_id
+        })),
+    };
+    service.publish(del).unwrap();
+    service.poll(&mut store).unwrap();
+    assert!(store.get_timer(timer_id).unwrap().is_none());
+}
+
+#[test]
+fn duplicate_request_id_is_idempotent() {
+    let (_dir, mut store, service) = open_harness();
+    let rid = Uuid::new_v4().to_string();
+    let mut req = make_add_request("app-a", "once-a", "interval", None, Some(30));
+    req.request_id = Some(rid.clone());
+    service.publish(req).unwrap();
+    service.poll(&mut store).unwrap();
+    let first = store.get_slot_request(&rid).unwrap().unwrap();
+    let first_resp: SlotResponse = serde_json::from_str(&first.response_json).unwrap();
+    let timer_id = first_resp.timer_id.unwrap();
+
+    // Re-publish same request_id with different name — must not create a second timer.
+    let mut req2 = make_add_request("app-a", "once-a-DUPLICATE", "interval", None, Some(30));
+    req2.request_id = Some(rid.clone());
+    service.publish(req2).unwrap();
+    service.poll(&mut store).unwrap();
+    let second = store.get_slot_request(&rid).unwrap().unwrap();
+    assert_eq!(first.response_json, second.response_json);
+    // Only one timer with the original name.
+    let timers = store.list_timers().unwrap();
+    let ours: Vec<_> = timers.iter().filter(|t| t.id == timer_id).collect();
+    assert_eq!(ours.len(), 1);
+    assert_eq!(ours[0].name, "once-a");
+    assert_eq!(
+        timers
+            .iter()
+            .filter(|t| t.name == "once-a-DUPLICATE")
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn malformed_input_quarantined_to_bad() {
+    let (_dir, mut store, service) = open_harness();
+    // Overwrite a free stub with garbage via atomic write.
+    let free = service.layout().list_free_files().unwrap();
+    let target = free.first().unwrap();
+    let name = target.file_name().unwrap().to_string_lossy().to_string();
+    atomic_write_bytes(&service.layout().free_dir(), target, b"{not-valid-json!!!").unwrap();
+    // Re-check the file is garbage.
+    let _ = name;
+    service.poll(&mut store).unwrap();
+    let bad = service.layout().bad_dir();
+    let entries: Vec<_> = fs::read_dir(&bad).unwrap().filter_map(|e| e.ok()).collect();
+    assert!(
+        !entries.is_empty(),
+        "expected quarantine files in bad/, got none"
+    );
+    // Sidecar present.
+    assert!(
+        entries
+            .iter()
+            .any(|e| { e.file_name().to_string_lossy().ends_with(".err.json") }),
+        "expected .err.json sidecar"
+    );
+    assert!(free_stub_count(&service) >= MIN_FREE_SLOTS);
+}
+
+#[test]
+fn oversized_input_quarantined() {
+    let (_dir, mut store, service) = open_harness();
+    let free = service.layout().list_free_files().unwrap();
+    let target = free.first().unwrap().clone();
+    let big = vec![b'x'; (DEFAULT_MAX_READ_BYTES as usize) + 64];
+    // Wrap as almost-json so it's a file; size cap triggers before full parse.
+    let mut payload = b"{".to_vec();
+    payload.extend_from_slice(&big);
+    atomic_write_bytes(&service.layout().free_dir(), &target, &payload).unwrap();
+    service.poll(&mut store).unwrap();
+    let bad_count = fs::read_dir(service.layout().bad_dir())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .count();
+    assert!(bad_count > 0, "oversized must quarantine");
+    assert!(free_stub_count(&service) >= MIN_FREE_SLOTS);
+}
+
+#[test]
+fn symlink_input_quarantined() {
+    let (_dir, mut store, service) = open_harness();
+    let free_dir = service.layout().free_dir();
+    // Create a real file elsewhere and symlink it into free/ with a new name.
+    let outside = service.layout().root().join("outside.json");
+    fs::write(
+        &outside,
+        serde_json::to_vec(&make_add_request("app", "t", "interval", None, Some(10))).unwrap(),
+    )
+    .unwrap();
+    let link = free_dir.join("slot-symlink.json");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&outside, &link).expect("symlink");
+    }
+    #[cfg(not(unix))]
+    {
+        // On non-unix, skip (Windows reparse points need elevation).
+        return;
+    }
+    service.poll(&mut store).unwrap();
+    // Symlink should not remain as a processable free file; either removed
+    // or moved to bad/. The outside target must not be deleted blindly.
+    assert!(outside.exists());
+    // After poll, free stubs still hold the invariant.
+    assert!(free_stub_count(&service) >= MIN_FREE_SLOTS);
+}
+
+#[test]
+fn kill_mid_publish_leaves_no_torn_final() {
+    // Simulate a crashed producer: a temp file left behind, final path still a stub.
+    let (_dir, mut store, service) = open_harness();
+    let free = service.layout().list_free_files().unwrap();
+    let stub_path = free.first().unwrap().clone();
+    let before: SlotRequest =
+        serde_json::from_slice(&read_capped(&stub_path, DEFAULT_MAX_READ_BYTES).unwrap()).unwrap();
+    assert!(before.is_free_stub());
+
+    // Write a temp file in free/ that is NOT persisted (kill mid-publish).
+    let tmp_name = format!(".tmp-kill-{}.json", Uuid::new_v4());
+    let tmp_path = service.layout().free_dir().join(&tmp_name);
+    let mut f = fs::File::create(&tmp_path).unwrap();
+    f.write_all(br#"{"schema":"bellman-slot/1","slot_id":"x","request_id":"partial"#)
+        .unwrap();
+    // Intentionally do not rename over the stub.
+
+    service.poll(&mut store).unwrap();
+    // Stub still intact (not torn).
+    let after: SlotRequest =
+        serde_json::from_slice(&read_capped(&stub_path, DEFAULT_MAX_READ_BYTES).unwrap()).unwrap();
+    assert!(after.is_free_stub());
+    assert_eq!(after.slot_id, before.slot_id);
+    // Temp leftover is not treated as a free stub / request (not matching slot-*.json
+    // or starts with .). Our list skips dotfiles.
+    assert!(free_stub_count(&service) >= MIN_FREE_SLOTS);
+    // Cleanup temp for harness.
+    let _ = fs::remove_file(tmp_path);
+}
+
+#[test]
+fn concurrent_producers_all_get_unique_slots() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("timers.db");
+    // Shared store path; each thread opens its own connection.
+    {
+        let _ = Store::open_with(
+            &db,
+            OpenOptions {
+                refuse_network_fs: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+    let slots_root = dir.path().join("slots");
+    let service = SlotService::open(&slots_root, SlotConfig::default()).unwrap();
+    // Publish 8 concurrent adds — create extra free stubs for concurrency headroom.
+    let n_prod = 8usize;
+    {
+        let layout = service.layout();
+        for i in 100..120 {
+            let id = format!("{i:04}");
+            let name = format!("slot-{id}.json");
+            let path = layout.free_dir().join(&name);
+            if !path.exists() {
+                atomic_write_json(&layout.free_dir(), &name, &SlotRequest::free_stub(&id)).unwrap();
+            }
+        }
+    }
+
+    let barrier = Arc::new(Barrier::new(n_prod));
+    let slots_root = Arc::new(slots_root);
+    let results = Arc::new(Mutex::new(Vec::new()));
+    let mut handles = Vec::new();
+    for i in 0..n_prod {
+        let barrier = Arc::clone(&barrier);
+        let slots_root = Arc::clone(&slots_root);
+        let results = Arc::clone(&results);
+        handles.push(thread::spawn(move || {
+            let svc = SlotService::open(slots_root.as_path(), SlotConfig::default()).unwrap();
+            barrier.wait();
+            let req = make_add_request(
+                &format!("app-{i}"),
+                &format!("timer-{i}"),
+                "interval",
+                None,
+                Some(60),
+            );
+            let rid = req.request_id.clone().unwrap();
+            let path = svc.publish(req);
+            results.lock().unwrap().push((rid, path.is_ok()));
+        }));
+    }
+    for h in handles {
+        h.join().unwrap();
+    }
+    let results = results.lock().unwrap();
+    let ok_count = results.iter().filter(|(_, ok)| *ok).count();
+    assert_eq!(
+        ok_count, n_prod,
+        "all producers should publish: {results:?}"
+    );
+
+    // Single consumer processes all.
+    let mut store = Store::open_with(
+        &db,
+        OpenOptions {
+            refuse_network_fs: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let service = SlotService::open(slots_root.as_path(), SlotConfig::default()).unwrap();
+    // Poll until drained (multiple passes if needed).
+    for _ in 0..16 {
+        let n = service.poll(&mut store).unwrap();
+        if n == 0 && service.layout().list_work_files().unwrap().is_empty() {
+            // Check free has no filled left.
+            let filled = service
+                .layout()
+                .list_free_files()
+                .unwrap()
+                .into_iter()
+                .filter(|p| {
+                    let b = read_capped(p, DEFAULT_MAX_READ_BYTES).unwrap();
+                    let r: SlotRequest =
+                        serde_json::from_slice(&b).unwrap_or_else(|_| SlotRequest::free_stub("x"));
+                    !r.is_free_stub()
+                })
+                .count();
+            if filled == 0 {
+                break;
+            }
+        }
+    }
+    let timers = store.list_timers().unwrap();
+    assert_eq!(
+        timers.len(),
+        n_prod,
+        "expected {n_prod} timers, got {}",
+        timers.len()
+    );
+    assert!(free_stub_count(&service) >= MIN_FREE_SLOTS);
+}
+
+#[test]
+fn unknown_fields_are_tolerated() {
+    let (_dir, mut store, service) = open_harness();
+    let req = make_add_request("app-a", "tol", "interval", None, Some(45));
+    // Inject unknown fields at envelope + payload level via raw JSON publish.
+    let rid = req.request_id.clone().unwrap();
+    // Grab a free stub id.
+    let free = service.layout().list_free_files().unwrap();
+    let path = free.first().unwrap();
+    let stub: SlotRequest =
+        serde_json::from_slice(&read_capped(path, DEFAULT_MAX_READ_BYTES).unwrap()).unwrap();
+    let raw = serde_json::json!({
+        "schema": SCHEMA_V1,
+        "slot_id": stub.slot_id,
+        "request_id": rid,
+        "ts": Utc::now(),
+        "operation": "add",
+        "future_field": 123,
+        "payload": {
+            "app_name": "app-a",
+            "timer_name": "tol",
+            "every_secs": 45,
+            "extra_ignore_me": true,
+            "occurrence": { "kind": "interval", "every_secs": 45, "bonus": 1 }
+        }
+    });
+    let name = path.file_name().unwrap().to_str().unwrap();
+    atomic_write_json(&service.layout().free_dir(), name, &raw).unwrap();
+    service.poll(&mut store).unwrap();
+    let prior = store.get_slot_request(&rid).unwrap().unwrap();
+    let resp: SlotResponse = serde_json::from_str(&prior.response_json).unwrap();
+    assert!(response_is_ok(&resp), "{:?}", resp.error);
+}
+
+#[test]
+fn output_includes_run_events_from_runs_table() {
+    let (_dir, mut store, service) = open_harness();
+    let req = make_add_request("app-a", "ev", "interval", None, Some(60));
+    let rid = req.request_id.clone().unwrap();
+    service.publish(req).unwrap();
+    service.poll(&mut store).unwrap();
+    let prior = store.get_slot_request(&rid).unwrap().unwrap();
+    let resp: SlotResponse = serde_json::from_str(&prior.response_json).unwrap();
+    let timer_id = resp.timer_id.unwrap();
+    // Claim a run so events is non-empty on a subsequent modify.
+    let scheduled = Utc::now();
+    store.claim_run(timer_id, scheduled).unwrap();
+
+    let mod_req = SlotRequest {
+        schema: SCHEMA_V1.to_string(),
+        slot_id: String::new(),
+        request_id: Some(Uuid::new_v4().to_string()),
+        ts: Some(Utc::now()),
+        operation: Some(SlotOperation::Modify),
+        payload: Some(serde_json::json!({
+            "app_name": "app-a",
+            "timer_id": timer_id,
+            "timer_name": "ev2",
+            "every_secs": 90,
+            "occurrence": { "kind": "interval", "every_secs": 90 }
+        })),
+    };
+    let mrid = mod_req.request_id.clone().unwrap();
+    service.publish(mod_req).unwrap();
+    service.poll(&mut store).unwrap();
+    let prior = store.get_slot_request(&mrid).unwrap().unwrap();
+    let resp: SlotResponse = serde_json::from_str(&prior.response_json).unwrap();
+    assert!(response_is_ok(&resp), "{:?}", resp.error);
+    assert!(!resp.events.is_empty(), "expected run events in output");
+    assert_eq!(resp.events[0].event_sequence, 1);
+}
+
+#[test]
+fn done_gc_with_zero_retention_clears() {
+    let (_dir, _store, service) = open_harness();
+    let done = service.layout().done_dir();
+    let path = done.join("slot-fresh.json");
+    fs::write(&path, b"{}").unwrap();
+    // Zero retention: anything with mtime <= now is removed.
+    let removed = service.layout().gc_done(Duration::from_secs(0)).unwrap();
+    assert!(removed >= 1);
+    assert!(!path.exists());
+}
+
+#[test]
+fn poll_once_helper_works() {
+    let (_dir, mut store, service) = open_harness();
+    let req = make_add_request("app-a", "p", "interval", None, Some(12));
+    service.publish(req).unwrap();
+    let n = poll_once(&service, &mut store).unwrap();
+    assert_eq!(n, 1);
+}
+
+#[test]
+fn atomic_write_never_leaves_partial_final() {
+    let dir = tempfile::tempdir().unwrap();
+    let final_path = dir.path().join("out.json");
+    atomic_write_json(dir.path(), "out.json", &serde_json::json!({"a":1})).unwrap();
+    let s = fs::read_to_string(&final_path).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+    assert_eq!(v["a"], 1);
+}

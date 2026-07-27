@@ -4,7 +4,7 @@ use super::error::{StoreError, StoreResult};
 use rusqlite::Connection;
 
 /// Current on-disk schema version (also stored in `PRAGMA user_version` and `meta`).
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// Apply pending migrations. Safe to call on every open.
 pub fn migrate(conn: &Connection) -> StoreResult<()> {
@@ -21,9 +21,9 @@ pub fn migrate(conn: &Connection) -> StoreResult<()> {
     if current < 1 {
         migrate_v1(conn)?;
     }
-
-    // Future migrations land here:
-    // if current < 2 { migrate_v2(conn)?; }
+    if current < 2 {
+        migrate_v2(conn)?;
+    }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|e| StoreError::Sqlite(format!("set user_version: {e}")))?;
@@ -92,5 +92,33 @@ fn migrate_v1(conn: &Connection) -> StoreResult<()> {
         ",
     )
     .map_err(|e| StoreError::Sqlite(format!("migrate v1: {e}")))?;
+    Ok(())
+}
+
+/// Slot IPC tables: durable idempotency ledger + timer ownership by integrating app.
+fn migrate_v2(conn: &Connection) -> StoreResult<()> {
+    conn.execute_batch(
+        r"
+        CREATE TABLE IF NOT EXISTS slot_requests (
+            request_id      TEXT PRIMARY KEY NOT NULL,
+            slot_id         TEXT NOT NULL,
+            operation       TEXT NOT NULL,
+            app_name        TEXT,
+            timer_id        TEXT,
+            status          TEXT NOT NULL,
+            response_json   TEXT NOT NULL,
+            created_at      TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_slot_requests_created
+            ON slot_requests (created_at);
+
+        CREATE TABLE IF NOT EXISTS timer_owners (
+            timer_id        TEXT PRIMARY KEY NOT NULL,
+            app_name        TEXT NOT NULL
+        );
+        ",
+    )
+    .map_err(|e| StoreError::Sqlite(format!("migrate v2: {e}")))?;
     Ok(())
 }

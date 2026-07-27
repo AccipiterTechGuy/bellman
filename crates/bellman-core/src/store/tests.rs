@@ -92,11 +92,11 @@ fn all_kinds() -> Vec<(&'static str, Occurrence)> {
 }
 
 #[test]
-fn schema_version_is_one_after_open() {
+fn schema_version_is_current_after_open() {
     let (_dir, store) = open_tmp();
-    assert_eq!(store.schema_version().unwrap(), 1);
+    assert_eq!(store.schema_version().unwrap(), 2);
     let meta = store.meta().unwrap();
-    assert_eq!(meta.schema_version, 1);
+    assert_eq!(meta.schema_version, 2);
     assert!(meta.last_prune.is_none());
 }
 

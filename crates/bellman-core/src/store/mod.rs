@@ -17,8 +17,8 @@ mod schema;
 
 pub use error::{StoreError, StoreResult};
 pub use models::{
-    Action, ClaimStatus, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy, RunClaim, Timer,
-    TimerId, TimerPatch, TimerUpdate,
+    Action, ClaimStatus, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy, RunClaim,
+    SlotRequestRecord, Timer, TimerId, TimerPatch, TimerUpdate,
 };
 
 use crate::occurrence::Occurrence;
@@ -93,11 +93,11 @@ impl Store {
 
     /// Current schema version from `meta` / `user_version`.
     pub fn schema_version(&self) -> StoreResult<i32> {
-        let v: i32 = self
-            .conn
-            .query_row("SELECT schema_version FROM meta WHERE id = 1", [], |r| {
-                r.get(0)
-            })?;
+        let v: i32 =
+            self.conn
+                .query_row("SELECT schema_version FROM meta WHERE id = 1", [], |r| {
+                    r.get(0)
+                })?;
         Ok(v)
     }
 
@@ -220,8 +220,7 @@ impl Store {
     /// Recomputes `next_fire_utc` in the same transaction.
     pub fn update_timer(&mut self, update: TimerUpdate) -> StoreResult<Timer> {
         let tx = self.conn.transaction()?;
-        let current = get_timer_tx(&tx, update.id)?
-            .ok_or(StoreError::NotFound(update.id))?;
+        let current = get_timer_tx(&tx, update.id)?.ok_or(StoreError::NotFound(update.id))?;
 
         if current.revision != update.expected_revision {
             return Err(StoreError::StaleRevision {
@@ -379,8 +378,7 @@ impl Store {
         if n != 1 {
             return Err(StoreError::RunNotFound(run_id));
         }
-        self.get_run(run_id)?
-            .ok_or(StoreError::RunNotFound(run_id))
+        self.get_run(run_id)?.ok_or(StoreError::RunNotFound(run_id))
     }
 
     /// Fetch a run claim by id.
@@ -434,6 +432,91 @@ impl Store {
         self.conn
             .pragma_update(None, "wal_checkpoint", "TRUNCATE")
             .map_err(|e| StoreError::Sqlite(format!("wal_checkpoint TRUNCATE: {e}")))
+    }
+
+    // ── Slot IPC: idempotency + ownership ───────────────────────────────
+
+    /// Look up a prior slot request by its `request_id` (idempotency key).
+    pub fn get_slot_request(&self, request_id: &str) -> StoreResult<Option<SlotRequestRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT request_id, slot_id, operation, app_name, timer_id, status,
+                    response_json, created_at
+             FROM slot_requests WHERE request_id = ?1",
+        )?;
+        let row = stmt
+            .query_row(params![request_id], row_to_slot_request)
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Persist a completed slot request response (first write wins for duplicates).
+    ///
+    /// Returns `true` if this call inserted the row; `false` if `request_id`
+    /// was already present (caller should re-read the stored response).
+    pub fn put_slot_request(&mut self, rec: &SlotRequestRecord) -> StoreResult<bool> {
+        let n = self.conn.execute(
+            "INSERT OR IGNORE INTO slot_requests (
+                request_id, slot_id, operation, app_name, timer_id,
+                status, response_json, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                rec.request_id,
+                rec.slot_id,
+                rec.operation,
+                rec.app_name,
+                rec.timer_id.map(|id| id.to_string()),
+                rec.status,
+                rec.response_json,
+                fmt_dt(rec.created_at),
+            ],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Record which integrating app created a timer (slot ownership).
+    pub fn set_timer_owner(&mut self, timer_id: TimerId, app_name: &str) -> StoreResult<()> {
+        self.conn.execute(
+            "INSERT INTO timer_owners (timer_id, app_name) VALUES (?1, ?2)
+             ON CONFLICT(timer_id) DO UPDATE SET app_name = excluded.app_name",
+            params![timer_id.to_string(), app_name],
+        )?;
+        Ok(())
+    }
+
+    /// Owner app_name for a timer created via the slot layer, if any.
+    pub fn get_timer_owner(&self, timer_id: TimerId) -> StoreResult<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT app_name FROM timer_owners WHERE timer_id = ?1")?;
+        let row = stmt
+            .query_row(params![timer_id.to_string()], |r| r.get::<_, String>(0))
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Drop ownership row when a timer is deleted via slots (or cleanup).
+    pub fn clear_timer_owner(&mut self, timer_id: TimerId) -> StoreResult<()> {
+        self.conn.execute(
+            "DELETE FROM timer_owners WHERE timer_id = ?1",
+            params![timer_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// All run-claim rows for a timer (ordered by scheduled_for). Used by the
+    /// slot output feed until the JSONL event log lands.
+    pub fn runs_for_timer(&self, timer_id: TimerId) -> StoreResult<Vec<RunClaim>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT run_id, timer_id, scheduled_for, status, claimed_at, completed_at
+             FROM runs WHERE timer_id = ?1
+             ORDER BY scheduled_for ASC, run_id ASC",
+        )?;
+        let rows = stmt.query_map(params![timer_id.to_string()], row_to_claim)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
     }
 }
 
@@ -588,14 +671,20 @@ fn row_to_timer(r: &rusqlite::Row<'_>) -> rusqlite::Result<Timer> {
             rusqlite::Error::FromSqlConversionFailure(
                 5,
                 rusqlite::types::Type::Text,
-                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())),
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e.to_string(),
+                )),
             )
         })?,
         last_fired: parse_opt_dt(last_s).map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(
                 6,
                 rusqlite::types::Type::Text,
-                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())),
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e.to_string(),
+                )),
             )
         })?,
         misfire,
@@ -605,20 +694,65 @@ fn row_to_timer(r: &rusqlite::Row<'_>) -> rusqlite::Result<Timer> {
             rusqlite::Error::FromSqlConversionFailure(
                 10,
                 rusqlite::types::Type::Text,
-                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())),
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e.to_string(),
+                )),
             )
         })?,
         valid_until: parse_opt_dt(valid_until_s).map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(
                 11,
                 rusqlite::types::Type::Text,
-                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())),
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e.to_string(),
+                )),
             )
         })?,
         max_runs: max_runs_from_sql(max_runs),
         tags,
         action,
         revision,
+    })
+}
+
+fn row_to_slot_request(r: &rusqlite::Row<'_>) -> rusqlite::Result<SlotRequestRecord> {
+    let request_id: String = r.get(0)?;
+    let slot_id: String = r.get(1)?;
+    let operation: String = r.get(2)?;
+    let app_name: Option<String> = r.get(3)?;
+    let timer_id_s: Option<String> = r.get(4)?;
+    let status: String = r.get(5)?;
+    let response_json: String = r.get(6)?;
+    let created_s: String = r.get(7)?;
+
+    let timer_id = match timer_id_s {
+        Some(s) => Some(Uuid::parse_str(&s).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(e))
+        })?),
+        None => None,
+    };
+    let created_at = parse_dt(&created_s).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(
+            7,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                e.to_string(),
+            )),
+        )
+    })?;
+
+    Ok(SlotRequestRecord {
+        request_id,
+        slot_id,
+        operation,
+        app_name,
+        timer_id,
+        status,
+        response_json,
+        created_at,
     })
 }
 
@@ -640,7 +774,10 @@ fn row_to_claim(r: &rusqlite::Row<'_>) -> rusqlite::Result<RunClaim> {
         rusqlite::Error::FromSqlConversionFailure(
             2,
             rusqlite::types::Type::Text,
-            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())),
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                e.to_string(),
+            )),
         )
     })?;
     let status: ClaimStatus = status_s.parse().map_err(|e: String| {
@@ -654,14 +791,20 @@ fn row_to_claim(r: &rusqlite::Row<'_>) -> rusqlite::Result<RunClaim> {
         rusqlite::Error::FromSqlConversionFailure(
             4,
             rusqlite::types::Type::Text,
-            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())),
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                e.to_string(),
+            )),
         )
     })?;
     let completed_at = parse_opt_dt(completed_s).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(
             5,
             rusqlite::types::Type::Text,
-            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())),
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                e.to_string(),
+            )),
         )
     })?;
 
