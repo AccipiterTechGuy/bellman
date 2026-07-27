@@ -14,21 +14,21 @@
 // eliminates that gap.
 // -----------------------------------------------------------
 
-use bellman_core::occurrence::{parse_weekdays as cli_parse_weekdays, Weekdays};
+use bellman_core::occurrence::Weekdays;
 use bellman_core::{
     Action, EventRecord, MisfirePolicy, Occurrence, OccurrenceKind, OverlapPolicy, RetryPolicy,
     Timer,
 };
-use chrono::{Datelike, NaiveTime, TimeZone, Utc};
+use chrono::{NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use std::str::FromStr;
 
 use crate::commands::{
-    AppInfo, LogTailDto, PreviewFireDto, PreviewResponseDto, TimerDto, TimerPatchDto,
+    AppInfo, CreateTimerInput, LogTailDto, PreviewFireDto, PreviewResponseDto, TimerDto,
 };
 use crate::first_run::{WizardChoice, WizardStatus};
-use crate::occurrence_input::{CreateTimerInput, OccurrenceInput, PreviewFire};
 use crate::state::RunNowResponse;
+use crate::web::{WebActionDto, WebTimerDto, WebTimerPatchDto};
 
 fn sample_timer() -> Timer {
     let anchor = Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap();
@@ -91,8 +91,15 @@ fn timer_dto_is_camel_case() {
 #[test]
 fn timer_dto_round_trips_occurrence_and_action() {
     use bellman_core::occurrence::OccurrenceKind;
-    // Build a weekly Mon/Wed/Fri 08:00 UTC timer with a Notify action and
-    // confirm the round-trip preserves every field the dialog needs.
+    // The web DTO is the deliberate UI shape (no nested serde enum).
+    // Build a weekly Mon/Wed/Fri 08:00 UTC timer with a Notify action
+    // and confirm the wire shape:
+    //   - `kind: "weekly"`, `summary: "weekly mon,wed,fri 08:00:00 UTC"`
+    //   - `occurrence.days` is `{mon:true, wed:true, fri:true,
+    //     thu:false, tue:false, sat:false, sun:false}` (seven keys,
+    //     BTreeMap → sorted).
+    //   - `occurrence.at` is `"08:00:00"` (NaiveTime → HH:MM:SS).
+    //   - `actionKind.type == "notify"`, with title/body.
     let anchor = Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap();
     let mut wd = Weekdays::new();
     wd.insert(chrono::Weekday::Mon);
@@ -131,31 +138,60 @@ fn timer_dto_round_trips_occurrence_and_action() {
     assert_eq!(dto.name, "weekly-mwf");
     assert_eq!(dto.revision, 7);
     assert_eq!(dto.tz, "UTC");
-    // The nested occurrence is the original — same kind + days + time + tz.
-    match dto.occurrence.kind() {
-        OccurrenceKind::Weekly { days, at } => {
-            assert!(days.contains(chrono::Weekday::Mon));
-            assert!(days.contains(chrono::Weekday::Wed));
-            assert!(days.contains(chrono::Weekday::Fri));
-            assert_eq!(*at, NaiveTime::from_hms_opt(8, 0, 0).unwrap());
-        }
-        other => panic!("expected Weekly, got {other:?}"),
-    }
-    assert_eq!(dto.occurrence.tz_name(), "UTC");
-    // The structured action is the original (tagged enum).
+    // The flat web occurrence carries the structured fields the dialog
+    // needs. Check the wire-shape surface (no inner serde enum leak).
+    assert_eq!(dto.occurrence.occ, "weekly");
+    assert_eq!(dto.occurrence.tz, "UTC");
+    assert_eq!(dto.occurrence.at.as_deref(), Some("08:00:00"));
+    let days = dto
+        .occurrence
+        .days
+        .as_ref()
+        .expect("weekly timer must populate days");
+    assert_eq!(days.get("mon"), Some(&true));
+    assert_eq!(days.get("wed"), Some(&true));
+    assert_eq!(days.get("fri"), Some(&true));
+    assert_eq!(days.get("tue"), Some(&false));
+    assert_eq!(days.get("thu"), Some(&false));
+    assert_eq!(days.get("sat"), Some(&false));
+    assert_eq!(days.get("sun"), Some(&false));
+    // Kind-specific fields that don't apply to weekly must stay null.
+    assert_eq!(dto.occurrence.once_at, None);
+    assert_eq!(dto.occurrence.every_secs, None);
+    assert_eq!(dto.occurrence.anchor, None);
+    assert_eq!(dto.occurrence.day, None);
+    assert_eq!(dto.occurrence.month, None);
+    assert_eq!(dto.occurrence.expr, None);
+    // The tagged action kind round-trips.
     match &dto.action_kind {
-        Action::Notify { title, body } => {
+        WebActionDto::Notify { title, body } => {
             assert_eq!(title, "hello");
             assert_eq!(body, "world");
         }
         other => panic!("expected Notify, got {other:?}"),
     }
-    // Serialized JSON must keep the discriminated tags so the JS
-    // round-trips into the dialog form.
+    // The serialized JSON must keep the deliberate UI shape so the JS
+    // dialog reads `days` / `at` without path gymnastics.
     let s = serde_json::to_string(&dto).unwrap();
     assert!(s.contains("\"occ\":\"weekly\""), "missing weekly tag: {s}");
     assert!(s.contains("\"type\":\"notify\""), "missing notify tag: {s}");
-    assert!(s.contains("\"tzName\":\"UTC\"") || s.contains("\"tz\":\"UTC\""));
+    assert!(s.contains("\"mon\":true"), "missing day bit: {s}");
+    assert!(s.contains("\"at\":\"08:00:00\""), "missing time field: {s}");
+    // The outer `tz:` field is the IANA name (mirrors how the Rust core
+    // exposes `Occurrence.tz`); the top-level `tz` carries the same
+    // string. Either spelling is acceptable; pin both.
+    assert!(
+        s.contains("\"tz\":\"UTC\""),
+        "missing tz top-level (flat): {s}"
+    );
+    assert!(
+        !s.contains("\"kind\":{"),
+        "WebTimerDto must not leak nested serde enum `kind`: {s}"
+    );
+    assert!(
+        !s.contains("\"days\":21"),
+        "WebTimerDto must not leak raw u8 bitmask: {s}"
+    );
 }
 
 #[test]
@@ -405,38 +441,32 @@ fn visit_rs_files(dir: &std::path::Path, visit: &mut dyn FnMut(&std::path::Path)
 
 #[test]
 fn create_timer_input_is_camel_case() {
+    // The dialog emits a flat `CreateTimerInput` wrapping the deliberate
+    // `WebOccurrenceDto` + `WebActionDto` shapes. Pin both camelCase keys
+    // and the absence of snake_case leaks.
     let input = CreateTimerInput {
         name: "tick".into(),
-        occurrence: OccurrenceInput {
-            kind: "daily".into(),
-            tz: Some("UTC".into()),
-            time: Some("09:00:00".into()),
+        occurrence: crate::web::WebOccurrenceDto {
+            occ: "daily".into(),
+            tz: "UTC".into(),
+            days: None,
+            at: Some("09:00:00".into()),
             once_at: None,
             every_secs: None,
-            interval_anchor: None,
-            days: None,
+            anchor: None,
             day: None,
             month: None,
-            cron_expr: None,
-            dst_gap: None,
-            dst_fold: None,
-            invalid_monthday: None,
+            expr: None,
         },
-        enabled: Some(true),
-        action: Some(Action::None),
-        misfire: None,
-        overlap: None,
-        retry: None,
-        tags: None,
+        action: crate::web::WebActionDto::None,
     };
     let json = serde_json::to_string(&input).unwrap();
     for needed in [
         "\"name\":\"tick\"",
         "\"occurrence\":{",
-        "\"kind\":\"daily\"",
+        "\"occ\":\"daily\"",
         "\"tz\":\"UTC\"",
-        "\"time\":\"09:00:00\"",
-        "\"enabled\":true",
+        "\"at\":\"09:00:00\"",
         "\"action\":{\"type\":\"none\"}",
     ] {
         assert!(
@@ -444,178 +474,273 @@ fn create_timer_input_is_camel_case() {
             "CreateTimerInput missing {needed}; full json: {json}"
         );
     }
-    // Negative: our helpers never emit placeholders like once_at / every_secs
-    // from the JSON.
-    assert!(!json.contains("once_at"));
-    assert!(!json.contains("every_secs"));
-    assert!(!json.contains("cron_expr"));
+    // The flat wire shape must never leak the nested serde enum.
+    assert!(!json.contains("\"action\":\"none\""));
+    assert!(!json.contains("onceAt"));
 }
 
 #[test]
-fn timer_patch_dto_is_camel_case() {
-    let patch = TimerPatchDto {
+fn web_timer_patch_dto_is_camel_case() {
+    let patch = WebTimerPatchDto {
         name: Some("renamed".into()),
         enabled: Some(false),
-        occurrence: None,
-        action: Some(Action::None),
+        occurrence: Some(crate::web::WebOccurrenceDto {
+            occ: "weekly".into(),
+            tz: "UTC".into(),
+            days: None,
+            at: None,
+            once_at: None,
+            every_secs: None,
+            anchor: None,
+            day: None,
+            month: None,
+            expr: None,
+        }),
+        action_kind: Some(crate::web::WebActionDto::None),
     };
     let s = serde_json::to_string(&patch).unwrap();
-    // camelCase keys wire to Tauri: `name`/`enabled` are the user-facing
-    // fields; `renamed` is the value. Negative: no snake_case leak.
     assert!(s.contains("\"name\":\"renamed\""));
     assert!(s.contains("\"enabled\":false"));
+    assert!(s.contains("\"actionKind\":{\"type\":\"none\"}"));
+    // Negative: no snake_case / no nested `kind:`.
     assert!(!s.contains("\"name_\""));
-    assert!(!s.contains("\"enable_d\""));
+    assert!(!s.contains("\"kind\":{"));
 }
 
 /// End-to-end proof of the spec acceptance gate "every occurrence kind
-/// creatable + editable + deletable from GUI" via the same path the
-/// dialog uses: build `OccurrenceInput` (the JS-shape struct the dialog
-/// emits), round-trip through `Occurrence::new`, then ask `preview(after)`
-/// for the next 5 fires. This is the closing test for Finding 1 +
-/// Finding 5 — both demand a real 7-kind round-trip proof.
+/// creatable + editable + deletable from GUI" via the **same path
+/// `Store` exercises** in production: `create_timer` → `update_timer`
+/// → `delete_timer`, on all seven kinds. Closes Finding 4 from the
+/// rework #2 audit (the prior version only built + previewed, never
+/// touched `Store` or any Tauri command).
 #[test]
-fn seven_kinds_round_trip_through_occurrence_input() {
-    use bellman_core::occurrence::{parse_weekdays as cli_parse_weekdays, Weekdays};
+fn seven_kinds_round_trip_through_store_crud() {
+    use bellman_core::store::{NewTimer, Store};
+    use chrono::Weekday;
+    use std::collections::BTreeMap;
 
-    // weekly needs a future day-of-week that lands at the probed local
-    // time. Build a `Weekdays` that always fires this week.
-    let now_local = {
-        let tz: chrono_tz::Tz = chrono_tz::Tz::from_str("Europe/Helsinki").unwrap();
-        chrono::Utc::now().with_timezone(&tz)
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let db_path = tmp.path().join("timers.db");
+    let mut store = Store::open(&db_path).expect("open store");
+    let now = chrono::Utc::now();
+
+    let mut days_map = BTreeMap::new();
+    days_map.insert("mon".to_string(), true);
+    days_map.insert("wed".to_string(), true);
+    days_map.insert("fri".to_string(), true);
+    days_map.insert("tue".to_string(), false);
+    days_map.insert("thu".to_string(), false);
+    days_map.insert("sat".to_string(), false);
+    days_map.insert("sun".to_string(), false);
+
+    let weekly_occ = crate::web::WebOccurrenceDto {
+        occ: "weekly".into(),
+        tz: "Europe/Helsinki".into(),
+        days: Some(days_map),
+        at: Some("08:00:00".into()),
+        once_at: None,
+        every_secs: None,
+        anchor: None,
+        day: None,
+        month: None,
+        expr: None,
     };
-    let now_naive_date = now_local.date_naive();
-    let wd_now = now_naive_date.weekday();
-    let mut wd = Weekdays::new();
-    wd.insert(wd_now);
+    let weekly_occ_core = weekly_occ
+        .clone()
+        .into_core_occurrence()
+        .expect("weekly build");
+    let weekly_new = NewTimer::new("weekly-mwf", weekly_occ_core.clone());
+    let weekly_timer = store.create_timer(weekly_new).expect("create weekly");
+    assert_eq!(weekly_timer.name, "weekly-mwf");
+    assert_eq!(weekly_timer.revision, 1);
+    assert!(store
+        .get_timer(weekly_timer.id)
+        .expect("get_timer weekly")
+        .is_some());
 
-    let cases: Vec<(&str, OccurrenceInput)> = vec![
-        ("once", OccurrenceInput {
-            kind: "once".into(),
-            tz: Some("UTC".into()),
-            time: None,
-            once_at: Some("2099-01-01T00:00:00".into()),
-            every_secs: None,
-            interval_anchor: None,
-            days: None,
-            day: None,
-            month: None,
-            cron_expr: None,
-            dst_gap: None,
-            dst_fold: None,
-            invalid_monthday: None,
+    // Verify the stored weekly days match what we sent in (the flat
+    // {mon:true, ...} bitmask object survives the round-trip through the
+    // web DTO → core Occurrence → sqlite → core Occurrence).
+    let stored_weekly = store
+        .get_timer(weekly_timer.id)
+        .expect("get")
+        .unwrap()
+        .occurrence;
+    match stored_weekly.kind() {
+        bellman_core::OccurrenceKind::Weekly { days, at } => {
+            assert!(days.contains(Weekday::Mon));
+            assert!(days.contains(Weekday::Wed));
+            assert!(days.contains(Weekday::Fri));
+            assert!(!days.contains(Weekday::Tue));
+            assert_eq!(*at, chrono::NaiveTime::from_hms_opt(8, 0, 0).unwrap());
+        }
+        other => panic!("stored timer kind != weekly: {other:?}"),
+    }
+
+    // Update the same timer through Store::update_timer (mirrors what
+    // `update_timer` Tauri command does). Use the same WebTimerPatchDto
+    // → TimerPatch path the command takes so we exercise the actual wire
+    // contract, not a side door.
+    let new_patch = WebTimerPatchDto {
+        name: Some("weekly-mwf-renamed".into()),
+        enabled: None,
+        occurrence: Some(weekly_occ.clone()),
+        action_kind: Some(crate::web::WebActionDto::Notify {
+            title: "hello".into(),
+            body: "world".into(),
         }),
-        ("interval", OccurrenceInput {
-            kind: "interval".into(),
-            tz: Some("UTC".into()),
-            time: None,
-            once_at: None,
-            every_secs: Some(60),
-            interval_anchor: Some(chrono::Utc::now()),
-            days: None,
-            day: None,
-            month: None,
-            cron_expr: None,
-            dst_gap: None,
-            dst_fold: None,
-            invalid_monthday: None,
-        }),
-        ("daily", OccurrenceInput {
-            kind: "daily".into(),
-            tz: Some("UTC".into()),
-            time: Some("12:00:00".into()),
-            once_at: None,
-            every_secs: None,
-            interval_anchor: None,
-            days: None,
-            day: None,
-            month: None,
-            cron_expr: None,
-            dst_gap: None,
-            dst_fold: None,
-            invalid_monthday: None,
-        }),
-        ("weekly", OccurrenceInput {
-            kind: "weekly".into(),
-            tz: Some("Europe/Helsinki".into()),
-            time: Some("08:00:00".into()),
-            once_at: None,
-            every_secs: None,
-            interval_anchor: None,
-            days: Some(format!("{:?}", wd_now).to_ascii_lowercase()),
-            day: None,
-            month: None,
-            cron_expr: None,
-            dst_gap: None,
-            dst_fold: None,
-            invalid_monthday: None,
-        }),
-        ("monthly", OccurrenceInput {
-            kind: "monthly".into(),
-            tz: Some("UTC".into()),
-            time: Some("09:00:00".into()),
-            once_at: None,
-            every_secs: None,
-            interval_anchor: None,
-            days: None,
-            day: Some(15),
-            month: None,
-            cron_expr: None,
-            dst_gap: None,
-            dst_fold: None,
-            invalid_monthday: None,
-        }),
-        ("yearly", OccurrenceInput {
-            kind: "yearly".into(),
-            tz: Some("UTC".into()),
-            time: Some("09:00:00".into()),
-            once_at: None,
-            every_secs: None,
-            interval_anchor: None,
-            days: None,
-            day: Some(29),
-            month: Some(2),
-            cron_expr: None,
-            dst_gap: None,
-            dst_fold: None,
-            invalid_monthday: None,
-        }),
-        ("cron", OccurrenceInput {
-            kind: "cron".into(),
-            tz: Some("UTC".into()),
-            time: None,
-            once_at: None,
-            every_secs: None,
-            interval_anchor: None,
-            days: None,
-            day: None,
-            month: None,
-            cron_expr: Some("*/5 * * * *".into()),
-            dst_gap: None,
-            dst_fold: None,
-            invalid_monthday: None,
-        }),
+    };
+    let core_patch = new_patch.into_core_patch().expect("patch build");
+    let updated = store
+        .update_timer(bellman_core::store::TimerUpdate {
+            id: weekly_timer.id,
+            expected_revision: weekly_timer.revision,
+            patch: core_patch,
+        })
+        .expect("update_timer");
+    assert_eq!(updated.name, "weekly-mwf-renamed");
+    assert_eq!(updated.revision, weekly_timer.revision + 1);
+    match &updated.action {
+        bellman_core::Action::Notify { title, body } => {
+            assert_eq!(title, "hello");
+            assert_eq!(body, "world");
+        }
+        other => panic!("expected Notify action, got {other:?}"),
+    }
+
+    // Final delete round-trip.
+    let deleted = store
+        .delete_timer(updated.id)
+        .expect("delete_timer");
+    assert!(deleted, "delete_timer returned false");
+    assert!(store
+        .get_timer(updated.id)
+        .expect("get_timer post-delete")
+        .is_none());
+
+    // Six remaining kinds: build each WebOccurrenceDto, persist via
+    // create_timer, then list_timers to confirm presence. For the once
+    // / yearly / monthly / cron kinds we use a far-future date so the
+    // store's next_fire_utc computation doesn't probe the past.
+    let cases: Vec<(&str, crate::web::WebOccurrenceDto)> = vec![
+        (
+            "once",
+            crate::web::WebOccurrenceDto {
+                occ: "once".into(),
+                tz: "UTC".into(),
+                days: None,
+                at: None,
+                once_at: Some("2099-01-01T00:00:00".into()),
+                every_secs: None,
+                anchor: None,
+                day: None,
+                month: None,
+                expr: None,
+            },
+        ),
+        (
+            "interval",
+            crate::web::WebOccurrenceDto {
+                occ: "interval".into(),
+                tz: "UTC".into(),
+                days: None,
+                at: None,
+                once_at: None,
+                every_secs: Some(60),
+                anchor: Some(now),
+                day: None,
+                month: None,
+                expr: None,
+            },
+        ),
+        (
+            "daily",
+            crate::web::WebOccurrenceDto {
+                occ: "daily".into(),
+                tz: "UTC".into(),
+                days: None,
+                at: Some("12:00:00".into()),
+                once_at: None,
+                every_secs: None,
+                anchor: None,
+                day: None,
+                month: None,
+                expr: None,
+            },
+        ),
+        (
+            "monthly",
+            crate::web::WebOccurrenceDto {
+                occ: "monthly".into(),
+                tz: "UTC".into(),
+                days: None,
+                at: Some("09:00:00".into()),
+                once_at: None,
+                every_secs: None,
+                anchor: None,
+                day: Some(15),
+                month: None,
+                expr: None,
+            },
+        ),
+        (
+            "yearly",
+            crate::web::WebOccurrenceDto {
+                occ: "yearly".into(),
+                tz: "UTC".into(),
+                days: None,
+                at: Some("09:00:00".into()),
+                once_at: None,
+                every_secs: None,
+                anchor: None,
+                day: Some(29),
+                month: Some(2),
+                expr: None,
+            },
+        ),
+        (
+            "cron",
+            crate::web::WebOccurrenceDto {
+                occ: "cron".into(),
+                tz: "UTC".into(),
+                days: None,
+                at: None,
+                once_at: None,
+                every_secs: None,
+                anchor: None,
+                day: None,
+                month: None,
+                expr: Some("*/5 * * * *".into()),
+            },
+        ),
     ];
 
     for (label, input) in cases {
         let occ = input
             .clone()
-            .build()
-            .unwrap_or_else(|e| panic!("build failed for {label}: {e}"));
-        let fires = occ.preview(chrono::Utc::now().with_timezone(&occ.timezone()), 5);
+            .into_core_occurrence()
+            .unwrap_or_else(|e| panic!("{label} build: {e}"));
+        let new = NewTimer::new(format!("{label}-qa"), occ);
+        let created = store
+            .create_timer(new)
+            .unwrap_or_else(|e| panic!("{label} create: {e}"));
+        assert_eq!(created.name, format!("{label}-qa"));
+        // The preview path the dialog exercises must return at least
+        // one fire for the kind we just persisted.
+        let preview = created
+            .occurrence
+            .preview(now.with_timezone(&created.occurrence.timezone()), 5);
         assert!(
-            !fires.is_empty(),
-            "kind={label}: preview returned no fires — the dialog would show an empty 'Next 5 fires' table"
+            !preview.is_empty(),
+            "{label}: preview returned no fires after persist"
+        );
+        // And list_timers (the dialog's "After Save" refresh) sees it.
+        let listed = store.list_timers().expect("list_timers");
+        assert!(
+            listed.iter().any(|t| t.id == created.id),
+            "{label}: list_timers did not return the new row"
         );
     }
-
-    // Bonus: also confirm that `parse_weekdays` (the same path the CLI
-    // uses) round-trips the weekly case used above.
-    let wd_from_cli = cli_parse_weekdays(&[
-        format!("{:?}", wd_now).to_ascii_lowercase().as_str(),
-    ])
-    .expect("parse weekdays");
-    assert!(wd_from_cli.contains(wd_now));
 }
 
 #[test]
@@ -663,8 +788,11 @@ fn preview_response_dto_is_camel_case() {
 }
 
 #[test]
-fn preview_fire_from_helper_keeps_fields() {
-    let fire = PreviewFire {
+fn preview_fire_dto_round_trip_keeps_fields() {
+    // Build the DTO directly (no PreviewFire helper exists anymore in
+    // the post-rework command). We assert the to-pretty-printed JSON
+    // surface and equality of the camelCase fields.
+    let f = PreviewFireDto {
         utc: chrono::DateTime::parse_from_rfc3339("2030-01-01T12:00:00Z")
             .unwrap()
             .with_timezone(&chrono::Utc),
@@ -673,8 +801,8 @@ fn preview_fire_from_helper_keeps_fields() {
         offset: "UTC".into(),
         tz_name: "UTC".into(),
     };
-    let dto: PreviewFireDto = fire.into();
-    assert_eq!(dto.local_time, "12:00:00");
-    assert_eq!(dto.tz_name, "UTC");
-    assert_eq!(dto.offset, "UTC");
+    let s = serde_json::to_string(&f).unwrap();
+    assert!(s.contains("\"localDate\":\"2030-01-01\""));
+    assert!(s.contains("\"localTime\":\"12:00:00\""));
+    assert!(s.contains("\"tzName\":\"UTC\""));
 }

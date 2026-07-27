@@ -3,13 +3,18 @@
 //! Each command is small and passes through to the underlying core service
 //! or store. No scheduling logic lives here; the engine runs in its own
 //! thread and the webview only pushes/pulls state.
+//!
+//! The IPC wire shape is the deliberate `web`-module DTO set
+//! (`WebTimerDto`, `WebOccurrenceDto`, `WebActionDto`). Re-exported here
+//! under their `#[tauri::command]` arg/return types so the dialog and
+//! the calendar pages have a single flat shape (no nested serde enum).
 
 use std::str::FromStr;
 
 use bellman_core::events::EventRecord;
-use bellman_core::store::{Action, Timer, TimerPatch, TimerUpdate};
-use bellman_core::Occurrence;
+use bellman_core::store::{NewTimer, TimerPatch};
 use bellman_core::RunNowOptions;
+use chrono::offset::Offset as _Offset;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -17,108 +22,14 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::first_run::{WizardChoice, WizardStatus};
-use crate::occurrence_input::{self, CreateTimerInput, OccurrenceInput, PreviewFire};
+use crate::occurrence_input::{self, OccurrenceInput, PreviewFire};
 use crate::state::{AppState, RunNowResponse};
+use crate::web::{WebTimerDto, WebTimerPatchDto};
 
-/// `Timer` shape the webview consumes. Includes the structured
-/// `occurrence` and `action` so the dialog / Week / Month pages can
-/// round-trip an edit without parsing pretty-printed summaries.
-///
-/// Serialized as **camelCase** so the webview's idiomatic JS bindings
-/// (`timer.nextFireUtc`, `timer.lastFired`) match the Rust field names.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TimerDto {
-    pub id: Uuid,
-    pub name: String,
-    pub enabled: bool,
-    pub tz: String,
-    pub next_fire_utc: Option<DateTime<Utc>>,
-    pub last_fired: Option<DateTime<Utc>>,
-    /// Pretty kind label: "interval", "daily", "cron", ...
-    pub kind: String,
-    /// Human-readable occurrence summary (e.g. "every 5s", "daily 09:30").
-    pub summary: String,
-    /// Pretty action label: "none", "launch: /usr/bin/true", "notify: hello".
-    pub action: String,
-    /// Structured occurrence (tagged enum: kind + kind-specific fields +
-    /// tz + DST policies + validity). The dialog prefills its form
-    /// straight from these — pretty summaries are display-only.
-    pub occurrence: bellman_core::Occurrence,
-    /// Structured action (tagged enum: none | launch | notify).
-    pub action_kind: bellman_core::Action,
-    pub revision: i64,
-}
-
-impl From<Timer> for TimerDto {
-    fn from(t: Timer) -> Self {
-        let kind = kind_label(&t);
-        let summary = summary_for(&t);
-        let action = action_label(&t);
-        Self {
-            id: t.id,
-            name: t.name,
-            enabled: t.enabled,
-            tz: t.tz,
-            next_fire_utc: t.next_fire_utc,
-            last_fired: t.last_fired,
-            kind,
-            summary,
-            action,
-            occurrence: t.occurrence,
-            action_kind: t.action,
-            revision: t.revision,
-        }
-    }
-}
-
-fn kind_label(t: &Timer) -> String {
-    use bellman_core::OccurrenceKind::*;
-    match t.occurrence.kind() {
-        Once { .. } => "once".into(),
-        Interval { every_secs, .. } => format!("interval ({every_secs}s)"),
-        Daily { .. } => "daily".into(),
-        Weekly { .. } => "weekly".into(),
-        Monthly { .. } => "monthly".into(),
-        Yearly { .. } => "yearly".into(),
-        Cron { .. } => "cron".into(),
-    }
-}
-
-fn summary_for(t: &Timer) -> String {
-    use bellman_core::OccurrenceKind::*;
-    let tz = &t.tz;
-    match t.occurrence.kind() {
-        Interval { every_secs, .. } => format!("every {every_secs}s"),
-        Daily { at } => format!("daily {} {tz}", at.format("%H:%M:%S")),
-        Weekly { days, at } => format!(
-            "weekly {} {at} {tz}",
-            days.iter()
-                .map(|d| d.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        ),
-        Monthly { day, at } => format!("monthly day {day} {at} {tz}"),
-        Yearly { month, day, at } => format!("yearly {month}-{day} {at} {tz}"),
-        Once { at } => format!("once {at} {tz}"),
-        Cron { expr } => format!("cron `{expr}` {tz}"),
-    }
-}
-
-fn action_label(t: &Timer) -> String {
-    use bellman_core::Action;
-    match &t.action {
-        Action::None => "none".into(),
-        Action::Launch { command, args, .. } => {
-            if args.is_empty() {
-                format!("launch: {command}")
-            } else {
-                format!("launch: {command} {}", args.join(" "))
-            }
-        }
-        Action::Notify { title, .. } => format!("notify: {title}"),
-    }
-}
+/// Re-export the deliberate UI-shaped DTO under its command-facing name.
+/// See `src-tauri/src/web.rs` for the wire contract (fixture-pinned by
+/// `web::tests::weekly_dto_matches_pinned_json_fixture`).
+pub use crate::web::WebTimerDto as TimerDto;
 
 /// `list_timers` — return all timers in the store.
 #[tauri::command]
@@ -153,10 +64,10 @@ pub fn set_enabled(
     let id = Uuid::from_str(&id).map_err(|e| format!("invalid id: {e}"))?;
     let mut store = state.store.lock();
     let updated = store
-        .update_timer(TimerUpdate {
+        .update_timer(bellman_core::store::TimerUpdate {
             id,
             expected_revision,
-            patch: TimerPatch {
+            patch: bellman_core::store::TimerPatch {
                 enabled: Some(enabled),
                 ..Default::default()
             },
@@ -346,6 +257,28 @@ pub fn app_info(state: State<'_, AppState>) -> AppInfo {
 // (and `Occurrence::preview` for the live next-5 preview) so the same
 // validation surface backs both the GUI and the CLI (`bellman add|edit|rm|next`).
 
+/// Inputs for `create_timer`: the dialog sends a deliberate web DTO
+/// (flat weekly-days, tagged action, kind discriminant). We convert to
+/// a core `NewTimer` inside the command so the store layer sees the
+/// same types as the CLI.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTimerInput {
+    pub name: String,
+    pub occurrence: crate::web::WebOccurrenceDto,
+    pub action: crate::web::WebActionDto,
+}
+
+impl CreateTimerInput {
+    fn into_new_timer(self) -> Result<NewTimer, String> {
+        let occurrence = self.occurrence.into_core_occurrence()?;
+        let action = self.action.into_core_action();
+        let mut new = NewTimer::new(self.name, occurrence);
+        new.action = action;
+        Ok(new)
+    }
+}
+
 /// `create_timer` — insert a fresh timer. Mirrors `bellman add`.
 #[tauri::command]
 pub fn create_timer(
@@ -362,20 +295,21 @@ pub fn create_timer(
 }
 
 /// `update_timer` — apply a partial patch. Mirrors `bellman edit`.
-/// The caller passes the current revision (from `listTimers`) so concurrent
-/// edits stay consistent with the store's optimistic-update contract.
+/// The caller passes the current revision (from `list_timers`) so
+/// concurrent edits stay consistent with the store's optimistic-update
+/// contract.
 #[tauri::command]
 pub fn update_timer(
     state: State<'_, AppState>,
     id: String,
     expected_revision: i64,
-    patch: TimerPatchDto,
+    patch: WebTimerPatchDto,
 ) -> Result<TimerDto, String> {
     let id = Uuid::from_str(&id).map_err(|e| format!("invalid id: {e}"))?;
     let core_patch = patch.into_core_patch()?;
     let mut store = state.store.lock();
     let updated = store
-        .update_timer(TimerUpdate {
+        .update_timer(bellman_core::store::TimerUpdate {
             id,
             expected_revision,
             patch: core_patch,
@@ -399,11 +333,15 @@ pub fn delete_timer(state: State<'_, AppState>, id: String) -> Result<bool, Stri
     Ok(n)
 }
 
-/// `preview_fires` — return the next-N fires for a draft occurrence. Wired
-/// to the dialog's live preview pane; identical math to `bellman next`.
+/// `preview_fires` — return the next-N fires for a draft occurrence.
+/// Wired to the dialog's live preview pane; identical math to
+/// `bellman next`. Accepts the deliberate `WebOccurrenceDto` shape
+/// (flat weekly-days, tagged action, kind discriminant) and converts
+/// it to the core occurrence inside the command so the GUI never has
+/// to know about `chrono::Weekdays` or the core tagged enum.
 #[derive(Debug, Deserialize)]
 pub struct PreviewArgs {
-    pub input: OccurrenceInput,
+    pub input: crate::web::WebOccurrenceDto,
     #[serde(default = "default_preview_n")]
     pub n: usize,
 }
@@ -444,59 +382,68 @@ impl From<PreviewFire> for PreviewFireDto {
 
 #[tauri::command]
 pub fn preview_fires(
-    input: OccurrenceInput,
+    input: crate::web::WebOccurrenceDto,
     n: Option<usize>,
 ) -> Result<PreviewResponseDto, String> {
     let n = n.unwrap_or(5);
-    let occ = input.clone().build()?;
-    let fires = occurrence_input::preview_fires(&input, n)?;
+    let occ = input.into_core_occurrence()?;
+    let fires = preview_fires_from_occurrence(&occ, n);
     let mut warnings: Vec<String> = Vec::new();
     if let Some(w) = occurrence_input::dst_warning(occ.kind(), occ.tz_name()) {
         warnings.push(w);
     }
     Ok(PreviewResponseDto {
-        fires: fires.into_iter().map(PreviewFireDto::from).collect(),
+        fires: fires
+            .into_iter()
+            .map(|(utc, local_dt, offset_secs)| PreviewFireDto {
+                utc,
+                local_date: local_dt.date().format("%Y-%m-%d").to_string(),
+                local_time: local_dt.time().format("%H:%M:%S").to_string(),
+                offset: format_offset_secs(offset_secs),
+                tz_name: occ.tz_name().to_string(),
+            })
+            .collect(),
         warnings,
     })
 }
 
-/// Optional fields on the dialog's edit patch. Every field is optional;
-/// `None` means "leave unchanged" (matching `TimerPatch::None` semantics).
-///
-/// We accept the loose JSON shape and translate into the typed
-/// `TimerPatch` only after building an `Occurrence` (so all validation
-/// runs in one place). Only the fields the dialog exposes are
-/// serialized — adding more is a non-breaking wire change.
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TimerPatchDto {
-    pub name: Option<String>,
-    pub enabled: Option<bool>,
-    /// Replacement occurrence (must be a complete `OccurrenceInput`).
-    /// Sent as the full new shape rather than a delta so the GUI cannot
-    /// desync a partial edit.
-    pub occurrence: Option<OccurrenceInput>,
-    pub action: Option<Action>,
-}
-
-impl TimerPatchDto {
-    fn into_core_patch(self) -> Result<TimerPatch, String> {
-        let occurrence = match self.occurrence {
-            None => None,
-            Some(input) => {
-                let occ: Occurrence = input.build()?;
-                Some(occ)
-            }
-        };
-        Ok(TimerPatch {
-            name: self.name,
-            enabled: self.enabled,
-            occurrence,
-            action: self.action,
-            ..Default::default()
-        })
+fn format_offset_secs(secs: i32) -> String {
+    if secs == 0 {
+        "UTC".to_string()
+    } else {
+        let sign = if secs >= 0 { '+' } else { '-' };
+        let abs = secs.unsigned_abs();
+        let h = abs / 3600;
+        let m = (abs % 3600) / 60;
+        format!("{sign}{h:02}:{m:02}")
     }
 }
+
+fn preview_fires_from_occurrence(
+    occ: &bellman_core::Occurrence,
+    n: usize,
+) -> Vec<(DateTime<Utc>, chrono::NaiveDateTime, i32)> {
+    let after = Utc::now()
+        .with_timezone(&occ.timezone())
+        .naive_utc()
+        .and_local_timezone(occ.timezone())
+        .single()
+        .map(|d| d.with_timezone(&occ.timezone()))
+        .unwrap_or_else(|| Utc::now().with_timezone(&occ.timezone()));
+    occ.preview(after, n)
+        .into_iter()
+        .map(|local_dt| {
+            let utc = local_dt.with_timezone(&Utc);
+            let naive = local_dt.naive_local();
+            let offset_secs = local_dt.offset().fix().local_minus_utc();
+            (utc, naive, offset_secs)
+        })
+        .collect()
+}
+
+// `TimerPatchDto` was removed in rework #2: the GUI now sends the
+// `WebTimerPatchDto` from `crate::web` directly. See `crate::web` for
+// the flat wire shape and round-trip logic.
 
 // --- helpers (not commands) ---
 
