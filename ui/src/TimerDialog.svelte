@@ -45,28 +45,65 @@
     };
   }
 
+  // Pull structured fields off the timer JSON. The Rust TimerDto surfaces
+  // the full occurrence object (tagged by `occ`) plus the tagged action
+  // under `actionKind`; we read those directly and never try to parse the
+  // pretty summary. The wire shape is pinned in
+  // `src-tauri/src/dto_serde_tests.rs::timer_dto_round_trips_occurrence_and_action`.
   function loadFromTimer(t) {
     const occ = t.occurrence || {};
+    const occKind = occ.occ || 'daily';
+    // weekly shape: { occ:"weekly", days:{mon:true,tue:true,...}, at:"08:00:00", tz:"UTC", ... }
+    // chrono serializes Weekdays as a bitmask object, e.g. { mon:true, wed:true, fri:true }.
+    const days = occ.days || {};
+    const daysCsv = Object.keys(days)
+      .filter((k) => days[k])
+      .sort()
+      .join(',');
+    // NaiveTime serialized by chrono as HH:MM:SS.
+    const timeStr = typeof occ.at === 'string' ? occ.at : '09:00:00';
+    // Interval anchors: chrono DateTime → ISO string.
+    let intervalAnchorIso = null;
+    if (occ.anchor && typeof occ.anchor === 'string') {
+      intervalAnchorIso = occ.anchor;
+    }
+    // Pretty action label: derive a ui-side radio default from the
+    // structured action_kind enum (tagged `type`).
+    const ak = t.actionKind || {};
+    let actionType = 'none';
+    let launchCommand = '';
+    let launchArgs = '';
+    let notifyTitle = '';
+    let notifyBody = '';
+    if (ak.type === 'launch') {
+      actionType = 'launch';
+      launchCommand = ak.command || '';
+      launchArgs = Array.isArray(ak.args) ? ak.args.join(' ') : '';
+    } else if (ak.type === 'notify') {
+      actionType = 'notify';
+      notifyTitle = ak.title || '';
+      notifyBody = ak.body || '';
+    }
     form = {
       name: t.name || '',
       enabled: !!t.enabled,
       occurrence: {
-        kind: occ.kind || 'daily',
+        kind: occKind,
         tz: occ.tz || '',
-        time: occ.time || '09:00:00',
-        onceAt: occ.onceAt || '',
-        everySecs: occ.everySecs ?? 300,
-        intervalAnchor: occ.intervalAnchor || null,
-        days: occ.days || 'mon,wed,fri',
+        time: timeStr,
+        onceAt: occ.at && occKind === 'once' ? occ.at : '',
+        everySecs: occKind === 'interval' ? (occ.everySecs ?? 300) : 300,
+        intervalAnchor: intervalAnchorIso,
+        days: daysCsv || 'mon,wed,fri',
         day: occ.day ?? 1,
         month: occ.month ?? 1,
-        cronExpr: occ.cronExpr || '',
+        cronExpr: occ.expr || '',
       },
-      actionType: occ.actionType || 'none',
-      launchCommand: occ.launchCommand || '',
-      launchArgs: occ.launchArgs || '',
-      notifyTitle: occ.notifyTitle || '',
-      notifyBody: occ.notifyBody || '',
+      actionType,
+      launchCommand,
+      launchArgs,
+      notifyTitle,
+      notifyBody,
     };
   }
 
@@ -360,7 +397,7 @@
                   <td>{i + 1}</td>
                   <td>{f.localTime}</td>
                   <td>{f.localDate}</td>
-                  <td class="mono">{new Date(f.utc).toLocaleString()}</td>
+                  <td class="mono">{f.utc ? new Date(f.utc).toISOString().replace('T', ' ').replace(/\.\d+Z$/, 'Z') : ''}</td>
                   <td class="mono">{f.offset} {f.tzName}</td>
                 </tr>
               {/each}

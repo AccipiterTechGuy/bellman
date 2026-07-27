@@ -1,6 +1,7 @@
 <script>
   import {
     WEEKDAY_LABELS,
+    WEEKDAY_FROM_KEY,
     isoWeekStart,
     addDays,
     isoDate,
@@ -21,36 +22,70 @@
     rebuild(timers, weekAnchor);
   });
 
+  // Pull weekly days out of the structured occurrence. chrono serializes
+  // `Weekdays` as a bitmask object: { mon: true, wed: true, fri: true }
+  // for each day set. Returns ISO weekday numbers (Mon=1..Sun=7).
+  function weeklyDaysFromOccurrence(occ) {
+    const days = occ && occ.days ? occ.days : {};
+    const out = [];
+    for (const k of Object.keys(days)) {
+      if (days[k]) {
+        const dow = WEEKDAY_FROM_KEY[k.toLowerCase()];
+        if (dow) out.push(dow);
+      }
+    }
+    return out.sort();
+  }
+
+  function timeStringFromOccurrence(occ) {
+    return typeof occ.at === 'string' ? occ.at : '00:00:00';
+  }
+
   // Fill `cells` with a per-weekday list of timer chips. Daily timers that
   // fire every day show up in every column; weekly timers only on their
   // weekdays; interval/cron show in their anchor weekday at their local time;
-  // once/monthly/yearly show in today's column if `nextFireUtc` falls inside
-  // the displayed week (so the user can see what's coming). Matches the
+  // once/monthly/yearly show on the DOW of their next fire inside the
+  // displayed week (so the user can see what's coming). Matches the
   // spec's "Week page — 7-column DOW grid showing weekly repeating timers".
   function rebuild(timers, anchor) {
     const weekStart = isoWeekStart(anchor);
     const weekEnd = addDays(weekStart, 7);
     const next = WEEKDAY_LABELS.map(() => []);
     for (const t of timers) {
-      const kind = (t.kind || '').toLowerCase();
-      if (kind.startsWith('weekly')) {
-        const days = parseWeeklyDaysFromSummary(t);
-        const time = parseTimeFromSummary(t, 'weekly') || '00:00:00';
+      const occ = t.occurrence || {};
+      const occKind = occ.occ || '';
+      if (occKind === 'weekly') {
+        const days = weeklyDaysFromOccurrence(occ);
+        const time = timeStringFromOccurrence(occ);
         for (const dow of days) {
-          next[dow - 1].push({ timer: t, localTime: time });
+          if (dow >= 1 && dow <= 7) {
+            next[dow - 1].push({ timer: t, localTime: time });
+          }
         }
-      } else if (kind.startsWith('daily')) {
-        const time = parseTimeFromSummary(t, 'daily') || '00:00:00';
+      } else if (occKind === 'daily') {
+        const time = timeStringFromOccurrence(occ);
         for (let d = 0; d < 7; d++) {
           next[d].push({ timer: t, localTime: time });
         }
-      } else if (kind.startsWith('interval') || kind.startsWith('cron')) {
-        const offset = parseOffsetFromKind(kind);
+      } else if (occKind === 'interval') {
+        // Show on today's column with the configured every_secs badge.
+        const every = occ.everySecs || 60;
         const now = new Date();
-        const dailyAt = now.toLocaleTimeString();
-        // Map the timer onto today's column using its DOW at "now".
-        const dow = ((now.getDay() + 6) % 7) + 1; // ISO: Mon=1..Sun=7
-        next[dow - 1].push({ timer: t, localTime: dailyAt, intervalBadge: true });
+        const dow = ((now.getDay() + 6) % 7) + 1;
+        const mins = Math.floor(every / 60);
+        const secs = every % 60;
+        const badge = mins >= 1
+          ? `every ${mins}m`
+          : `every ${secs}s`;
+        next[dow - 1].push({ timer: t, localTime: badge, intervalBadge: true });
+      } else if (occKind === 'cron') {
+        const now = new Date();
+        const dow = ((now.getDay() + 6) % 7) + 1;
+        next[dow - 1].push({
+          timer: t,
+          localTime: (occ.expr || 'cron').slice(0, 16),
+          intervalBadge: true,
+        });
       } else if (t.nextFireUtc) {
         const d = parseUtc(t.nextFireUtc);
         if (d && d >= weekStart && d < weekEnd) {
@@ -66,43 +101,6 @@
       col.sort((a, b) => clockToSeconds(a.localTime) - clockToSeconds(b.localTime));
     }
     cells = next;
-  }
-
-  // Summary strings come from the CLI/Tauri TimerDto: "weekly mon,wed 09:30 UTC".
-  function parseWeeklyDaysFromSummary(t) {
-    const sum = t.summary || '';
-    const m = /^weekly\s+([a-z,]+)\s/i.exec(sum);
-    if (!m) return [];
-    return m[1]
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .map((name) => {
-        switch (name) {
-          case 'mon': return 1;
-          case 'tue': return 2;
-          case 'wed': return 3;
-          case 'thu': return 4;
-          case 'fri': return 5;
-          case 'sat': return 6;
-          case 'sun': return 7;
-          default: return null;
-        }
-      })
-      .filter(Boolean);
-  }
-
-  function parseTimeFromSummary(t, prefix) {
-    const sum = t.summary || '';
-    const re = new RegExp(`^${prefix}\\s+\\S+\\s+(\\d{2}:\\d{2}(?::\\d{2})?)\\s`, 'i');
-    const m = re.exec(sum);
-    return m ? m[1] : null;
-  }
-
-  function parseOffsetFromKind(kind) {
-    return kind.startsWith('interval')
-      ? /interval\s*\((\d+)s\)/.exec(kind)?.[1] || null
-      : null;
   }
 
   function shiftWeek(delta) {

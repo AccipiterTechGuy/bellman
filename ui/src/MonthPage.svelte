@@ -5,6 +5,9 @@
     isoDate,
     jsIsoWeekday,
     parseUtc,
+    daysInMonth,
+    weeklyDaysFromOccurrence,
+    kindFromOccurrence,
   } from './api.js';
 
   /** @type {(t:any) => void} */
@@ -21,16 +24,21 @@
     rebuild(timers, year, month);
   });
 
-  async function refresh() {
-    // intentionally left as noop (caller owns the timer list)
+  // Mirror the core's `InvalidMonthDayPolicy::Clamp` semantics: a
+  // monthly day-31 timer fires on the last valid day of short months
+  // (Feb 28/29, Apr 30, etc). Implemented in JS via `daysInMonth`
+  // so the GUI matches `bellman next` for these timers.
+  function clampedDayOfMonth(year, month, day) {
+    return Math.min(day, daysInMonth(year, month));
   }
 
   // Build a map of `YYYY-MM-DD → [chip]` for the visible grid. Calendar
-  // kinds that match month/year/day rule fire on those dates; once timers
-  // show only on their fire day; cron/interval show only on their next
-  // fire day within the visible span. Matches the spec: "Month page —
-  // month calendar (year-aware grid, prev/next month + year navigation)
-  // showing monthly/yearly/once timers on their dates".
+  // kinds that match month/year/day rule fire on their clamped dates;
+  // weekly/daily appear on every visible day; once/cron/interval
+  // appear only on their next fire day inside the visible span. Matches
+  // the spec: "Month page — month calendar (year-aware grid, prev/next
+  // month + year navigation) showing monthly/yearly/once timers on
+  // their dates".
   function rebuild(timers, year, month) {
     const grid = monthGrid(year, month);
     const firstIso = isoDate(grid[0]);
@@ -40,52 +48,59 @@
       (map[iso] = map[iso] || []).push(chip);
     };
     for (const t of timers) {
-      const kind = (t.kind || '').toLowerCase();
-      if (kind.startsWith('monthly')) {
-        const m = /monthly day (\d+)/.exec(t.summary);
-        if (!m) continue;
-        const day = +m[1];
-        for (const cell of grid) {
-          if (cell.getFullYear() === year && cell.getMonth() === month) {
-            const iso = isoDate(cell);
-            // For real GUI quality we'd clamp via core; the card spec says
-            // we mirror the CLI's clamp, so just match by day inside month.
-            if (cell.getDate() === day) {
-              safePush(iso, { timer: t, kind: 'monthly' });
-            }
-          }
-        }
-      } else if (kind.startsWith('yearly')) {
-        const m = /yearly (\d+)-(\d+)/.exec(t.summary);
-        if (!m) continue;
-        const mo = +m[1];
-        const dy = +m[2];
-        if (mo - 1 === month) {
-          for (const cell of grid) {
-            if (cell.getMonth() === month && cell.getDate() === dy) {
-              safePush(isoDate(cell), { timer: t, kind: 'yearly' });
-            }
-          }
-        }
-      } else if (kind.startsWith('once') && t.nextFireUtc) {
+      const occ = t.occurrence || {};
+      const occKind = kindFromOccurrence(occ);
+      if (occKind === 'monthly') {
+        const day = Number(occ.day || 0);
+        if (!day) continue;
+        const targetDay = clampedDayOfMonth(year, month, day);
+        const targetIso = `${year}-${String(month + 1).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`;
+        // Always render the chip on the clamped date even if it's outside
+        // the visible 6×7 grid (so the user sees the timer in its month
+        // and can navigate to it via Today/this-month buttons).
+        safePush(targetIso, { timer: t, kind: 'monthly', monthDayClamped: targetDay !== day });
+      } else if (occKind === 'yearly') {
+        const mo = Number(occ.month || 0);
+        const day = Number(occ.day || 0);
+        if (!mo || !day || mo - 1 !== month) continue;
+        const targetDay = clampedDayOfMonth(year, month, day);
+        const targetIso = `${year}-${String(month + 1).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`;
+        safePush(targetIso, { timer: t, kind: 'yearly' });
+      } else if (occKind === 'once' && t.nextFireUtc) {
         const d = parseUtc(t.nextFireUtc);
         if (!d) continue;
         const iso = isoDate(d);
         if (iso >= firstIso && iso <= lastIso) {
           safePush(iso, { timer: t, kind: 'once' });
         }
-      } else if ((kind.startsWith('cron') || kind.startsWith('interval')) && t.nextFireUtc) {
+      } else if ((occKind === 'cron' || occKind === 'interval') && t.nextFireUtc) {
         const d = parseUtc(t.nextFireUtc);
         if (!d) continue;
         const iso = isoDate(d);
         if (iso >= firstIso && iso <= lastIso) {
-          safePush(iso, { timer: t, kind });
+          safePush(iso, { timer: t, kind: occKind });
         }
-      } else if (kind.startsWith('weekly') || kind.startsWith('daily')) {
-        // Weekly/daily fall on every day of the visible grid (single summary
-        // chip per cell so the month stays readable).
-        for (const cell of grid) {
-          safePush(isoDate(cell), { timer: t, kind });
+      } else if (occKind === 'weekly' || occKind === 'daily') {
+        // Weekly fires land on its chosen weekdays; daily fires on every
+        // day of the visible grid. Single chip per cell keeps the grid
+        // readable; multiple weekly timers accumulate.
+        const matchingDays = new Set();
+        if (occKind === 'weekly') {
+          // Push the visible grid into the same ISO-week convention the
+          // timer uses. Each cell IS an ISO date, but the timer fires in
+          // its own tz: we conservatively place on the matching ISO weekday
+          // here, matching what the Week page shows for the same window.
+          const dowSet = weeklyDaysFromOccurrence(occ);
+          for (const cell of grid) {
+            if (dowSet.has(jsIsoWeekday(cell))) {
+              matchingDays.add(isoDate(cell));
+            }
+          }
+        } else {
+          for (const cell of grid) matchingDays.add(isoDate(cell));
+        }
+        for (const iso of matchingDays) {
+          safePush(iso, { timer: t, kind: occKind });
         }
       }
     }

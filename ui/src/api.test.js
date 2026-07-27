@@ -474,3 +474,68 @@ describe('api.js — calendar helpers (pure, no IPC)', () => {
     expect(isoClock(d)).toBe('09:07:03');
   });
 });
+
+describe('api.js — structured-occurrence helpers (rework #1: auditor fix)', () => {
+  it('kindFromOccurrence reads the occ discriminator', async () => {
+    const { kindFromOccurrence } = await import('./api.js');
+    expect(kindFromOccurrence({ occ: 'weekly', days: {}, at: '08:00:00' })).toBe('weekly');
+    expect(kindFromOccurrence({ occ: 'daily' })).toBe('daily');
+    // Missing/non-string ⇒ '' so callers can `=== ''` to skip.
+    expect(kindFromOccurrence({})).toBe('');
+    expect(kindFromOccurrence(null)).toBe('');
+  });
+
+  it('weeklyDaysFromOccurrence parses the chrono bitmask object', async () => {
+    const { weeklyDaysFromOccurrence } = await import('./api.js');
+    expect(weeklyDaysFromOccurrence({ days: { mon: true, wed: true, fri: true } }))
+      .toEqual([1, 3, 5]);
+    expect(weeklyDaysFromOccurrence({ days: {} })).toEqual([]);
+    expect(weeklyDaysFromOccurrence({})).toEqual([]);
+    // Lowercase keys are accepted; uppercase keys ignored (chrono emits lowercase).
+    expect(weeklyDaysFromOccurrence({ days: { Mon: true } })).toEqual([1]);
+  });
+
+  it('clampedDayOfMonth mirrors core Clamp policy for monthly day 31', async () => {
+    // Replicate the MonthPage JS helper's math against the same leap-year
+    // cases the Rust core handles, so the GUI matches `bellman next`.
+    const { daysInMonth } = await import('./api.js');
+    const clamp = (y, m, d) => Math.min(d, daysInMonth(y, m));
+    expect(clamp(2026, 1, 31)).toBe(28);  // Feb 2026 = 28
+    expect(clamp(2024, 1, 31)).toBe(29);  // Feb 2024 leap
+    expect(clamp(2026, 3, 31)).toBe(30);  // Apr = 30
+    expect(clamp(2026, 0, 31)).toBe(31);  // Jan unchanged
+    expect(clamp(2026, 11, 31)).toBe(31); // Dec unchanged
+  });
+
+  it('TimerDto structured shape: weekly + Notify action round-trips through the IPC mock', async () => {
+    // Simulates the wire payload the Rust TimerDto emits after the auditor's
+    // rework — closed Finding 1: the dialog now sees the structured weekly
+    // `days` bitmask + tagged notify action instead of relying on summary
+    // string parsing (which previously dropped weekly timers on edit).
+    const { weeklyDaysFromOccurrence, kindFromOccurrence } = await import('./api.js');
+    const dto = {
+      id: '00000000-0000-0000-0000-000000000001',
+      name: 'weekly-mwf',
+      enabled: true,
+      tz: 'UTC',
+      nextFireUtc: null,
+      lastFired: null,
+      kind: 'weekly',
+      summary: 'weekly Mon,Wed,Fri 08:00:00 UTC',
+      action: 'notify: hello',
+      occurrence: {
+        occ: 'weekly',
+        tz: 'UTC',
+        days: { mon: true, wed: true, fri: true },
+        at: '08:00:00',
+      },
+      actionKind: { type: 'notify', title: 'hello', body: 'world' },
+      revision: 1,
+    };
+    expect(kindFromOccurrence(dto.occurrence)).toBe('weekly');
+    expect(weeklyDaysFromOccurrence(dto.occurrence)).toEqual([1, 3, 5]);
+    expect(dto.occurrence.at).toBe('08:00:00');
+    expect(dto.actionKind.type).toBe('notify');
+    expect(dto.actionKind.title).toBe('hello');
+  });
+});

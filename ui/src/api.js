@@ -35,6 +35,18 @@ export function isTauri() {
 
 async function invoke(cmd, args) {
   if (!_hasTauri()) {
+    // Headless-fixtures override: when a harness sets
+    // `globalThis.__bellman_fixtures__ = { [cmd]: (args) => any }`, the
+    // production bundle still renders realistic content for screenshot
+    // captures (notes: not the default; only activates when an explicit
+    // `__bellman_fixtures__` map exists). Used by the QA_P4 harness.
+    if (
+      typeof globalThis !== 'undefined'
+      && globalThis.__bellman_fixtures__
+      && Object.prototype.hasOwnProperty.call(globalThis.__bellman_fixtures__, cmd)
+    ) {
+      return await globalThis.__bellman_fixtures__[cmd](args);
+    }
     throw new Error(`Tauri not available (cmd: ${cmd})`);
   }
   return await window.__TAURI_INTERNALS__.invoke(cmd, args);
@@ -197,6 +209,29 @@ export async function appInfo() {
 // ── can import them and run without a webview. See api.test.js for the
 // ── round-trip coverage.
 export const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** `mon`→1, `tue`→2, … `sun`→7. Inverse of the TimerDto `Weekdays` bitmask. */
+export const WEEKDAY_FROM_KEY = {
+  mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 7,
+};
+
+/** Pull the kind discriminator out of a TimerDto's structured `occurrence`. */
+export function kindFromOccurrence(occ) {
+  return (occ && typeof occ.occ === 'string') ? occ.occ : '';
+}
+
+/** Parse a TimerDto's structured weekly `days` bitmask → sorted ISO DOW list. */
+export function weeklyDaysFromOccurrence(occ) {
+  const days = occ && occ.days ? occ.days : {};
+  const out = [];
+  for (const k of Object.keys(days)) {
+    if (days[k]) {
+      const dow = WEEKDAY_FROM_KEY[k.toLowerCase()];
+      if (dow) out.push(dow);
+    }
+  }
+  return out.sort();
+}
 
 /** ISO weekday (Mon=1 .. Sun=7) for a JS Date in the local zone. */
 export function jsIsoWeekday(date) {
