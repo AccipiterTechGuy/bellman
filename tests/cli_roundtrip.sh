@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+# Round-trip smoke test for the Bellman CLI (AI-skill surface).
+#
+# Acceptance (card C4):
+#   add all 7 occurrence kinds, list, edit time, next 5, pause/resume,
+#   run-now, rm — asserting on --json output.
+#
+# Usage (from repo root):
+#   ./tests/cli_roundtrip.sh
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+if [[ -z "${BELLMAN_BIN:-}" ]]; then
+  echo "==> building bellman-cli"
+  cargo build -p bellman-cli -q
+  BELLMAN_BIN="$ROOT/target/debug/bellman"
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "error: python3 is required for JSON assertions" >&2
+  exit 2
+fi
+
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/bellman-cli-rt.XXXXXX")"
+trap 'rm -rf "$TMP"' EXIT
+
+export BELLMAN_DB="$TMP/timers.db"
+BELLMAN=("$BELLMAN_BIN" --json)
+
+pass=0
+
+ok() {
+  pass=$((pass + 1))
+  echo "  PASS  $1"
+}
+
+die() {
+  echo "  FAIL  $1" >&2
+  echo "        $2" >&2
+  exit 1
+}
+
+# Extract a JSON field with python3. Usage: jget '<json>' 'python expr on obj'
+# The expression is evaluated as: obj = json.loads(...); print(<expr>)
+jget() {
+  local json="$1"
+  local expr="$2"
+  python3 -c '
+import json, sys
+obj = json.loads(sys.argv[1])
+print(eval(sys.argv[2], {"obj": obj}))
+' "$json" "$expr"
+}
+
+run_json() {
+  local out rc
+  set +e
+  out="$("${BELLMAN[@]}" "$@" 2>/dev/null)"
+  rc=$?
+  set -e
+  if [[ $rc -ne 0 ]]; then
+    echo "$out"
+    return 1
+  fi
+  echo "$out"
+}
+
+assert_ok() {
+  local label="$1"
+  local json="$2"
+  local ok_flag
+  ok_flag="$(jget "$json" 'obj.get("ok")')"
+  if [[ "$ok_flag" != "True" ]]; then
+    die "$label" "expected ok=true, got: $json"
+  fi
+}
+
+assert_cmd() {
+  local label="$1"
+  local json="$2"
+  local want="$3"
+  local got
+  got="$(jget "$json" 'obj.get("command")')"
+  if [[ "$got" != "$want" ]]; then
+    die "$label" "expected command=$want, got=$got ($json)"
+  fi
+}
+
+echo "==> add all 7 occurrence kinds"
+
+JSON="$(run_json add --name once-job --occurrence once --time 2030-06-15T12:00:00 --tz UTC)" \
+  || die "add once" "$JSON"
+assert_ok "add once" "$JSON"
+assert_cmd "add once" "$JSON" "add"
+ONCE_ID="$(jget "$JSON" 'obj["timer"]["id"]')"
+[[ -n "$ONCE_ID" && "$ONCE_ID" != "None" ]] || die "add once id" "$JSON"
+ok "add once ($ONCE_ID)"
+
+JSON="$(run_json add --name tick --occurrence interval --every-secs 60 --tz UTC)" \
+  || die "add interval" "$JSON"
+assert_ok "add interval" "$JSON"
+INTERVAL_ID="$(jget "$JSON" 'obj["timer"]["id"]')"
+ok "add interval ($INTERVAL_ID)"
+
+JSON="$(run_json add --name daily-job --occurrence daily --time 09:30 --tz UTC)" \
+  || die "add daily" "$JSON"
+assert_ok "add daily" "$JSON"
+DAILY_ID="$(jget "$JSON" 'obj["timer"]["id"]')"
+ok "add daily ($DAILY_ID)"
+
+JSON="$(run_json add --name weekly-job --occurrence weekly --days mon,wed,fri --time 10:00 --tz UTC)" \
+  || die "add weekly" "$JSON"
+assert_ok "add weekly" "$JSON"
+WEEKLY_ID="$(jget "$JSON" 'obj["timer"]["id"]')"
+ok "add weekly ($WEEKLY_ID)"
+
+JSON="$(run_json add --name monthly-job --occurrence monthly --day 15 --time 08:00 --tz UTC)" \
+  || die "add monthly" "$JSON"
+assert_ok "add monthly" "$JSON"
+MONTHLY_ID="$(jget "$JSON" 'obj["timer"]["id"]')"
+ok "add monthly ($MONTHLY_ID)"
+
+JSON="$(run_json add --name yearly-job --occurrence yearly --month 7 --day 4 --time 12:00 --tz UTC)" \
+  || die "add yearly" "$JSON"
+assert_ok "add yearly" "$JSON"
+YEARLY_ID="$(jget "$JSON" 'obj["timer"]["id"]')"
+ok "add yearly ($YEARLY_ID)"
+
+JSON="$(run_json add --name cron-job --occurrence cron --cron '0 0 12 * * *' --tz UTC)" \
+  || die "add cron" "$JSON"
+assert_ok "add cron" "$JSON"
+CRON_ID="$(jget "$JSON" 'obj["timer"]["id"]')"
+ok "add cron ($CRON_ID)"
+
+echo "==> list"
+JSON="$(run_json list)" || die "list" "$JSON"
+assert_ok "list" "$JSON"
+assert_cmd "list" "$JSON" "list"
+COUNT="$(jget "$JSON" 'obj.get("count")')"
+if [[ "$COUNT" != "7" ]]; then
+  die "list count" "expected 7 timers, got $COUNT: $JSON"
+fi
+ok "list count=7"
+
+echo "==> edit time (daily 09:30 -> 11:45)"
+JSON="$(run_json edit daily-job --time 11:45)" || die "edit time" "$JSON"
+assert_ok "edit time" "$JSON"
+assert_cmd "edit time" "$JSON" "edit"
+# OccurrenceKind is #[serde(tag = "occ")]; daily has "at": "HH:MM:SS"
+AT="$(jget "$JSON" 'obj["timer"]["occurrence"]["kind"].get("at","")')"
+NEXT="$(jget "$JSON" 'obj["timer"].get("next_fire_utc") or ""')"
+if [[ "$AT" != "11:45:00" ]]; then
+  if [[ -z "$NEXT" || "$NEXT" == "None" ]]; then
+    die "edit time" "expected daily at=11:45:00 or a next_fire; AT=$AT full=$JSON"
+  fi
+  if ! echo "$NEXT" | grep -q 'T11:45'; then
+    die "edit time" "expected next_fire around 11:45, got AT=$AT NEXT=$NEXT full=$JSON"
+  fi
+fi
+ok "edit daily time -> 11:45 (at=$AT next=$NEXT)"
+
+echo "==> next 5 (daily-job)"
+JSON="$(run_json next daily-job 5)" || die "next 5" "$JSON"
+assert_ok "next 5" "$JSON"
+assert_cmd "next 5" "$JSON" "next"
+NFIRES="$(jget "$JSON" 'len(obj.get("fires") or [])')"
+if [[ "$NFIRES" != "5" ]]; then
+  die "next 5" "expected exactly 5 fires for daily, got $NFIRES: $JSON"
+fi
+ok "next 5 ($NFIRES fires)"
+
+echo "==> pause / resume"
+JSON="$(run_json pause daily-job)" || die "pause" "$JSON"
+assert_ok "pause" "$JSON"
+EN="$(jget "$JSON" 'obj["timer"]["enabled"]')"
+if [[ "$EN" != "False" ]]; then
+  die "pause" "expected enabled=false, got $EN: $JSON"
+fi
+ok "pause"
+
+JSON="$(run_json resume daily-job)" || die "resume" "$JSON"
+assert_ok "resume" "$JSON"
+EN="$(jget "$JSON" 'obj["timer"]["enabled"]')"
+if [[ "$EN" != "True" ]]; then
+  die "resume" "expected enabled=true, got $EN: $JSON"
+fi
+ok "resume"
+
+echo "==> run-now (interval tick)"
+JSON="$(run_json run-now tick)" || die "run-now" "$JSON"
+assert_ok "run-now" "$JSON"
+assert_cmd "run-now" "$JSON" "run-now"
+RUN_ID="$(jget "$JSON" 'obj.get("run_id")')"
+MSG="$(jget "$JSON" 'obj.get("message") or ""')"
+[[ -n "$RUN_ID" && "$RUN_ID" != "None" ]] || die "run-now run_id" "$JSON"
+if ! echo "$MSG" | grep -q 'stub action'; then
+  die "run-now message" "expected stub action log line, got: $MSG"
+fi
+ok "run-now (run_id=$RUN_ID)"
+
+echo "==> rm all 7 by name"
+for name in once-job tick daily-job weekly-job monthly-job yearly-job cron-job; do
+  JSON="$(run_json rm "$name")" || die "rm $name" "$JSON"
+  assert_ok "rm $name" "$JSON"
+  DEL="$(jget "$JSON" 'obj.get("deleted")')"
+  if [[ "$DEL" != "True" ]]; then
+    die "rm $name" "expected deleted=true: $JSON"
+  fi
+  ok "rm $name"
+done
+
+JSON="$(run_json list)" || die "list empty" "$JSON"
+COUNT="$(jget "$JSON" 'obj.get("count")')"
+if [[ "$COUNT" != "0" ]]; then
+  die "list empty" "expected 0 timers after rm, got $COUNT: $JSON"
+fi
+ok "list empty after rm"
+
+echo
+echo "OK  $pass assertions passed (db=$BELLMAN_DB)"
+exit 0
