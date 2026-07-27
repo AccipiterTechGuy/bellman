@@ -17,7 +17,9 @@ mod payload;
 mod service;
 mod watcher;
 
-pub use atomic::{atomic_write_bytes, atomic_write_json, read_capped, DEFAULT_MAX_READ_BYTES};
+pub use atomic::{
+    atomic_write_bytes, atomic_write_json, read_capped, safe_child_path, DEFAULT_MAX_READ_BYTES,
+};
 pub use envelope::{
     SlotErrSidecar, SlotOperation, SlotPayload, SlotRequest, SlotResponse, SlotRunEvent,
     SlotStatus, SCHEMA_V1,
@@ -26,7 +28,9 @@ pub use error::{SlotError, SlotResult};
 pub use layout::{
     parse_slot_id_from_name, SlotLayout, DEFAULT_DONE_RETENTION, DEFAULT_ORPHAN_AGE, MIN_FREE_SLOTS,
 };
-pub use service::{make_add_request, response_is_ok, SlotConfig, SlotService};
+pub use service::{
+    make_add_request, reserved_slot_id_from_path, response_is_ok, SlotConfig, SlotService,
+};
 pub use watcher::{
     poll_once, run_slot_loop, spawn_slot_thread, watch_free_dir, SlotWake, SlotWatcherStop,
 };

@@ -17,6 +17,9 @@ pub const DEFAULT_MAX_READ_BYTES: u64 = 256 * 1024;
 ///
 /// The temp file is created **in the same directory** as the final path so the
 /// rename stays on one filesystem (required for atomicity).
+///
+/// `file_name` must be a single path component (no `/`, `\`, `..`, or absolute
+/// prefixes). The final path is always a direct child of `dir`.
 pub fn atomic_write_json(
     dir: &Path,
     file_name: &str,
@@ -24,7 +27,7 @@ pub fn atomic_write_json(
 ) -> SlotResult<PathBuf> {
     fs::create_dir_all(dir)
         .map_err(|e| SlotError::Io(format!("create_dir_all {}: {e}", dir.display())))?;
-    let final_path = dir.join(file_name);
+    let final_path = safe_child_path(dir, file_name)?;
     let bytes = serde_json::to_vec_pretty(value)?;
     atomic_write_bytes(dir, &final_path, &bytes)?;
     Ok(final_path)
@@ -32,11 +35,22 @@ pub fn atomic_write_json(
 
 /// Write raw bytes to `final_path` (which must live under `dir`) via temp+persist.
 pub fn atomic_write_bytes(dir: &Path, final_path: &Path, bytes: &[u8]) -> SlotResult<()> {
-    // Ensure parent exists.
-    if let Some(parent) = final_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| SlotError::Io(format!("create_dir_all {}: {e}", parent.display())))?;
+    // Enforce final_path is a direct child of dir (no attacker-selected parents).
+    let file_name = final_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| SlotError::Invalid("atomic write: missing file name".into()))?;
+    let expected = safe_child_path(dir, file_name)?;
+    if final_path != expected {
+        return Err(SlotError::Invalid(format!(
+            "atomic write: final path {} is not a direct child of {}",
+            final_path.display(),
+            dir.display()
+        )));
     }
+    // Parent is `dir` only — never create_dir_all on an attacker path.
+    fs::create_dir_all(dir)
+        .map_err(|e| SlotError::Io(format!("create_dir_all {}: {e}", dir.display())))?;
     let mut tmp = NamedTempFile::new_in(dir)
         .map_err(|e| SlotError::Io(format!("NamedTempFile::new_in {}: {e}", dir.display())))?;
     tmp.write_all(bytes)
@@ -45,14 +59,57 @@ pub fn atomic_write_bytes(dir: &Path, final_path: &Path, bytes: &[u8]) -> SlotRe
         .sync_all()
         .map_err(|e| SlotError::Io(format!("sync temp: {e}")))?;
     // Windows-safe: persist uses atomic replace when the target exists.
-    tmp.persist(final_path).map_err(|e| {
+    tmp.persist(&expected).map_err(|e| {
         SlotError::Io(format!(
             "persist {} → {}: {e}",
             e.file.path().display(),
-            final_path.display()
+            expected.display()
         ))
     })?;
     Ok(())
+}
+
+/// Resolve `dir/file_name` only when `file_name` is a single safe component.
+pub fn safe_child_path(dir: &Path, file_name: &str) -> SlotResult<PathBuf> {
+    if file_name.is_empty()
+        || file_name.contains('\0')
+        || file_name.contains('/')
+        || file_name.contains('\\')
+    {
+        return Err(SlotError::Invalid(format!(
+            "unsafe file name (path separators forbidden): {file_name:?}"
+        )));
+    }
+    if file_name == "." || file_name == ".." || file_name.contains("..") {
+        return Err(SlotError::Invalid(format!(
+            "unsafe file name (dot segments forbidden): {file_name:?}"
+        )));
+    }
+    // Exactly one Normal component equal to the raw name (rejects absolute /
+    // multi-component / Windows prefixes).
+    use std::path::Component;
+    let as_path = Path::new(file_name);
+    let mut comps = as_path.components();
+    match (comps.next(), comps.next()) {
+        (Some(Component::Normal(os)), None) if os.to_str() == Some(file_name) => {}
+        _ => {
+            return Err(SlotError::Invalid(format!(
+                "unsafe file name (not a single path component): {file_name:?}"
+            )));
+        }
+    }
+    let final_path = dir.join(file_name);
+    if final_path.file_name().and_then(|n| n.to_str()) != Some(file_name) {
+        return Err(SlotError::Invalid(format!(
+            "unsafe file name join escaped dir: {file_name:?}"
+        )));
+    }
+    if final_path.parent() != Some(dir) {
+        return Err(SlotError::Invalid(format!(
+            "final path parent is not the target dir for {file_name:?}"
+        )));
+    }
+    Ok(final_path)
 }
 
 /// Read a file with a hard size cap; refuse symlinks.

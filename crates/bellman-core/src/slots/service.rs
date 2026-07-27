@@ -216,7 +216,7 @@ impl SlotService {
     fn process_work_file(&self, work_path: &Path, store: &mut Store) -> SlotResult<()> {
         refuse_symlink(work_path)?;
         let bytes = read_capped(work_path, self.config.max_read_bytes)?;
-        let req: SlotRequest = serde_json::from_slice(&bytes)
+        let mut req: SlotRequest = serde_json::from_slice(&bytes)
             .map_err(|e| SlotError::Invalid(format!("parse work {}: {e}", work_path.display())))?;
 
         if req.is_free_stub() {
@@ -226,6 +226,18 @@ impl SlotService {
             ));
         }
 
+        // Trusted identity comes from the claimed filename only — never from the
+        // envelope. Path traversal / cross-slot forge via slot_id is rejected.
+        let reserved_id = reserved_slot_id_from_path(work_path)?;
+        if req.slot_id != reserved_id {
+            return Err(SlotError::Invalid(format!(
+                "envelope slot_id {:?} does not match reserved id {:?} from filename",
+                req.slot_id, reserved_id
+            )));
+        }
+        // Force trusted id for all downstream writes (defense in depth).
+        req.slot_id = reserved_id.clone();
+
         let request_id = req
             .request_id
             .clone()
@@ -234,23 +246,23 @@ impl SlotService {
         let operation = req
             .operation
             .ok_or_else(|| SlotError::Invalid("missing operation".into()))?;
-        let slot_id = req.slot_id.clone();
         let max_events = self.config.max_events;
 
         // Single Immediate transaction: check ledger / apply mutations / write
         // response. Concurrent consumers serialize; crash mid-apply rolls back
         // so a resubmit never double-mutates.
         let rec = store.slot_execute_once(&request_id, |tx| {
-            let response = match apply_request_tx(tx, &req, operation, &request_id, max_events) {
-                Ok(resp) => resp,
-                Err(SlotError::Invalid(msg)) => {
-                    // Logical errors are durable results (idempotent too).
-                    SlotResponse::err(&slot_id, &request_id, msg)
-                }
-                Err(e) => {
-                    return Err(crate::store::StoreError::Internal(e.to_string()));
-                }
-            };
+            let response =
+                match apply_request_tx(tx, &req, operation, &request_id, max_events) {
+                    Ok(resp) => resp,
+                    Err(SlotError::Invalid(msg)) => {
+                        // Logical errors are durable results (idempotent too).
+                        SlotResponse::err(&reserved_id, &request_id, msg)
+                    }
+                    Err(e) => {
+                        return Err(crate::store::StoreError::Internal(e.to_string()));
+                    }
+                };
             let app_name = req
                 .payload
                 .as_ref()
@@ -259,7 +271,7 @@ impl SlotService {
                 .map(str::to_string);
             Ok(SlotRequestRecord {
                 request_id: request_id.clone(),
-                slot_id: slot_id.clone(),
+                slot_id: reserved_id.clone(),
                 operation: operation.as_str().to_string(),
                 app_name,
                 timer_id: response.timer_id,
@@ -273,31 +285,23 @@ impl SlotService {
 
         let response: SlotResponse = serde_json::from_str(&rec.response_json)
             .map_err(|e| SlotError::Internal(format!("stored response corrupt: {e}")))?;
-        self.write_done(&slot_id, &response)?;
+        self.write_done(&reserved_id, &response)?;
         let _ = std::fs::remove_file(work_path);
         let _ = self.layout.replenish()?;
         Ok(())
     }
 
-    fn write_done(&self, slot_id: &str, response: &SlotResponse) -> SlotResult<PathBuf> {
-        let name = format!("slot-{slot_id}.json");
-        // Also accept bare ids already prefixed.
-        let name = if slot_id.starts_with("slot-") {
-            format!("{slot_id}.json")
-        } else {
-            name
-        };
+    fn write_done(&self, reserved_slot_id: &str, response: &SlotResponse) -> SlotResult<PathBuf> {
+        // reserved_slot_id is already validated grammar (digits/alnum only).
+        let name = format!("slot-{reserved_slot_id}.json");
         atomic_write_json(&self.layout.done_dir(), &name, response)
     }
 
     /// Read a done/ response by slot_id (tests / integrators).
     pub fn read_done(&self, slot_id: &str) -> SlotResult<Option<SlotResponse>> {
-        let name = if slot_id.starts_with("slot-") {
-            format!("{slot_id}.json")
-        } else {
-            format!("slot-{slot_id}.json")
-        };
-        let path = self.layout.done_dir().join(name);
+        let reserved = normalize_slot_id_arg(slot_id)?;
+        let name = format!("slot-{reserved}.json");
+        let path = super::atomic::safe_child_path(&self.layout.done_dir(), &name)?;
         if !path.exists() {
             return Ok(None);
         }
@@ -310,6 +314,55 @@ impl SlotService {
     pub fn orphan_work_paths(&self) -> SlotResult<Vec<PathBuf>> {
         self.layout.list_orphan_work(self.config.orphan_age)
     }
+}
+
+/// Reserved slot id from a free/work/done filename (`slot-0007.json` → `0007`).
+///
+/// Restricted grammar: ASCII alphanumerics, `_`, `-` only — no path separators.
+pub fn reserved_slot_id_from_path(path: &Path) -> SlotResult<String> {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| SlotError::Invalid("slot path has no file name".into()))?;
+    reserved_slot_id_from_filename(name)
+}
+
+fn reserved_slot_id_from_filename(file_name: &str) -> SlotResult<String> {
+    let stem = file_name
+        .strip_suffix(".json")
+        .ok_or_else(|| SlotError::Invalid(format!("not a .json slot file: {file_name}")))?;
+    let id = stem.strip_prefix("slot-").ok_or_else(|| {
+        SlotError::Invalid(format!("slot file must be named slot-<id>.json: {file_name}"))
+    })?;
+    validate_slot_id_grammar(id)?;
+    Ok(id.to_string())
+}
+
+/// Accept `0007` or `slot-0007` as a reader argument; reject traversal.
+fn normalize_slot_id_arg(slot_id: &str) -> SlotResult<String> {
+    let id = slot_id.strip_prefix("slot-").unwrap_or(slot_id);
+    validate_slot_id_grammar(id)?;
+    Ok(id.to_string())
+}
+
+fn validate_slot_id_grammar(id: &str) -> SlotResult<()> {
+    if id.is_empty() {
+        return Err(SlotError::Invalid("empty slot_id".into()));
+    }
+    if id.contains('/') || id.contains('\\') || id.contains('\0') || id.contains("..") {
+        return Err(SlotError::Invalid(format!(
+            "slot_id contains forbidden path characters: {id:?}"
+        )));
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(SlotError::Invalid(format!(
+            "slot_id has invalid characters (allowed: A-Za-z0-9_-): {id:?}"
+        )));
+    }
+    Ok(())
 }
 
 /// Apply add/modify/delete inside an open store transaction (slot idempotency).

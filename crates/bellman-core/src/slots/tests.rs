@@ -772,3 +772,163 @@ fn atomic_write_never_leaves_partial_final() {
     let v: serde_json::Value = serde_json::from_str(&s).unwrap();
     assert_eq!(v["a"], 1);
 }
+
+#[test]
+fn atomic_write_rejects_path_traversal_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let err = atomic_write_json(
+        dir.path(),
+        "slot-x/../../../escaped.json",
+        &serde_json::json!({"x": 1}),
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("unsafe") || err.to_string().contains("forbidden"),
+        "got {err}"
+    );
+    assert!(!dir.path().join("escaped.json").exists());
+    // Parent of dir must not gain escaped.json either.
+    assert!(!dir.path().parent().unwrap().join("escaped.json").exists());
+}
+
+#[test]
+fn slot_id_path_traversal_quarantined_no_escape_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("timers.db");
+    let mut store = Store::open_with(
+        &db,
+        OpenOptions {
+            refuse_network_fs: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let slots_root = dir.path().join("slots");
+    let service = SlotService::open(&slots_root, SlotConfig::default()).unwrap();
+
+    // Claim free/slot-0001.json shape — use first free stub.
+    let free = service.layout().list_free_files().unwrap();
+    let stub_path = free.first().unwrap().clone();
+    let stub: SlotRequest =
+        serde_json::from_slice(&read_capped(&stub_path, DEFAULT_MAX_READ_BYTES).unwrap()).unwrap();
+    let reserved = stub.slot_id.clone();
+    let name = stub_path.file_name().unwrap().to_str().unwrap().to_string();
+
+    let rid = Uuid::new_v4().to_string();
+    let evil = SlotRequest {
+        schema: SCHEMA_V1.to_string(),
+        slot_id: "slot-x/../../../escaped".into(),
+        request_id: Some(rid.clone()),
+        ts: Some(Utc::now()),
+        operation: Some(SlotOperation::Add),
+        payload: Some(serde_json::json!({
+            "app_name": "evil",
+            "timer_name": "escape",
+            "every_secs": 30,
+            "occurrence": { "kind": "interval", "every_secs": 30 },
+            "tz": "UTC"
+        })),
+    };
+    atomic_write_json(&service.layout().free_dir(), &name, &evil).unwrap();
+    service.poll(&mut store).unwrap();
+
+    // No timer created (quarantined before apply).
+    assert!(
+        store.list_timers().unwrap().is_empty(),
+        "traversal slot_id must not apply"
+    );
+    assert!(
+        store.get_slot_request(&rid).unwrap().is_none(),
+        "must not ledger a traversal request"
+    );
+
+    // No escape file outside done/.
+    let escaped = dir.path().join("escaped.json");
+    assert!(!escaped.exists(), "escaped.json must not appear at root");
+    let escaped_done = service
+        .layout()
+        .done_dir()
+        .join("slot-x")
+        .join("../../../escaped.json");
+    // Even if joined, the realpath outside done should not exist as written content.
+    assert!(
+        !dir.path().join("escaped.json").exists(),
+        "no write outside done"
+    );
+    let _ = escaped_done;
+
+    // Work/free must not retain the evil filled request as processable forever —
+    // it should be in bad/.
+    let bad: Vec<_> = fs::read_dir(service.layout().bad_dir())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        bad.iter().any(|n| n.contains(&format!("slot-{reserved}")) || n.contains(&name) || n.ends_with(".err.json")),
+        "expected quarantine in bad/, got {bad:?}"
+    );
+}
+
+#[test]
+fn cross_slot_id_forge_cannot_overwrite_foreign_done() {
+    let (_dir, mut store, service) = open_harness();
+
+    // Legitimate request in slot A.
+    let req_a = make_add_request("app-a", "legit", "interval", None, Some(40));
+    let rid_a = req_a.request_id.clone().unwrap();
+    service.publish(req_a).unwrap();
+    service.poll(&mut store).unwrap();
+    let prior = store.get_slot_request(&rid_a).unwrap().unwrap();
+    let resp_a: SlotResponse = serde_json::from_str(&prior.response_json).unwrap();
+    assert!(response_is_ok(&resp_a));
+    let done_a = service
+        .layout()
+        .done_dir()
+        .join(format!("slot-{}.json", prior.slot_id));
+    let before = fs::read(&done_a).expect("done A exists");
+    let victim_id = prior.slot_id.clone();
+
+    // Forge: free stub B with envelope slot_id = victim A's id.
+    let free = service.layout().list_free_files().unwrap();
+    let stub_b = free
+        .iter()
+        .find(|p| {
+            let b = read_capped(p, DEFAULT_MAX_READ_BYTES).unwrap();
+            serde_json::from_slice::<SlotRequest>(&b)
+                .map(|r| r.is_free_stub() && r.slot_id != victim_id)
+                .unwrap_or(false)
+        })
+        .expect("another free stub")
+        .clone();
+    let stub_req: SlotRequest =
+        serde_json::from_slice(&read_capped(&stub_b, DEFAULT_MAX_READ_BYTES).unwrap()).unwrap();
+    let name_b = stub_b.file_name().unwrap().to_str().unwrap().to_string();
+    let rid_b = Uuid::new_v4().to_string();
+    let forge = SlotRequest {
+        schema: SCHEMA_V1.to_string(),
+        slot_id: victim_id.clone(), // forge foreign slot
+        request_id: Some(rid_b),
+        ts: Some(Utc::now()),
+        operation: Some(SlotOperation::Add),
+        payload: Some(serde_json::json!({
+            "app_name": "forger",
+            "timer_name": "overwrite-me",
+            "every_secs": 99,
+            "occurrence": { "kind": "interval", "every_secs": 99 },
+            "tz": "UTC"
+        })),
+    };
+    atomic_write_json(&service.layout().free_dir(), &name_b, &forge).unwrap();
+    service.poll(&mut store).unwrap();
+
+    // Victim done/ response unchanged.
+    let after = fs::read(&done_a).unwrap();
+    assert_eq!(before, after, "foreign done/slot must not be overwritten");
+
+    // Forger must not create a second timer either (quarantined).
+    let timers = store.list_timers().unwrap();
+    assert_eq!(timers.len(), 1, "forge must not apply add");
+    assert_eq!(timers[0].name, "legit");
+    let _ = stub_req;
+}
