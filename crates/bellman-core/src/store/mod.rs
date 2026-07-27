@@ -410,6 +410,25 @@ impl Store {
         Ok(out)
     }
 
+    /// Look up the claim ledger row for `(timer_id, scheduled_for)`, if any.
+    pub fn get_claim_for(
+        &self,
+        timer_id: TimerId,
+        scheduled_for: DateTime<Utc>,
+    ) -> StoreResult<Option<RunClaim>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT run_id, timer_id, scheduled_for, status, claimed_at, completed_at
+             FROM runs WHERE timer_id = ?1 AND scheduled_for = ?2",
+        )?;
+        let row = stmt
+            .query_row(
+                params![timer_id.to_string(), fmt_dt(scheduled_for)],
+                row_to_claim,
+            )
+            .optional()?;
+        Ok(row)
+    }
+
     /// Checkpoint WAL with TRUNCATE (also invoked on clean drop).
     pub fn checkpoint_truncate(&self) -> StoreResult<()> {
         self.conn
@@ -657,7 +676,11 @@ fn row_to_claim(r: &rusqlite::Row<'_>) -> rusqlite::Result<RunClaim> {
 }
 
 fn fmt_dt(dt: DateTime<Utc>) -> String {
-    dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    // Nanoseconds: interval anchors and next_fire use full chrono precision.
+    // Millis truncation made `next_fire(after=stored)` return the same truncated
+    // instant (true fire was still strictly after the truncated value), so the
+    // scheduler could not advance past a just-fired slot.
+    dt.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
 }
 
 fn parse_dt(s: &str) -> StoreResult<DateTime<Utc>> {

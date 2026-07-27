@@ -15,15 +15,27 @@ pub type TimerId = Uuid;
 ///   [`MisfirePolicy::Coalesce`] with 1 h grace
 /// - **interval** (elapsed-time) → [`MisfirePolicy::Skip`] (grace = one period
 ///   at the scheduler layer; the policy itself is skip)
+/// - **catch_up** is optional with an explicit `max_catch_up` cap
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MisfirePolicy {
     /// Drop missed fires (default for interval timers).
+    ///
+    /// Scheduler grace for skip is one period on interval timers (and zero on
+    /// calendar kinds): within grace the due fire still runs once; beyond grace
+    /// the backlog is advanced without firing.
     Skip,
     /// Coalesce missed backlog into a single recovery fire (default for calendar).
     Coalesce {
         /// Grace window in seconds; recovery only if lateness ≤ grace.
         grace_secs: u64,
+    },
+    /// Replay missed fires up to `max_catch_up`, each still within grace.
+    CatchUp {
+        /// Grace window in seconds measured from *now* back to each missed fire.
+        grace_secs: u64,
+        /// Hard cap on how many missed fires to deliver on recovery.
+        max_catch_up: u32,
     },
 }
 
@@ -49,6 +61,17 @@ impl MisfirePolicy {
             Self::default_interval()
         } else {
             Self::default_calendar()
+        }
+    }
+
+    /// Explicit grace window in seconds, when the policy carries one.
+    ///
+    /// [`MisfirePolicy::Skip`] has no stored grace — the scheduler uses one
+    /// interval period (or zero for non-interval kinds).
+    pub fn grace_secs(&self) -> Option<u64> {
+        match self {
+            Self::Skip => None,
+            Self::Coalesce { grace_secs } | Self::CatchUp { grace_secs, .. } => Some(*grace_secs),
         }
     }
 }
