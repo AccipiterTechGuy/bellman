@@ -1,0 +1,683 @@
+//! Simulated-clock acceptance tests for the scheduler engine.
+
+use super::*;
+use crate::occurrence::{Occurrence, OccurrenceKind};
+use crate::store::{MisfirePolicy, NewTimer, Store, TimerPatch, TimerUpdate};
+use chrono::{Duration as ChronoDuration, NaiveTime, TimeZone, Utc};
+use std::time::Duration;
+
+fn open_tmp() -> (tempfile::TempDir, Store) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("timers.db");
+    let store = Store::open(&path).expect("open");
+    (dir, store)
+}
+
+/// Fixed epoch so next_fire math is independent of real Utc::now().
+fn epoch() -> chrono::DateTime<Utc> {
+    Utc.with_ymd_and_hms(2030, 6, 1, 12, 0, 0).unwrap()
+}
+
+fn interval_timer(
+    store: &mut Store,
+    name: &str,
+    every_secs: u64,
+    anchor: chrono::DateTime<Utc>,
+    last_fired: Option<chrono::DateTime<Utc>>,
+    misfire: MisfirePolicy,
+) -> crate::store::Timer {
+    let occ = Occurrence::new(
+        OccurrenceKind::Interval {
+            every_secs,
+            anchor,
+        },
+        "UTC",
+    )
+    .unwrap();
+    let mut new = NewTimer::new(name, occ);
+    new.last_fired = last_fired;
+    new.misfire = misfire;
+    store.create_timer(new).unwrap()
+}
+
+fn daily_timer(
+    store: &mut Store,
+    name: &str,
+    at: NaiveTime,
+    last_fired: Option<chrono::DateTime<Utc>>,
+    misfire: MisfirePolicy,
+) -> crate::store::Timer {
+    let occ = Occurrence::new(OccurrenceKind::Daily { at }, "UTC").unwrap();
+    let mut new = NewTimer::new(name, occ);
+    new.last_fired = last_fired;
+    new.misfire = misfire;
+    store.create_timer(new).unwrap()
+}
+
+#[test]
+fn suspend_resume_oversleep_recovered_interval_skip() {
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+    let clock = SimulatedClock::new(t0);
+
+    // 10 s interval; last fired at t0 so next = t0+10.
+    let timer = interval_timer(
+        &mut store,
+        "hf",
+        10,
+        t0,
+        Some(t0),
+        MisfirePolicy::Skip,
+    );
+    assert_eq!(
+        timer.next_fire_utc.unwrap(),
+        t0 + ChronoDuration::seconds(10)
+    );
+
+    let mut sched = Scheduler::new(
+        store,
+        clock.clone(),
+        RecordingAction::new(),
+        SchedulerConfig::default().with_jump_threshold(Duration::from_secs(3)),
+    );
+    sched.boot().unwrap();
+
+    // Normal advance to first fire.
+    clock.advance(Duration::from_secs(10));
+    let r = sched.tick().unwrap();
+    assert_eq!(r.fires.len(), 1);
+    assert_eq!(r.fires[0].timer_id, timer.id);
+
+    // Suspend: wall jumps +1 h, mono barely moves (already advanced in sleep path
+    // we simulate by wall-only jump after a mono tick baseline update).
+    // After the previous tick, last_wall/mono are synced. Jump wall only.
+    clock.advance_wall_only(Duration::from_secs(3600));
+    let r = sched.tick().unwrap();
+    assert!(r.clock_jump, "suspend must look like a clock jump");
+    // Skip policy + grace = one period (10 s): 1 h >> 10 s ⇒ no recovery fire.
+    assert!(
+        r.fires.is_empty(),
+        "interval skip must not fire missed backlog, got {}",
+        r.fires.len()
+    );
+
+    let next = sched
+        .store()
+        .get_timer(timer.id)
+        .unwrap()
+        .unwrap()
+        .next_fire_utc
+        .unwrap();
+    let now = clock.wall_now();
+    assert!(
+        next > now,
+        "next_fire {next} must be strictly after now {now}"
+    );
+
+    // Next interval after resume should still fire.
+    let wait = (next - now).to_std().unwrap();
+    clock.advance(wait);
+    let r = sched.tick().unwrap();
+    assert_eq!(r.fires.len(), 1, "post-recovery interval fires once");
+}
+
+#[test]
+fn weekend_gap_daily_coalesce_fires_once() {
+    let (_dir, mut store) = open_tmp();
+    // Daily at 09:00 UTC. Start Thursday 08:00 so next is Thursday 09:00, then
+    // jump the wall clock over the weekend.
+    let at = NaiveTime::from_hms_opt(9, 0, 0).unwrap();
+    let thursday_morning = Utc.with_ymd_and_hms(2030, 6, 6, 8, 0, 0).unwrap();
+    let clock = SimulatedClock::new(thursday_morning);
+
+    // last_fired = Wednesday 09:00 ⇒ next = Thursday 09:00
+    let last = Utc.with_ymd_and_hms(2030, 6, 5, 9, 0, 0).unwrap();
+    let timer = daily_timer(
+        &mut store,
+        "daily",
+        at,
+        Some(last),
+        MisfirePolicy::Coalesce {
+            // Cover Fri–Mon gap so recovery is allowed.
+            grace_secs: 5 * 24 * 3600,
+        },
+    );
+    let expected_thu = Utc.with_ymd_and_hms(2030, 6, 6, 9, 0, 0).unwrap();
+    assert_eq!(timer.next_fire_utc.unwrap(), expected_thu);
+
+    let mut sched = Scheduler::new(
+        store,
+        clock.clone(),
+        RecordingAction::new(),
+        SchedulerConfig::default(),
+    );
+    sched.boot().unwrap();
+
+    // Laptop closed all weekend: wall → Monday 10:00, mono frozen relative to last tick.
+    // First establish baseline at thursday morning via boot, then wall-only jump.
+    let monday = Utc.with_ymd_and_hms(2030, 6, 10, 10, 0, 0).unwrap();
+    clock.set_wall(monday);
+    // mono still ~0 while wall jumped days ⇒ huge divergence.
+    let r = sched.tick().unwrap();
+    assert!(r.clock_jump);
+    assert_eq!(
+        r.fires.len(),
+        1,
+        "coalesce must deliver exactly one recovery fire, got {}",
+        r.fires.len()
+    );
+    assert_eq!(r.fires[0].timer_id, timer.id);
+    match &r.fires[0].kind {
+        FireKind::Coalesced { missed_count } => assert!(*missed_count >= 1),
+        FireKind::Late { .. } | FireKind::OnTime => {}
+        other => panic!("unexpected kind: {other:?}"),
+    }
+
+    // No second fire on subsequent ticks without time advance.
+    let r2 = sched.tick().unwrap();
+    assert!(r2.fires.is_empty());
+
+    let t = sched.store().get_timer(timer.id).unwrap().unwrap();
+    assert!(t.next_fire_utc.unwrap() > monday);
+}
+
+#[test]
+fn interval_skips_missed_beyond_grace() {
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+    let clock = SimulatedClock::new(t0);
+    let timer = interval_timer(
+        &mut store,
+        "iv",
+        60,
+        t0,
+        Some(t0),
+        MisfirePolicy::Skip,
+    );
+
+    let mut sched = Scheduler::new(
+        store,
+        clock.clone(),
+        RecordingAction::new(),
+        SchedulerConfig::default(),
+    );
+    sched.boot().unwrap();
+
+    // Jump wall by 10 minutes (10 missed periods); mono frozen ⇒ jump + skip.
+    clock.advance_wall_only(Duration::from_secs(600));
+    let r = sched.tick().unwrap();
+    assert!(r.clock_jump);
+    assert!(r.fires.is_empty(), "skip must drop the backlog");
+    assert_eq!(sched.action().len(), 0);
+
+    let next = sched
+        .store()
+        .get_timer(timer.id)
+        .unwrap()
+        .unwrap()
+        .next_fire_utc
+        .unwrap();
+    assert!(next > clock.wall_now());
+}
+
+#[test]
+fn backward_jump_refires_nothing() {
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+    let clock = SimulatedClock::new(t0);
+
+    // One-shot at t0+30s; seed last_fired = t0 so next is independent of real now.
+    let at = (t0 + ChronoDuration::seconds(30)).naive_utc();
+    let mut new = NewTimer::new(
+        "once",
+        Occurrence::new(OccurrenceKind::Once { at }, "UTC").unwrap(),
+    );
+    new.last_fired = Some(t0);
+    new.misfire = MisfirePolicy::Coalesce { grace_secs: 3600 };
+    let timer = store.create_timer(new).unwrap();
+    assert_eq!(
+        timer.next_fire_utc.unwrap(),
+        t0 + ChronoDuration::seconds(30)
+    );
+
+    let mut sched = Scheduler::new(
+        store,
+        clock.clone(),
+        RecordingAction::new(),
+        SchedulerConfig::default(),
+    );
+    sched.boot().unwrap();
+
+    // Fire the one-shot.
+    clock.advance(Duration::from_secs(30));
+    let r = sched.tick().unwrap();
+    assert_eq!(r.fires.len(), 1);
+
+    // Wall jumps backward past the fire time.
+    clock.jump_wall_backward(Duration::from_secs(60));
+    let r = sched.tick().unwrap();
+    assert!(r.clock_jump);
+    assert!(
+        r.fires.is_empty(),
+        "backward jump must not re-fire completed one-shot"
+    );
+
+    let t = sched.store().get_timer(timer.id).unwrap().unwrap();
+    assert!(t.next_fire_utc.is_none(), "one-shot exhausted");
+    assert_eq!(t.last_fired, Some(t0 + ChronoDuration::seconds(30)));
+}
+
+#[test]
+fn horizon_refill_on_edit() {
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+    let clock = SimulatedClock::new(t0);
+
+    // Daily far in the future relative to short horizon — start with no near fire.
+    let at = NaiveTime::from_hms_opt(9, 0, 0).unwrap();
+    // last_fired today 09:00 at t0=12:00 ⇒ next = tomorrow 09:00.
+    let last = Utc.with_ymd_and_hms(2030, 6, 1, 9, 0, 0).unwrap();
+    let timer = daily_timer(
+        &mut store,
+        "daily",
+        at,
+        Some(last),
+        MisfirePolicy::default_calendar(),
+    );
+    let tomorrow_9 = Utc.with_ymd_and_hms(2030, 6, 2, 9, 0, 0).unwrap();
+    assert_eq!(timer.next_fire_utc.unwrap(), tomorrow_9);
+
+    // Horizon of 1 hour: tomorrow is outside.
+    let mut sched = Scheduler::new(
+        store,
+        clock.clone(),
+        RecordingAction::new(),
+        SchedulerConfig::default().with_horizon(Duration::from_secs(3600)),
+    );
+    sched.boot().unwrap();
+    assert_eq!(sched.heap_len(), 0, "tomorrow is outside 1h horizon");
+
+    // Edit: reschedule to fire in 5 minutes via a new once occurrence... or
+    // patch last_fired so next daily is soon. Easier: switch to 2s interval.
+    let handle = sched.control_handle();
+    {
+        let store = sched.store_mut();
+        let cur = store.get_timer(timer.id).unwrap().unwrap();
+        let occ = Occurrence::new(
+            OccurrenceKind::Interval {
+                every_secs: 2,
+                anchor: t0,
+            },
+            "UTC",
+        )
+        .unwrap();
+        store
+            .update_timer(TimerUpdate {
+                id: timer.id,
+                expected_revision: cur.revision,
+                patch: TimerPatch {
+                    occurrence: Some(occ),
+                    last_fired: Some(Some(t0)),
+                    misfire: Some(MisfirePolicy::Skip),
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+    }
+    handle.refill();
+    let r = sched.tick().unwrap();
+    assert!(r.refilled);
+    assert!(
+        sched.heap_len() >= 1,
+        "refill after edit must load the new near fire"
+    );
+    let (nf, id) = sched.peek_next().unwrap();
+    assert_eq!(id, timer.id);
+    assert_eq!(nf, t0 + ChronoDuration::seconds(2));
+}
+
+#[test]
+fn grace_boundary_coalesce_honored() {
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+    let at = NaiveTime::from_hms_opt(12, 0, 0).unwrap();
+    // last_fired yesterday 12:00 ⇒ next = t0 (today 12:00).
+    let yesterday = t0 - ChronoDuration::days(1);
+    let timer = daily_timer(
+        &mut store,
+        "grace",
+        at,
+        Some(yesterday),
+        MisfirePolicy::Coalesce { grace_secs: 3600 },
+    );
+    assert_eq!(timer.next_fire_utc.unwrap(), t0);
+
+    // Case A: lateness == grace (1 h) ⇒ fire.
+    let clock = SimulatedClock::new(t0 + ChronoDuration::seconds(3600));
+    let mut sched = Scheduler::new(
+        store,
+        clock.clone(),
+        RecordingAction::new(),
+        SchedulerConfig::default(),
+    );
+    // boot sees overdue within grace.
+    let r = {
+        // boot runs misfire_pass which delivers.
+        sched.boot().unwrap();
+        // boot already misfire-passed; collect via action.
+        sched.action().len()
+    };
+    assert_eq!(r, 1, "lateness == grace must fire");
+
+    // Case B: lateness == grace + 1 ⇒ skip.
+    let (_dir2, mut store2) = open_tmp();
+    let timer2 = daily_timer(
+        &mut store2,
+        "grace2",
+        at,
+        Some(yesterday),
+        MisfirePolicy::Coalesce { grace_secs: 3600 },
+    );
+    let clock2 = SimulatedClock::new(t0 + ChronoDuration::seconds(3601));
+    let mut sched2 = Scheduler::new(
+        store2,
+        clock2.clone(),
+        RecordingAction::new(),
+        SchedulerConfig::default(),
+    );
+    sched2.boot().unwrap();
+    assert_eq!(
+        sched2.action().len(),
+        0,
+        "lateness > grace must skip"
+    );
+    let next = sched2
+        .store()
+        .get_timer(timer2.id)
+        .unwrap()
+        .unwrap()
+        .next_fire_utc
+        .unwrap();
+    assert!(next > clock2.wall_now());
+}
+
+#[test]
+fn catch_up_respects_max_cap() {
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+    let clock = SimulatedClock::new(t0);
+    let timer = interval_timer(
+        &mut store,
+        "cu",
+        10,
+        t0,
+        Some(t0),
+        MisfirePolicy::CatchUp {
+            grace_secs: 3600,
+            max_catch_up: 3,
+        },
+    );
+    assert_eq!(
+        timer.next_fire_utc.unwrap(),
+        t0 + ChronoDuration::seconds(10)
+    );
+
+    let mut sched = Scheduler::new(
+        store,
+        clock.clone(),
+        RecordingAction::new(),
+        SchedulerConfig::default(),
+    );
+    sched.boot().unwrap();
+
+    // 100 s later ⇒ 10 missed; cap 3.
+    clock.advance_wall_only(Duration::from_secs(100));
+    let r = sched.tick().unwrap();
+    assert!(r.clock_jump);
+    assert_eq!(r.fires.len(), 3, "catch_up must honor max_catch_up");
+    for (i, f) in r.fires.iter().enumerate() {
+        assert_eq!(f.kind, FireKind::CatchUp { index: i as u32 });
+    }
+}
+
+#[test]
+fn claim_before_work_writes_run_row() {
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+    let clock = SimulatedClock::new(t0);
+    let timer = interval_timer(
+        &mut store,
+        "claim",
+        5,
+        t0,
+        Some(t0),
+        MisfirePolicy::Skip,
+    );
+
+    let mut sched = Scheduler::new(
+        store,
+        clock.clone(),
+        RecordingAction::new(),
+        SchedulerConfig::default(),
+    );
+    sched.boot().unwrap();
+    clock.advance(Duration::from_secs(5));
+    let r = sched.tick().unwrap();
+    assert_eq!(r.fires.len(), 1);
+
+    let run = sched
+        .store()
+        .get_run(r.fires[0].run_id)
+        .unwrap()
+        .expect("run row");
+    assert_eq!(run.timer_id, timer.id);
+    assert_eq!(run.status, crate::store::ClaimStatus::Completed);
+}
+
+#[test]
+fn high_frequency_stays_on_heap_outside_short_horizon() {
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+    let clock = SimulatedClock::new(t0);
+    // 2-minute interval (< 5 min HF threshold); next = t0+120.
+    let timer = interval_timer(
+        &mut store,
+        "hf",
+        120,
+        t0,
+        Some(t0),
+        MisfirePolicy::Skip,
+    );
+    // Horizon only 30 s — next at +120 is outside timers_due_by, but HF must load.
+    let mut sched = Scheduler::new(
+        store,
+        clock,
+        RecordingAction::new(),
+        SchedulerConfig::default().with_horizon(Duration::from_secs(30)),
+    );
+    sched.boot().unwrap();
+    assert_eq!(sched.heap_len(), 1);
+    assert_eq!(sched.peek_next().unwrap().1, timer.id);
+}
+
+#[test]
+fn chunked_sleep_capped_at_max_sleep() {
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+    let clock = SimulatedClock::new(t0);
+    let _ = interval_timer(
+        &mut store,
+        "far",
+        600,
+        t0,
+        Some(t0),
+        MisfirePolicy::Skip,
+    );
+    let mut sched = Scheduler::new(
+        store,
+        clock,
+        RecordingAction::new(),
+        SchedulerConfig::default()
+            .with_max_sleep(Duration::from_secs(30))
+            .with_horizon(Duration::from_secs(3600)),
+    );
+    sched.boot().unwrap();
+    // next fire in 600 s, max_sleep 30 ⇒ sleep 30.
+    assert_eq!(sched.next_sleep(), Duration::from_secs(30));
+}
+
+#[test]
+fn run_for_interval_fires_multiple_times() {
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+    let clock = SimulatedClock::new(t0);
+    let timer = interval_timer(
+        &mut store,
+        "iv",
+        2,
+        t0,
+        Some(t0),
+        MisfirePolicy::Skip,
+    );
+    let daily_at = NaiveTime::from_hms_opt(3, 0, 0).unwrap();
+    let _daily = daily_timer(
+        &mut store,
+        "daily",
+        daily_at,
+        Some(t0 - ChronoDuration::hours(1)),
+        MisfirePolicy::default_calendar(),
+    );
+
+    let mut sched = Scheduler::new(
+        store,
+        clock.clone(),
+        RecordingAction::new(),
+        SchedulerConfig::default().with_max_sleep(Duration::from_millis(200)),
+    );
+    sched.boot().unwrap();
+    let r = sched.run_for(Duration::from_secs(5)).unwrap();
+    // fires at t0+2 and t0+4 (t0+6 is at the boundary — may or may not)
+    assert!(
+        r.fires.len() >= 2,
+        "expected >=2 interval fires in 5s, got {} ({:?})",
+        r.fires.len(),
+        r.fires.iter().map(|f| f.scheduled_for).collect::<Vec<_>>()
+    );
+    assert!(r.fires.iter().all(|f| f.timer_id == timer.id));
+}
+
+
+#[test]
+fn mark_fired_advances_next_fire() {
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+    let clock = SimulatedClock::new(t0);
+    let timer = interval_timer(
+        &mut store,
+        "iv",
+        2,
+        t0,
+        Some(t0),
+        MisfirePolicy::Skip,
+    );
+    assert_eq!(timer.next_fire_utc.unwrap(), t0 + ChronoDuration::seconds(2));
+
+    let mut sched = Scheduler::new(
+        store,
+        clock.clone(),
+        RecordingAction::new(),
+        SchedulerConfig::default(),
+    );
+    sched.boot().unwrap();
+    clock.advance(Duration::from_secs(2));
+    let r = sched.tick().unwrap();
+    assert_eq!(r.fires.len(), 1, "fires: {:?}", r.fires);
+    let t = sched.store().get_timer(timer.id).unwrap().unwrap();
+    assert_eq!(t.last_fired, Some(t0 + ChronoDuration::seconds(2)));
+    assert_eq!(
+        t.next_fire_utc,
+        Some(t0 + ChronoDuration::seconds(4)),
+        "next must advance past last_fired; last={:?} next={:?}",
+        t.last_fired,
+        t.next_fire_utc
+    );
+}
+
+#[test]
+fn system_clock_interval_advances_and_refires() {
+    let (_dir, mut store) = open_tmp();
+    let now = Utc::now();
+    let occ = Occurrence::new(
+        OccurrenceKind::Interval {
+            every_secs: 1,
+            anchor: now,
+        },
+        "UTC",
+    )
+    .unwrap();
+    let mut new = NewTimer::new("sys", occ);
+    new.last_fired = Some(now);
+    new.misfire = MisfirePolicy::Skip;
+    let timer = store.create_timer(new).unwrap();
+    let first_next = timer.next_fire_utc.unwrap();
+    assert!(first_next > now);
+
+    let mut sched = Scheduler::new(
+        store,
+        SystemClock::new(),
+        RecordingAction::new(),
+        SchedulerConfig::default().with_max_sleep(Duration::from_millis(50)),
+    );
+    sched.boot().unwrap();
+    let r = sched.run_for(Duration::from_millis(2500)).unwrap();
+    assert!(
+        r.fires.len() >= 2,
+        "expected >=2 fires in 2.5s on 1s interval, got {} last={:?} next={:?}",
+        r.fires.len(),
+        sched.store().get_timer(timer.id).unwrap().unwrap().last_fired,
+        sched.store().get_timer(timer.id).unwrap().unwrap().next_fire_utc,
+    );
+    let t = sched.store().get_timer(timer.id).unwrap().unwrap();
+    assert!(t.next_fire_utc.unwrap() > t.last_fired.unwrap());
+}
+
+/// Regression: nanos-precision timestamps must round-trip so next_fire advances
+/// after a fire whose `scheduled_for` carried sub-millisecond components.
+#[test]
+fn store_update_after_fire_advances_subsecond_interval() {
+    let (_dir, mut store) = open_tmp();
+    let now = Utc::now();
+    let occ = Occurrence::new(
+        OccurrenceKind::Interval {
+            every_secs: 2,
+            anchor: now,
+        },
+        "UTC",
+    )
+    .unwrap();
+    let mut new = NewTimer::new("x", occ);
+    new.last_fired = Some(now);
+    let timer = store.create_timer(new).unwrap();
+    let scheduled = timer.next_fire_utc.unwrap();
+
+    let mut occ = timer.occurrence.clone();
+    occ.record_run();
+    let updated = store
+        .update_timer(TimerUpdate {
+            id: timer.id,
+            expected_revision: timer.revision,
+            patch: TimerPatch {
+                last_fired: Some(Some(scheduled)),
+                occurrence: Some(occ),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    assert_eq!(updated.last_fired, Some(scheduled));
+    assert!(
+        updated.next_fire_utc.unwrap() > scheduled,
+        "next {:?} must be > scheduled {:?}",
+        updated.next_fire_utc,
+        scheduled
+    );
+}

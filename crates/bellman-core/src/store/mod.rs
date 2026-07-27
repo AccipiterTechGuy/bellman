@@ -657,7 +657,11 @@ fn row_to_claim(r: &rusqlite::Row<'_>) -> rusqlite::Result<RunClaim> {
 }
 
 fn fmt_dt(dt: DateTime<Utc>) -> String {
-    dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    // Nanoseconds: interval anchors and next_fire use full chrono precision.
+    // Millis truncation made `next_fire(after=stored)` return the same truncated
+    // instant (true fire was still strictly after the truncated value), so the
+    // scheduler could not advance past a just-fired slot.
+    dt.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
 }
 
 fn parse_dt(s: &str) -> StoreResult<DateTime<Utc>> {
