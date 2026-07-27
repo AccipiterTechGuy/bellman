@@ -224,6 +224,34 @@ fn year_boundary_yearly() {
 // Interval unaffected by DST
 // ---------------------------------------------------------------------------
 
+/// Regression: occurrence index must not narrow to i32. A 1-second interval
+/// from a 1970 anchor has > i32::MAX periods by 2040; next_fire must still
+/// return the instant strictly after `after` (not wrap into the past).
+#[test]
+fn interval_index_beyond_i32_max_stays_strictly_after() {
+    let anchor = Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap();
+    let mut occ = Occurrence::new(
+        OccurrenceKind::Interval {
+            every_secs: 1,
+            anchor,
+        },
+        "UTC",
+    )
+    .unwrap();
+    let after = Utc.with_ymd_and_hms(2040, 1, 1, 0, 0, 0).unwrap();
+    let after_tz = after.with_timezone(&Tz::UTC);
+    // Sanity: periods from anchor exceed i32::MAX.
+    let periods = after.signed_duration_since(anchor).num_seconds();
+    assert!(periods > i64::from(i32::MAX));
+
+    let fire = occ.next_fire(after_tz).expect("fire");
+    assert!(
+        fire > after_tz,
+        "next_fire must be strictly after; after={after_tz} got={fire}"
+    );
+    assert_eq!(fire.with_timezone(&Utc), after + chrono::Duration::seconds(1));
+}
+
 #[test]
 fn interval_unaffected_by_dst_spring_forward() {
     // Anchor just before Helsinki spring-forward; period 1 hour.

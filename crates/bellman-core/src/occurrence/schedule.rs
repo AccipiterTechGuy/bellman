@@ -283,6 +283,9 @@ impl Occurrence {
     }
 
     /// Interval anchors to UTC elapsed time — never wall-clock / DST.
+    ///
+    /// Arithmetic stays in `i64` seconds (no `i32` narrowing) so long-lived
+    /// 1-second schedules remain correct past `i32::MAX` periods from the anchor.
     fn next_interval(
         &self,
         every_secs: u64,
@@ -292,20 +295,23 @@ impl Occurrence {
         if every_secs == 0 {
             return None;
         }
+        let every = i64::try_from(every_secs).ok()?;
+        if every <= 0 {
+            return None;
+        }
         let after_utc = after.with_timezone(&Utc);
-        let period = Duration::seconds(every_secs as i64);
 
         let next_utc = if after_utc < anchor {
             anchor
         } else {
-            let elapsed = after_utc.signed_duration_since(anchor);
-            let elapsed_secs = elapsed.num_seconds();
+            let elapsed_secs = after_utc.signed_duration_since(anchor).num_seconds();
             // `n` = index of the last fire at-or-before `after` (floor division).
             // The next fire strictly after is always index n+1, including when
             // `after` lands exactly on a fire boundary.
-            let n = elapsed_secs.div_euclid(every_secs as i64);
-            let next_n = n + 1;
-            anchor + period * (next_n as i32)
+            let n = elapsed_secs.div_euclid(every);
+            let next_n = n.checked_add(1)?;
+            let offset_secs = next_n.checked_mul(every)?;
+            anchor.checked_add_signed(Duration::seconds(offset_secs))?
         };
 
         // Convert to schedule tz for a uniform return type. Instant is fixed.
