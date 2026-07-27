@@ -94,9 +94,9 @@ fn all_kinds() -> Vec<(&'static str, Occurrence)> {
 #[test]
 fn schema_version_is_current_after_open() {
     let (_dir, store) = open_tmp();
-    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(store.schema_version().unwrap(), 3);
     let meta = store.meta().unwrap();
-    assert_eq!(meta.schema_version, 2);
+    assert_eq!(meta.schema_version, 3);
     assert!(meta.last_prune.is_none());
 }
 

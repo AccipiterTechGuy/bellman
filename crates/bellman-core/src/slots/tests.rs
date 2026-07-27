@@ -262,11 +262,28 @@ fn symlink_input_quarantined() {
         // On non-unix, skip (Windows reparse points need elevation).
         return;
     }
+    assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
     service.poll(&mut store).unwrap();
-    // Symlink should not remain as a processable free file; either removed
-    // or moved to bad/. The outside target must not be deleted blindly.
-    assert!(outside.exists());
-    // After poll, free stubs still hold the invariant.
+
+    // Link must be gone from free/ and quarantined under bad/ with .err.json.
+    assert!(
+        !link.exists(),
+        "symlink must not remain in free/ after poll"
+    );
+    assert!(outside.exists(), "quarantine must not delete the link target");
+    let bad_entries: Vec<_> = fs::read_dir(service.layout().bad_dir())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        bad_entries.iter().any(|n| n.contains("slot-symlink")),
+        "expected quarantined symlink in bad/, got {bad_entries:?}"
+    );
+    assert!(
+        bad_entries.iter().any(|n| n.ends_with(".err.json")),
+        "expected .err.json sidecar in bad/, got {bad_entries:?}"
+    );
     assert!(free_stub_count(&service) >= MIN_FREE_SLOTS);
 }
 
@@ -453,7 +470,8 @@ fn output_includes_run_events_from_runs_table() {
     let timer_id = resp.timer_id.unwrap();
     // Claim a run so events is non-empty on a subsequent modify.
     let scheduled = Utc::now();
-    store.claim_run(timer_id, scheduled).unwrap();
+    let claim = store.claim_run(timer_id, scheduled).unwrap();
+    assert_eq!(claim.event_sequence, 1);
 
     let mod_req = SlotRequest {
         schema: SCHEMA_V1.to_string(),
@@ -477,6 +495,212 @@ fn output_includes_run_events_from_runs_table() {
     assert!(response_is_ok(&resp), "{:?}", resp.error);
     assert!(!resp.events.is_empty(), "expected run events in output");
     assert_eq!(resp.events[0].event_sequence, 1);
+}
+
+#[test]
+fn concurrent_duplicate_request_id_single_side_effect() {
+    // Two free slots carry the same request_id; concurrent pollers must not
+    // create two timers — ledger + mutations are one Immediate transaction.
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("timers.db");
+    {
+        let _ = Store::open_with(
+            &db,
+            OpenOptions {
+                refuse_network_fs: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+    let slots_root = dir.path().join("slots");
+    let service = SlotService::open(&slots_root, SlotConfig::default()).unwrap();
+    for i in 200..210 {
+        let id = format!("{i:04}");
+        let name = format!("slot-{id}.json");
+        atomic_write_json(
+            &service.layout().free_dir(),
+            &name,
+            &SlotRequest::free_stub(&id),
+        )
+        .unwrap();
+    }
+
+    let rid = Uuid::new_v4().to_string();
+    let fixed_timer = Uuid::new_v4();
+    for i in 0..2 {
+        let free = service.layout().list_free_files().unwrap();
+        let stub_path = free
+            .iter()
+            .find(|p| {
+                let b = read_capped(p, DEFAULT_MAX_READ_BYTES).unwrap();
+                serde_json::from_slice::<SlotRequest>(&b)
+                    .map(|r| r.is_free_stub())
+                    .unwrap_or(false)
+            })
+            .unwrap()
+            .clone();
+        let stub: SlotRequest =
+            serde_json::from_slice(&read_capped(&stub_path, DEFAULT_MAX_READ_BYTES).unwrap())
+                .unwrap();
+        let req = SlotRequest {
+            schema: SCHEMA_V1.to_string(),
+            slot_id: stub.slot_id,
+            request_id: Some(rid.clone()),
+            ts: Some(Utc::now()),
+            operation: Some(SlotOperation::Add),
+            payload: Some(serde_json::json!({
+                "app_name": "app-dup",
+                "timer_name": format!("dup-{i}"),
+                "timer_id": fixed_timer,
+                "every_secs": 30,
+                "occurrence": { "kind": "interval", "every_secs": 30 },
+                "tz": "UTC"
+            })),
+        };
+        let name = stub_path.file_name().unwrap().to_str().unwrap();
+        atomic_write_json(&service.layout().free_dir(), name, &req).unwrap();
+    }
+
+    let barrier = Arc::new(Barrier::new(2));
+    let db = Arc::new(db);
+    let slots_root = Arc::new(slots_root);
+    let mut handles = Vec::new();
+    for _ in 0..2 {
+        let barrier = Arc::clone(&barrier);
+        let db = Arc::clone(&db);
+        let slots_root = Arc::clone(&slots_root);
+        handles.push(thread::spawn(move || {
+            let mut store = Store::open_with(
+                db.as_path(),
+                OpenOptions {
+                    refuse_network_fs: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let svc = SlotService::open(slots_root.as_path(), SlotConfig::default()).unwrap();
+            barrier.wait();
+            svc.poll(&mut store).unwrap()
+        }));
+    }
+    let mut total_processed = 0usize;
+    for h in handles {
+        total_processed += h.join().unwrap();
+    }
+    assert!(total_processed >= 1);
+
+    let store = Store::open_with(
+        db.as_path(),
+        OpenOptions {
+            refuse_network_fs: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let timers = store.list_timers().unwrap();
+    assert_eq!(
+        timers.len(),
+        1,
+        "duplicate request_id must create exactly one timer, got {}",
+        timers.len()
+    );
+    assert_eq!(timers[0].id, fixed_timer);
+    let prior = store.get_slot_request(&rid).unwrap().unwrap();
+    assert_eq!(prior.status, "ok");
+}
+
+#[test]
+fn unacked_events_drain_via_ack_through() {
+    // max_events=2; create 5 runs; first response gets 1..2, ack 2, next gets 3..4.
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("timers.db");
+    let mut store = Store::open_with(
+        &db,
+        OpenOptions {
+            refuse_network_fs: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let slots_root = dir.path().join("slots");
+    let service = SlotService::open(
+        &slots_root,
+        SlotConfig {
+            max_events: 2,
+            ..SlotConfig::default()
+        },
+    )
+    .unwrap();
+
+    let req = make_add_request("app-a", "ack-t", "interval", None, Some(60));
+    let rid = req.request_id.clone().unwrap();
+    service.publish(req).unwrap();
+    service.poll(&mut store).unwrap();
+    let prior = store.get_slot_request(&rid).unwrap().unwrap();
+    let resp: SlotResponse = serde_json::from_str(&prior.response_json).unwrap();
+    let timer_id = resp.timer_id.unwrap();
+
+    for i in 0..5 {
+        store
+            .claim_run(timer_id, Utc::now() + chrono::Duration::seconds(i))
+            .unwrap();
+    }
+    assert_eq!(store.runs_for_timer(timer_id).unwrap().len(), 5);
+
+    let m1 = SlotRequest {
+        schema: SCHEMA_V1.to_string(),
+        slot_id: String::new(),
+        request_id: Some(Uuid::new_v4().to_string()),
+        ts: Some(Utc::now()),
+        operation: Some(SlotOperation::Modify),
+        payload: Some(serde_json::json!({
+            "app_name": "app-a",
+            "timer_id": timer_id,
+            "timer_name": "ack-t-1",
+            "every_secs": 60,
+            "occurrence": { "kind": "interval", "every_secs": 60 }
+        })),
+    };
+    let m1id = m1.request_id.clone().unwrap();
+    service.publish(m1).unwrap();
+    service.poll(&mut store).unwrap();
+    let r1: SlotResponse =
+        serde_json::from_str(&store.get_slot_request(&m1id).unwrap().unwrap().response_json)
+            .unwrap();
+    assert_eq!(r1.events.len(), 2);
+    assert_eq!(r1.events[0].event_sequence, 1);
+    assert_eq!(r1.events[1].event_sequence, 2);
+
+    let m2 = SlotRequest {
+        schema: SCHEMA_V1.to_string(),
+        slot_id: String::new(),
+        request_id: Some(Uuid::new_v4().to_string()),
+        ts: Some(Utc::now()),
+        operation: Some(SlotOperation::Modify),
+        payload: Some(serde_json::json!({
+            "app_name": "app-a",
+            "timer_id": timer_id,
+            "timer_name": "ack-t-2",
+            "ack_through": 2,
+            "every_secs": 60,
+            "occurrence": { "kind": "interval", "every_secs": 60 }
+        })),
+    };
+    let m2id = m2.request_id.clone().unwrap();
+    service.publish(m2).unwrap();
+    service.poll(&mut store).unwrap();
+    let r2: SlotResponse =
+        serde_json::from_str(&store.get_slot_request(&m2id).unwrap().unwrap().response_json)
+            .unwrap();
+    assert_eq!(r2.events.len(), 2);
+    assert_eq!(r2.events[0].event_sequence, 3);
+    assert_eq!(r2.events[1].event_sequence, 4);
+    assert_eq!(store.last_acked_sequence(timer_id).unwrap(), 2);
+
+    store.ack_run_events(timer_id, 5).unwrap();
+    let leftover = store.unacked_runs_for_timer(timer_id, 64).unwrap();
+    assert!(leftover.is_empty());
 }
 
 #[test]

@@ -269,6 +269,8 @@ pub struct RunClaim {
     pub status: ClaimStatus,
     pub claimed_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
+    /// Durable monotonic sequence for this timer's run events (slot output feed).
+    pub event_sequence: u64,
 }
 
 /// Meta bookkeeping row (single-row table).

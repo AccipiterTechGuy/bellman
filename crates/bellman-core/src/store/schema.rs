@@ -4,7 +4,7 @@ use super::error::{StoreError, StoreResult};
 use rusqlite::Connection;
 
 /// Current on-disk schema version (also stored in `PRAGMA user_version` and `meta`).
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 /// Apply pending migrations. Safe to call on every open.
 pub fn migrate(conn: &Connection) -> StoreResult<()> {
@@ -23,6 +23,9 @@ pub fn migrate(conn: &Connection) -> StoreResult<()> {
     }
     if current < 2 {
         migrate_v2(conn)?;
+    }
+    if current < 3 {
+        migrate_v3(conn)?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
@@ -120,5 +123,40 @@ fn migrate_v2(conn: &Connection) -> StoreResult<()> {
         ",
     )
     .map_err(|e| StoreError::Sqlite(format!("migrate v2: {e}")))?;
+    Ok(())
+}
+
+/// Durable run event sequences + per-timer ack cursors for the slot output feed.
+fn migrate_v3(conn: &Connection) -> StoreResult<()> {
+    conn.execute_batch(
+        r"
+        -- Monotonic per-timer sequence for un-acked run events in slot output.
+        ALTER TABLE runs ADD COLUMN event_sequence INTEGER;
+
+        CREATE TABLE IF NOT EXISTS slot_event_acks (
+            timer_id              TEXT PRIMARY KEY NOT NULL,
+            last_acked_sequence   INTEGER NOT NULL DEFAULT 0
+        );
+        ",
+    )
+    .map_err(|e| StoreError::Sqlite(format!("migrate v3: {e}")))?;
+
+    // Backfill sequences for any pre-existing runs (stable order by scheduled_for, run_id).
+    conn.execute_batch(
+        r"
+        UPDATE runs
+        SET event_sequence = (
+            SELECT COUNT(*)
+            FROM runs AS r2
+            WHERE r2.timer_id = runs.timer_id
+              AND (
+                    r2.scheduled_for < runs.scheduled_for
+                 OR (r2.scheduled_for = runs.scheduled_for AND r2.run_id <= runs.run_id)
+              )
+        )
+        WHERE event_sequence IS NULL;
+        ",
+    )
+    .map_err(|e| StoreError::Sqlite(format!("migrate v3 backfill: {e}")))?;
     Ok(())
 }

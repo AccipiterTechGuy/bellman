@@ -216,12 +216,20 @@ fn list_json_files(dir: &Path) -> SlotResult<Vec<PathBuf>> {
         if name_s.ends_with(".err.json") {
             continue;
         }
-        if is_regular_file(&path) {
+        // Include regular files *and* symlinks. Symlinks must surface so poll
+        // can quarantine them; filtering them out left hostile links unhandled.
+        if is_regular_file(&path) || is_symlink_path(&path) {
             out.push(path);
         }
     }
     out.sort();
     Ok(out)
+}
+
+fn is_symlink_path(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 fn list_free_stubs(layout: &SlotLayout) -> SlotResult<Vec<PathBuf>> {

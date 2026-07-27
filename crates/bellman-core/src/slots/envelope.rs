@@ -146,6 +146,10 @@ pub struct SlotPayload {
     pub month: Option<u8>,
     #[serde(default)]
     pub cron: Option<String>,
+    /// Advance the durable un-acked run-event cursor through this sequence
+    /// (inclusive). Only moves forward; requires ownership of the timer.
+    #[serde(default)]
+    pub ack_through: Option<u64>,
 }
 
 impl SlotPayload {
