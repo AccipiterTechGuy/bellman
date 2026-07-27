@@ -261,20 +261,29 @@ pub fn app_info(state: State<'_, AppState>) -> AppInfo {
 /// (flat weekly-days, tagged action, kind discriminant). We convert to
 /// a core `NewTimer` inside the command so the store layer sees the
 /// same types as the CLI.
+///
+/// `enabled` defaults to `true` when absent (matches `Store::create_timer`).
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateTimerInput {
     pub name: String,
     pub occurrence: crate::web::WebOccurrenceDto,
     pub action: crate::web::WebActionDto,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 impl CreateTimerInput {
-    fn into_new_timer(self) -> Result<NewTimer, String> {
+    pub fn into_new_timer(self) -> Result<NewTimer, String> {
         let occurrence = self.occurrence.into_core_occurrence()?;
         let action = self.action.into_core_action();
         let mut new = NewTimer::new(self.name, occurrence);
         new.action = action;
+        new.enabled = self.enabled;
         Ok(new)
     }
 }

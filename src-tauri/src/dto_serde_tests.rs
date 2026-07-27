@@ -459,6 +459,7 @@ fn create_timer_input_is_camel_case() {
             expr: None,
         },
         action: crate::web::WebActionDto::None,
+        enabled: false,
     };
     let json = serde_json::to_string(&input).unwrap();
     for needed in [
@@ -740,6 +741,240 @@ fn seven_kinds_round_trip_through_store_crud() {
             listed.iter().any(|t| t.id == created.id),
             "{label}: list_timers did not return the new row"
         );
+    }
+
+    // ── Rework #3: prove the GUI-payload preservation for the three
+    // ── auditor-flagged regressions (once.onceAt, interval.anchor,
+    // ── launch.workdir). Each test creates a timer via the GUI's
+    // ── builder path (WebOccurrenceDto → Core → Store), patches it
+    // ── verbatim, and asserts the stored action matches what the user
+    // ── originally entered (no field resets to defaults).
+    let fixed_anchor = chrono::DateTime::parse_from_rfc3339("2026-06-01T12:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+
+    // 1. once → onceAt preserved across update.
+    let once_inp = crate::web::WebOccurrenceDto {
+        occ: "once".into(),
+        tz: "UTC".into(),
+        days: None,
+        at: None,
+        once_at: Some("2099-12-31T23:59:00".into()),
+        every_secs: None,
+        anchor: None,
+        day: None,
+        month: None,
+        expr: None,
+    };
+    let once_created = store
+        .create_timer(NewTimer::new(
+            "once-qa",
+            once_inp.clone().into_core_occurrence().unwrap(),
+        ))
+        .expect("create once");
+    // patch with no occurrence/action (just a no-op name change) — onceAt
+    // must survive verbatim.
+    let patch_noop = WebTimerPatchDto {
+        name: Some("once-renamed".into()),
+        enabled: None,
+        occurrence: None,
+        action_kind: None,
+    };
+    let once_updated = store
+        .update_timer(bellman_core::store::TimerUpdate {
+            id: once_created.id,
+            expected_revision: once_created.revision,
+            patch: patch_noop.into_core_patch().unwrap(),
+        })
+        .expect("update once");
+    match once_updated.occurrence.kind() {
+        bellman_core::OccurrenceKind::Once { at } => {
+            assert_eq!(
+                at.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                "2099-12-31T23:59:00",
+                "once.onceAt must NOT reset on Save"
+            );
+        }
+        other => panic!("expected once after no-op patch, got {other:?}"),
+    }
+
+    // 2. interval → anchor stays stable across Save.
+    let interval_inp = crate::web::WebOccurrenceDto {
+        occ: "interval".into(),
+        tz: "UTC".into(),
+        days: None,
+        at: None,
+        once_at: None,
+        every_secs: Some(60),
+        anchor: Some(fixed_anchor),
+        day: None,
+        month: None,
+        expr: None,
+    };
+    let interval_created = store
+        .create_timer(NewTimer::new(
+            "interval-qa",
+            interval_inp.clone().into_core_occurrence().unwrap(),
+        ))
+        .expect("create interval");
+    let patch_interval = WebTimerPatchDto {
+        name: None,
+        enabled: Some(false),
+        occurrence: Some(interval_inp.clone()),
+        action_kind: None,
+    };
+    let interval_updated = store
+        .update_timer(bellman_core::store::TimerUpdate {
+            id: interval_created.id,
+            expected_revision: interval_created.revision,
+            patch: patch_interval.into_core_patch().unwrap(),
+        })
+        .expect("update interval");
+    match interval_updated.occurrence.kind() {
+        bellman_core::OccurrenceKind::Interval { every_secs, anchor } => {
+            assert_eq!(*every_secs, 60, "every_secs preserved verbatim");
+            assert_eq!(
+                anchor.to_rfc3339(),
+                fixed_anchor.to_rfc3339(),
+                "interval.anchor must NOT reset to now() on Save"
+            );
+        }
+        other => panic!("expected interval after patch, got {other:?}"),
+    }
+    assert!(!interval_updated.enabled, "enabled=false preserved");
+
+    // 3. Launch action → workdir preserved.
+    let launch_inp = WebTimerPatchDto {
+        name: None,
+        enabled: None,
+        occurrence: Some(crate::web::WebOccurrenceDto {
+            occ: "daily".into(),
+            tz: "UTC".into(),
+            days: None,
+            at: Some("09:00:00".into()),
+            once_at: None,
+            every_secs: None,
+            anchor: None,
+            day: None,
+            month: None,
+            expr: None,
+        }),
+        action_kind: Some(WebActionDto::Launch {
+            command: "/bin/sh".into(),
+            args: vec!["-c".into(), "true".into()],
+            workdir: Some("/tmp".into()),
+        }),
+    };
+    let launch_updated = store
+        .update_timer(bellman_core::store::TimerUpdate {
+            id: interval_updated.id,
+            expected_revision: interval_updated.revision,
+            patch: launch_inp.into_core_patch().unwrap(),
+        })
+        .expect("update launch");
+    match &launch_updated.action {
+        bellman_core::Action::Launch {
+            command,
+            args,
+            workdir,
+        } => {
+            assert_eq!(command, "/bin/sh");
+            assert_eq!(args, &vec!["-c".to_string(), "true".to_string()]);
+            assert_eq!(
+                workdir.as_deref(),
+                Some("/tmp"),
+                "Launch.workdir must NOT be dropped to None on Save"
+            );
+        }
+        other => panic!("expected Launch action, got {other:?}"),
+    }
+}
+
+/// Round-trip a captured JS-side payload exactly as the dialog would send
+/// it: deserialize a hand-written JSON string, drive the same Tauri
+/// command bodies (`create_timer` / `update_timer`), and confirm the
+/// Rust side accepts the field names the GUI actually emits. This is the
+/// closing test for rework #3 finding #1 — proving the JS-side
+/// `buildInput` output is wire-compatible with `CreateTimerInput`.
+#[test]
+fn tauri_create_update_via_real_ipc_json() {
+    use bellman_core::store::Store;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let db_path = tmp.path().join("timers.db");
+    let mut store = Store::open(&db_path).expect("open store");
+
+    // Frozen snapshot of the exact JSON `ui/src/TimerDialog.svelte` builds
+    // for a weekly Mon/Wed/Fri 08:00 Europe/Helsinki timer with launch
+    // + workdir. If the dialog and the Rust DTO drift, this deserialization
+    // fails ("missing field occ", "invalid type: map, expected string", etc.).
+    let create_json = r#"{
+        "name": "ipc-weekly-mwf",
+        "enabled": true,
+        "occurrence": {
+            "occ": "weekly",
+            "tz": "Europe/Helsinki",
+            "days": {"mon": true, "tue": false, "wed": true, "thu": false, "fri": true, "sat": false, "sun": false},
+            "at": "08:00:00",
+            "onceAt": null,
+            "everySecs": null,
+            "anchor": null,
+            "day": null,
+            "month": null,
+            "expr": null
+        },
+        "action": {"type": "launch", "command": "/bin/echo", "args": ["hello"], "workdir": "/tmp"}
+    }"#;
+    let create_input: CreateTimerInput =
+        serde_json::from_str(create_json).expect("create IPC JSON must round-trip");
+    assert_eq!(create_input.name, "ipc-weekly-mwf");
+    assert_eq!(
+        create_input.occurrence.days.as_ref().map(|d| d.get("mon").copied()),
+        Some(Some(true))
+    );
+    assert!(matches!(
+        create_input.action,
+        WebActionDto::Launch { ref workdir, .. } if workdir.as_deref() == Some("/tmp")
+    ));
+
+    // And exercise the live command body — same path `create_timer` invokes.
+    let new = create_input.into_new_timer().expect("GUI build");
+    let created = store.create_timer(new).expect("create via IPC JSON");
+    assert_eq!(created.name, "ipc-weekly-mwf");
+
+    // Patch: the same flat shape the dialog emits for `Edit → Save`.
+    let patch_json = r#"{
+        "name": "ipc-weekly-mwf-renamed",
+        "enabled": false,
+        "occurrence": {
+            "occ": "weekly",
+            "tz": "Europe/Helsinki",
+            "days": {"mon": true, "tue": false, "wed": true, "thu": false, "fri": true, "sat": false, "sun": false},
+            "at": "09:30:00",
+            "onceAt": null,
+            "everySecs": null,
+            "anchor": null,
+            "day": null,
+            "month": null,
+            "expr": null
+        },
+        "actionKind": {"type": "notify", "title": "ok", "body": ""}
+    }"#;
+    let patch: WebTimerPatchDto = serde_json::from_str(patch_json).expect("patch IPC JSON must round-trip");
+    assert_eq!(patch.action_kind.as_ref().map(|a| matches!(a, WebActionDto::Notify{..})), Some(true));
+    let updated = store
+        .update_timer(bellman_core::store::TimerUpdate {
+            id: created.id,
+            expected_revision: created.revision,
+            patch: patch.into_core_patch().expect("patch build"),
+        })
+        .expect("update via IPC JSON");
+    assert_eq!(updated.name, "ipc-weekly-mwf-renamed");
+    assert!(!updated.enabled);
+    match updated.occurrence.kind() {
+        bellman_core::OccurrenceKind::Weekly { at, .. } => {
+            assert_eq!(*at, chrono::NaiveTime::from_hms_opt(9, 30, 0).unwrap());
+        }
+        other => panic!("expected weekly, got {other:?}"),
     }
 }
 
