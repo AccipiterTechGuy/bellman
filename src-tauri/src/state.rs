@@ -149,8 +149,10 @@ pub fn resolve_timer(
 
 /// Subset of `RunNowOutcome` we expose over Tauri. Simpler than the full
 /// internal shape; the webview only needs id, name, run_id, message, and
-/// the updated timer's enabled/next_fire fields.
+/// the updated timer's enabled/next_fire fields. camelCase at the IPC
+/// boundary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RunNowResponse {
     pub timer_id: Uuid,
     pub name: String,

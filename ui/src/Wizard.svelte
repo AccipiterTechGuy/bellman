@@ -12,9 +12,10 @@
   onMount(async () => {
     try {
       const s = await wizardStatus();
+      // Server serializes with #[serde(rename_all = "camelCase")].
       autostart = s?.defaults?.autostart ?? autostart;
-      startMinimized = s?.defaults?.start_minimized ?? startMinimized;
-      wakeEnabled = s?.defaults?.wake_enabled ?? wakeEnabled;
+      startMinimized = s?.defaults?.startMinimized ?? startMinimized;
+      wakeEnabled = s?.defaults?.wakeEnabled ?? wakeEnabled;
     } catch {}
   });
 

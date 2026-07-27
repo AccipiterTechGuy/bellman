@@ -141,7 +141,7 @@
   {#if selectedId}
     <div class="log-panel">
       <header>
-        <span>Event log tail (most recent first) — {log.total} record{log.total === 1 ? '' : 's'}{log.skipped ? `, ${log.skipped} skipped` : ''}</span>
+        <span>Event log tail (most recent first) — {log.totalRecords} record{log.totalRecords === 1 ? '' : 's'}{log.skipped ? `, ${log.skipped} skipped` : ''}</span>
         <button class="btn" onclick={() => { selectedId = null; log = { events: [], total: 0, skipped: 0 }; }}>Close</button>
       </header>
       {#if log.events.length === 0}

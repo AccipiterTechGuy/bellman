@@ -20,7 +20,11 @@ use crate::state::{AppState, RunNowResponse};
 
 /// `Timer` shape the webview consumes. Mirrors the core type but with a
 /// `tz_name` shortcut so the UI does not have to dig into `occurrence.tz`.
+///
+/// Serialized as **camelCase** so the webview's idiomatic JS bindings
+/// (`timer.nextFireUtc`, `timer.lastFired`) match the Rust field names.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TimerDto {
     pub id: Uuid,
     pub name: String,
@@ -189,8 +193,9 @@ pub struct ListLogTailArgs {
     pub timer_id: Option<String>,
     pub limit: Option<usize>,
 }
-
+/// Recent events from the JSONL log. camelCase at the IPC boundary.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LogTailDto {
     pub events: Vec<EventRecord>,
     pub total_records: usize,
@@ -294,8 +299,10 @@ pub fn wizard_re_run(state: State<'_, AppState>) -> WizardStatus {
     }
 }
 
-/// `app_info` — app metadata the UI uses in headers / settings.
+/// `app_info` — app metadata the UI uses in headers / settings. camelCase
+/// at the IPC boundary.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppInfo {
     pub data_dir: String,
     pub db_path: String,
