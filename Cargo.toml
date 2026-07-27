@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/bellman-core",
     "crates/bellman-cli",
+    "src-tauri",
 ]
 
 [workspace.package]

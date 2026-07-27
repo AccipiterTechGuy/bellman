@@ -1,0 +1,37 @@
+//! First-run wizard data (the question the modal asks the user).
+
+use serde::{Deserialize, Serialize};
+
+/// The three questions the wizard asks. The webview ships a single
+/// `wizard_set_choice` command carrying this struct.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WizardChoice {
+    /// "Launch Bellman automatically when I log in?" (XDG autostart / macOS
+    /// Login Item / Windows Run key).
+    pub autostart: bool,
+    /// "Start hidden in the system tray, or show the window?" Persists as
+    /// `start_minimized` in the config.
+    pub start_minimized: bool,
+    /// "Try to wake this machine from sleep so timers fire on time?"
+    /// Stored for C11; C7 itself does not implement wake yet.
+    pub wake_enabled: bool,
+}
+
+impl Default for WizardChoice {
+    fn default() -> Self {
+        Self {
+            autostart: false,
+            start_minimized: false,
+            wake_enabled: false,
+        }
+    }
+}
+
+/// What the webview asks for at startup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WizardStatus {
+    /// True when the wizard has been completed at least once.
+    pub completed: bool,
+    /// Default values to pre-fill the modal (last answer or product default).
+    pub defaults: WizardChoice,
+}
