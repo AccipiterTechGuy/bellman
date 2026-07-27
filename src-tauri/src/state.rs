@@ -61,13 +61,29 @@ impl AppState {
     pub fn start_scheduler(&self) {
         let mut store = self.store.lock();
         let cfg = SchedulerConfig::default();
-        let runner = ActionRunner::new(ActionRunnerConfig::default())
+        // Open the JSONL event log once and hand it to the runner so
+        // scheduled fires (not just run-now) land in events.current.jsonl.
+        // Without this, the per-timer "live log tail" panel in the GUI
+        // would only see events from manual run-now invocations, and the
+        // docs/QA_P3.md "window close leaves engine firing" check would
+        // be unprovable.
+        let event_log = match bellman_core::EventLog::open_under(&self.data_dir) {
+            Ok(log) => Some(log),
+            Err(e) => {
+                log::error!("bellman: could not open event log under {}: {e}", self.data_dir.display());
+                None
+            }
+        };
+        let mut runner = ActionRunner::new(ActionRunnerConfig::default())
             .with_notify_sink(self.notify_sink.clone());
+        if let Some(log) = event_log {
+            runner = runner.with_event_log(log);
+        }
         // Same db path: the scheduler opens its own connection on a clone.
         // (SQLite is happy with multiple readers + one writer; WAL mode is
         // enabled by `Store::open_with`.)
         let scheduler_store_path = self.data_dir.join("timers.db");
-        let mut sched_store = bellman_core::open_store(&scheduler_store_path)
+        let sched_store = bellman_core::open_store(&scheduler_store_path)
             .expect("scheduler store open");
         let pause_all = *self.pause_all.lock();
         let mut sched = if pause_all {
