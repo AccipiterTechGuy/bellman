@@ -12,3 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 bellman-core = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
+chrono-tz = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
