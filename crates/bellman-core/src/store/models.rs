@@ -9,6 +9,12 @@ use uuid::Uuid;
 pub type TimerId = Uuid;
 
 /// Per-timer misfire / catch-up policy.
+///
+/// Product defaults (PLAN / BUILD_PLAN):
+/// - **calendar** kinds (once/daily/weekly/monthly/yearly/cron) →
+///   [`MisfirePolicy::Coalesce`] with 1 h grace
+/// - **interval** (elapsed-time) → [`MisfirePolicy::Skip`] (grace = one period
+///   at the scheduler layer; the policy itself is skip)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MisfirePolicy {
@@ -21,9 +27,29 @@ pub enum MisfirePolicy {
     },
 }
 
-impl Default for MisfirePolicy {
-    fn default() -> Self {
-        Self::Coalesce { grace_secs: 3600 }
+impl MisfirePolicy {
+    /// Default calendar grace (1 hour).
+    pub const CALENDAR_GRACE_SECS: u64 = 3600;
+
+    /// Product default for calendar (wall-clock) occurrence kinds.
+    pub fn default_calendar() -> Self {
+        Self::Coalesce {
+            grace_secs: Self::CALENDAR_GRACE_SECS,
+        }
+    }
+
+    /// Product default for interval (elapsed-time) occurrence kinds.
+    pub fn default_interval() -> Self {
+        Self::Skip
+    }
+
+    /// Choose the product default from the occurrence kind.
+    pub fn for_occurrence(occ: &Occurrence) -> Self {
+        if occ.kind().is_elapsed_time() {
+            Self::default_interval()
+        } else {
+            Self::default_calendar()
+        }
     }
 }
 
@@ -124,13 +150,16 @@ pub struct NewTimer {
 }
 
 impl NewTimer {
+    /// Build a new timer with product-default policies for the occurrence kind
+    /// (interval → misfire Skip; calendar → Coalesce 1 h).
     pub fn new(name: impl Into<String>, occurrence: Occurrence) -> Self {
+        let misfire = MisfirePolicy::for_occurrence(&occurrence);
         Self {
             id: None,
             name: name.into(),
             enabled: true,
             occurrence,
-            misfire: MisfirePolicy::default(),
+            misfire,
             overlap: OverlapPolicy::default(),
             retry: RetryPolicy::default(),
             tags: Vec::new(),

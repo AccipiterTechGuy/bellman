@@ -365,6 +365,63 @@ fn wal_and_pragmas_engaged() {
 }
 
 #[test]
+fn new_timer_misfire_defaults_by_occurrence_kind() {
+    let anchor = Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap();
+    let interval = Occurrence::new(
+        OccurrenceKind::Interval {
+            every_secs: 30,
+            anchor,
+        },
+        "UTC",
+    )
+    .unwrap();
+    let calendar = once_at(2030, 8, 1, 0, 0, 0);
+
+    let i = NewTimer::new("interval", interval);
+    assert_eq!(
+        i.misfire,
+        MisfirePolicy::Skip,
+        "interval default must be Skip"
+    );
+
+    let c = NewTimer::new("calendar", calendar);
+    assert_eq!(
+        c.misfire,
+        MisfirePolicy::Coalesce {
+            grace_secs: MisfirePolicy::CALENDAR_GRACE_SECS
+        },
+        "calendar default must be Coalesce 1h"
+    );
+
+    // Persisted: create_timer keeps the NewTimer defaults.
+    let (_dir, mut store) = open_tmp();
+    let ti = store
+        .create_timer(NewTimer::new(
+            "i",
+            Occurrence::new(
+                OccurrenceKind::Interval {
+                    every_secs: 60,
+                    anchor,
+                },
+                "UTC",
+            )
+            .unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(ti.misfire, MisfirePolicy::Skip);
+
+    let tc = store
+        .create_timer(NewTimer::new("c", once_at(2030, 9, 1, 0, 0, 0)))
+        .unwrap();
+    assert_eq!(
+        tc.misfire,
+        MisfirePolicy::Coalesce {
+            grace_secs: 3600
+        }
+    );
+}
+
+#[test]
 fn action_and_policies_round_trip() {
     let (_dir, mut store) = open_tmp();
     let mut new = NewTimer::new("pol", once_at(2030, 6, 1, 0, 0, 0));
