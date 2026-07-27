@@ -25,6 +25,12 @@ Naming map (synthesis used the old working title): `time-watcher` → **bellman*
 Study these before/while building the matching module. "Steal" = read the idea,
 re-implement clean — no code copying without license care.
 
+**Local clones for grepping**: the code-level repos below are shallow-cloned at
+`~/reference_repos/bellman/<repo-name>` (croner-rust, Cronicle, kalarm, notify,
+pomodorolm, tokio-cron-scheduler, zeit — ~47 MB total). Build agents should
+read/grep there instead of browsing GitHub; docs-type links stay links. The
+folder is throwaway — deleted when v1 ships.
+
 | Repo / link | Use it for |
 |---|---|
 | https://github.com/tauri-apps/tauri + https://v2.tauri.app/learn/system-tray/ | Tauri v2 patterns: tray, windows, IPC commands |
