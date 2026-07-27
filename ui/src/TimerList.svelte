@@ -3,7 +3,7 @@
   import { listTimers, getTimer, setEnabled, runNow, listLogTail } from './api.js';
 
   /** @type {(text: string, kind?: 'info'|'err') => void} */
-  let { onToast, onPauseChange } = $props();
+  let { onToast, onPauseChange, onEdit, onCreate } = $props();
 
   let timers = $state([]);
   let selectedId = $state(null);
@@ -54,6 +54,11 @@
     }
   }
 
+  function openEdit(t, e) {
+    e.stopPropagation();
+    onEdit && onEdit(t);
+  }
+
   function select(t) {
     selectedId = (selectedId === t.id) ? null : t.id;
     refreshLog();
@@ -97,7 +102,10 @@
 
 <section class="section-title">
   <span>All timers</span>
-  <span style="font-weight: 400; text-transform: none; letter-spacing: 0;">{timers.length} timer{timers.length === 1 ? '' : 's'}</span>
+  <span style="font-weight: 400; text-transform: none; letter-spacing: 0; display: flex; gap: 12px; align-items: center;">
+    <span>{timers.length} timer{timers.length === 1 ? '' : 's'}</span>
+    <button class="btn primary" onclick={onCreate}>+ New timer</button>
+  </span>
 </section>
 
 {#if loading}
@@ -131,6 +139,7 @@
                   onclick={(e) => toggle(t, e)} tabindex="0"></span>
           </td>
           <td class="col-controls">
+            <button class="btn" onclick={(e) => openEdit(t, e)}>Edit</button>
             <button class="btn primary" onclick={(e) => fireNow(t, e)}>Run now</button>
           </td>
         </tr>

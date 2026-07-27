@@ -1,22 +1,29 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { isTauri, getPauseAll, setPauseAll, wizardStatus, appInfo, listen } from './api.js';
+  import { isTauri, getPauseAll, setPauseAll, wizardStatus, appInfo, listen, listTimers } from './api.js';
   import TimerList from './TimerList.svelte';
   import Wizard from './Wizard.svelte';
-  import StubPage from './StubPage.svelte';
+  import WeekPage from './WeekPage.svelte';
+  import MonthPage from './MonthPage.svelte';
+  import HistoryPage from './HistoryPage.svelte';
+  import TimerDialog from './TimerDialog.svelte';
 
   let page = $state('all');          // 'all' | 'week' | 'month' | 'history'
   let pauseAll = $state(false);
   let info = $state(null);
   let wizardOpen = $state(false);
   let toasts = $state([]);
+  let editingTimer = $state(null);   // null = closed, {} = new, timer = edit
+  let timers = $state([]);           // cached for week / month / dialog prefill
+  let refreshTick = $state(0);
 
-  function pushToast(text, kind = 'info', ttl = 3500) {
-    const id = Math.random().toString(36).slice(2);
-    toasts = [...toasts, { id, text, kind }];
-    setTimeout(() => {
-      toasts = toasts.filter((t) => t.id !== id);
-    }, ttl);
+  async function refreshTimers() {
+    try {
+      timers = await listTimers();
+    } catch (e) {
+      // vite dev (no backend) — leave empty.
+      timers = [];
+    }
   }
 
   async function refresh() {
@@ -26,6 +33,14 @@
     } catch (e) {
       pushToast(String(e), 'err');
     }
+  }
+
+  function pushToast(text, kind = 'info', ttl = 3500) {
+    const id = Math.random().toString(36).slice(2);
+    toasts = [...toasts, { id, text, kind }];
+    setTimeout(() => {
+      toasts = toasts.filter((t) => t.id !== id);
+    }, ttl);
   }
 
   async function togglePause() {
@@ -55,6 +70,16 @@
     refresh();
   }
 
+  function openCreate() { editingTimer = {}; }
+  function openEdit(t) { editingTimer = t; }
+  async function dialogClosed(saved) {
+    editingTimer = null;
+    if (saved) {
+      await refreshTimers();
+      refreshTick++;
+    }
+  }
+
   // Subscribe to backend events. We subscribe SYNCHRONOUSLY in onMount
   // (before any awaits) so the unsub closure is registered with
   // onDestroy before anything else can run; once the listen promise
@@ -75,6 +100,7 @@
   onMount(async () => {
     await refresh();
     await checkWizard();
+    await refreshTimers();
     listen('pause-all-changed', (e) => {
       const next = e?.payload;
       if (typeof next === 'boolean') {
@@ -88,7 +114,15 @@
         _unsubPausePlaceholder.realUnsub = realUnsub;
       }
     });
+    // Fires whenever the scheduler lands a fire (RunNow triggers this too).
+    listen('timer-fired', () => {
+      refreshTimers().catch(() => {});
+    }).then((u) => { if (_unsubPausePlaceholder.called) { try { u(); } catch {} } else { _unsubPausePlaceholder.realUnsub = u; } });
   });
+
+  // Derived: when the active page is week/month, hand them the cached list
+  // so they re-render without an extra IPC roundtrip. Tick is appended as
+  // a $effect dep via `void tick` inside each page so refreshes propagate.
 </script>
 
 <div class="topbar">
@@ -111,13 +145,18 @@
 
 <main>
   {#if page === 'all'}
-    <TimerList onToast={pushToast} onPauseChange={(p) => pauseAll = p} />
+    <TimerList
+      onToast={pushToast}
+      onPauseChange={(p) => pauseAll = p}
+      onEdit={openEdit}
+      onCreate={openCreate}
+    />
   {:else if page === 'week'}
-    <StubPage title="Week" hint="Weekly grid view lands in C8." />
+    <WeekPage onEdit={openEdit} onToast={pushToast} timers={timers} tick={refreshTick} />
   {:else if page === 'month'}
-    <StubPage title="Month" hint="Monthly grid view lands in C8." />
+    <MonthPage onEdit={openEdit} onToast={pushToast} timers={timers} tick={refreshTick} />
   {:else if page === 'history'}
-    <StubPage title="Run history" hint="Run-history view lands in C8." />
+    <HistoryPage onToast={pushToast} />
   {/if}
 </main>
 
@@ -125,8 +164,18 @@
   <Wizard onDone={onWizardDone} />
 {/if}
 
+{#if editingTimer !== null}
+  <TimerDialog
+    timer={editingTimer && editingTimer.id ? editingTimer : null}
+    onClose={dialogClosed}
+    onToast={pushToast}
+  />
+{/if}
+
 <div class="toasts">
   {#each toasts as t (t.id)}
     <div class="toast" class:err={t.kind === 'err'}>{t.text}</div>
   {/each}
 </div>
+
+<svelte:options accessors={true} />

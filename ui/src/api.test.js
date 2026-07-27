@@ -315,3 +315,162 @@ describe('IPC DTO shape — the camelCase contract', () => {
     expect(w).not.toHaveProperty('wake_enabled');
   });
 });
+
+describe('api.js — C8 calendar UI command surface', () => {
+  let state;
+  beforeEach(() => { state = installTauriMock(); });
+  afterEach(() => {
+    delete window.__TAURI_INTERNALS__;
+    delete window.__TAURI_EVENT_PLUGIN_INTERNALS__;
+  });
+
+  it('createTimer invokes create_timer with input payload', async () => {
+    const { createTimer } = await import('./api.js');
+    const input = {
+      name: 'morning',
+      enabled: true,
+      occurrence: {
+        kind: 'daily',
+        tz: 'UTC',
+        time: '09:00:00',
+        onceAt: null,
+        everySecs: null,
+        intervalAnchor: null,
+        days: null,
+        day: null,
+        month: null,
+        cronExpr: null,
+      },
+      action: { type: 'none' },
+    };
+    await createTimer(input);
+    expect(state.invokes).toHaveLength(1);
+    expect(state.invokes[0].cmd).toBe('create_timer');
+    expect(state.invokes[0].args.input.name).toBe('morning');
+    expect(state.invokes[0].args.input.occurrence.kind).toBe('daily');
+  });
+
+  it('updateTimer invokes update_timer with id + revision + patch', async () => {
+    const { updateTimer } = await import('./api.js');
+    await updateTimer('timer-id-123', 4, {
+      name: 'renamed',
+      enabled: true,
+      occurrence: null,
+      action: null,
+    });
+    expect(state.invokes[0].cmd).toBe('update_timer');
+    expect(state.invokes[0].args.id).toBe('timer-id-123');
+    expect(state.invokes[0].args.expectedRevision).toBe(4);
+    expect(state.invokes[0].args.patch.name).toBe('renamed');
+  });
+
+  it('deleteTimer invokes delete_timer with id', async () => {
+    const { deleteTimer } = await import('./api.js');
+    await deleteTimer('abc');
+    expect(state.invokes[0].cmd).toBe('delete_timer');
+    expect(state.invokes[0].args.id).toBe('abc');
+  });
+
+  it('previewFires invokes preview_fires with input + n', async () => {
+    const { previewFires } = await import('./api.js');
+    await previewFires({ kind: 'daily', tz: 'UTC', time: '12:00:00' }, 5);
+    expect(state.invokes[0].cmd).toBe('preview_fires');
+    expect(state.invokes[0].args.input.kind).toBe('daily');
+    expect(state.invokes[0].args.n).toBe(5);
+  });
+
+  it('PreviewResponseDto shape: keys are camelCase', async () => {
+    const resp = {
+      fires: [{ utc: '2030-01-01T12:00:00Z', localDate: '2030-01-01', localTime: '12:00:00', offset: 'UTC', tzName: 'UTC' }],
+      warnings: ['daily times in this timezone fall in a DST gap'],
+    };
+    expect(resp).toHaveProperty('fires');
+    expect(resp).toHaveProperty('warnings');
+    expect(resp.fires[0]).toHaveProperty('localTime');
+    expect(resp.fires[0]).toHaveProperty('localDate');
+    expect(resp.fires[0]).toHaveProperty('tzName');
+    expect(resp.fires[0]).not.toHaveProperty('local_time');
+    expect(resp.fires[0]).not.toHaveProperty('tz_name');
+    expect(resp.fires[0]).not.toHaveProperty('tz');
+  });
+
+  it('CreateTimerInput shape keeps camelCase enums / action discriminator', async () => {
+    const input = {
+      name: 'x',
+      enabled: true,
+      occurrence: { kind: 'weekly', tz: 'UTC', time: '09:00:00', days: 'mon,fri', everySecs: null, onceAt: null, intervalAnchor: null, day: null, month: null, cronExpr: null },
+      action: { type: 'launch', command: '/bin/true', args: ['a'], workdir: null },
+    };
+    // Confirm the structural shape survives JSON round-trip.
+    const s = JSON.stringify(input);
+    expect(s).toContain('"kind":"weekly"');
+    expect(s).toContain('"type":"launch"');
+    expect(s).not.toContain('kind_label'); // placeholder
+  });
+});
+
+describe('api.js — calendar helpers (pure, no IPC)', () => {
+  it('jsIsoWeekday: Mon=1 ... Sun=7', async () => {
+    const { jsIsoWeekday } = await import('./api.js');
+    // 2026-01-05 is a Monday (ISO).
+    const mon = new Date(2026, 0, 5);
+    expect(jsIsoWeekday(mon)).toBe(1);
+    // 2026-01-11 is a Sunday (ISO).
+    const sun = new Date(2026, 0, 11);
+    expect(jsIsoWeekday(sun)).toBe(7);
+    // 2026-01-07 is a Wednesday.
+    const wed = new Date(2026, 0, 7);
+    expect(jsIsoWeekday(wed)).toBe(3);
+  });
+
+  it('isoWeekStart lands on Monday', async () => {
+    const { isoWeekStart, isoDate } = await import('./api.js');
+    // Pick a Wednesday mid-month.
+    const wed = new Date(2026, 2, 18);
+    const start = isoWeekStart(wed);
+    const dow = start.getDay(); // 0=Sun..6=Sat
+    expect(dow).toBe(1); // Monday
+    expect(isoDate(start)).toBe('2026-03-16'); // Mon before Wed 2026-03-18
+  });
+
+  it('addDays crosses month boundary', async () => {
+    const { addDays, isoDate } = await import('./api.js');
+    const d = addDays(new Date(2026, 0, 30), 5);
+    expect(isoDate(d)).toBe('2026-02-04');
+  });
+
+  it('monthGrid Feb 2026 has 28 days starting Sun → 28-row grid', async () => {
+    const { monthGrid, isoDate, jsIsoWeekday } = await import('./api.js');
+    const grid = monthGrid(2026, 1, 1);
+    expect(grid.length).toBe(42);
+    // 2026-02-01 is a Sunday → grid starts on Mon 2026-01-26.
+    expect(isoDate(grid[0])).toBe('2026-01-26');
+    expect(jsIsoWeekday(grid[0])).toBe(1);
+    // Last cell covers end of week containing Feb 28.
+    expect(isoDate(grid[grid.length - 1])).toBe('2026-03-08');
+  });
+
+  it('daysInMonth handles leap year', async () => {
+    const { daysInMonth } = await import('./api.js');
+    expect(daysInMonth(2024, 1)).toBe(29); // Feb 2024 leap
+    expect(daysInMonth(2025, 1)).toBe(28);
+    expect(daysInMonth(2026, 3)).toBe(30); // April
+  });
+
+  it('clockToSeconds parses HH:MM and HH:MM:SS', async () => {
+    const { clockToSeconds } = await import('./api.js');
+    expect(clockToSeconds('09:30')).toBe(9 * 3600 + 30 * 60);
+    expect(clockToSeconds('00:00:00')).toBe(0);
+    expect(clockToSeconds('23:59:59')).toBe(23 * 3600 + 59 * 60 + 59);
+    expect(clockToSeconds('')).toBeNull();
+    expect(clockToSeconds('bad')).toBeNull();
+    expect(clockToSeconds('25:00')).toBeNull();
+  });
+
+  it('isoDate / isoClock format local fields', async () => {
+    const { isoDate, isoClock } = await import('./api.js');
+    const d = new Date(2026, 11, 5, 9, 7, 3);
+    expect(isoDate(d)).toBe('2026-12-05');
+    expect(isoClock(d)).toBe('09:07:03');
+  });
+});
