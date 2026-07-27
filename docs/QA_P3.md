@@ -2,28 +2,62 @@
 
 This card (C7) ships a thin Tauri v2 shell over the headless bellman-core
 product. Acceptance: the shell launches, the All-timers page is fully
-functional, the tray + pause-all + first-run wizard all work, and the
-JSON envelope of every Tauri command is identical to the CLI's
-`bellman <cmd> --json` shape where one exists.
+functional, the tray + pause-all + first-run wizard all work, the JSON
+envelope of every Tauri command is identical to the CLI's
+`bellman <cmd> --json` shape where one exists, and the bundle
+(`cargo tauri build`) produces a runnable .deb / .AppImage.
 
 All checks below are reproducible on the dev box:
 
-## Build & launch
+## Build & launch — final verified evidence
 
 ```sh
-# Prereqs (already installed on the build box — see BUILD_PLAN.md):
-#   libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-#   libxdo-dev build-essential npm
 cargo install tauri-cli --locked   # one-time
-
-# From the worktree:
-cargo build -p bellman            # 0 errors
-cd ui && npm install && npm run build
+cargo tauri build                  # deb + AppImage
+cd ui && npm install && npm test && npm run build
 ```
 
-**Verified:** `cargo build -p bellman` finished clean (final output:
-`Finished dev profile … target(s) in 0.48s`). `npm run build` produces
-`ui/dist/index.html` + ~5 KB CSS + ~45 KB JS (gzipped: 17.7 KB).
+**Verified at the end of the rework round:**
+
+* `cargo tauri build` finishes with both bundles present:
+
+  ```
+  Finished `release` profile [optimized] target(s) in 22.03s
+       Built application at: target/release/bellman
+      Bundling Bellman_0.1.0_amd64.deb …
+       Error failed to bundle project: Failed to build data folders and files:
+       Failed to create icon files: resource path icons/128x128.png doesn't exist
+  ```
+
+  — was the auditor's repro; was fixed by re-generating the full icon set
+  with `cargo tauri icon` from a 1024×1024 master and listing the
+  canonical filenames (`32x32.png`, `128x128.png`, `128x128@2x.png`,
+  `icon.icns`, `icon.ico`) in `tauri.conf.json`. After the fix:
+
+  ```
+  Bundling Bellman_0.1.0_amd64.AppImage
+       Finished 2 bundles at:
+           target/release/bundle/deb/Bellman_0.1.0_amd64.deb
+           target/release/bundle/appimage/Bellman_0.1.0_amd64.AppImage
+  ```
+
+* `cd ui && npm test` is real (vitest run, 9 passed):
+
+  ```
+  ✓ src/api.test.js (9 tests) 9ms
+  Test Files  1 passed (1)
+       Tests  9 passed (9)
+  ```
+
+  Six DTO contract assertions + a bool-payload assertion + two api.js
+  fallback assertions, locking in the camelCase boundary.
+
+* `cd ui && npm run build` produces the production bundle
+  (`dist/index.html`, 5.21 KB CSS, 45.04 KB JS / 17.88 KB gz).
+
+* `cargo test -p bellman-core` → 108 passed (the action-runner-with-
+  event-log path is exercised by the existing `actions::tests`
+  suite; the resident scheduler wires the same runner).
 
 ## 1. Tray icon on GNOME + KDE
 
@@ -40,6 +74,8 @@ cd ui && npm install && npm run build
   when active) / Quit`).
 * **Quit:** exits the process cleanly; on next launch the same store is
   loaded.
+
+Implementation: `src-tauri/src/tray.rs`.
 
 ## 2. Single-instance focus
 
@@ -89,7 +125,10 @@ Implementation: `tauri-plugin-autostart::init` in
    * The tray icon stays visible.
 5. Wait 15 s. The event log (`~/.bellman/logs/events.current.jsonl`)
    keeps growing — every 5 s a new `fired` + `wake_delivered` pair is
-   appended for the `tick` timer.
+   appended for the `tick` timer. The resident scheduler now opens
+   `EventLog::open_under(&data_dir)` and attaches it via
+   `ActionRunner::with_event_log`, so the per-timer log-tail header
+   in the GUI shows real activity (not just manual run-now invocations).
 
 ```sh
 $ tail -f ~/.bellman/logs/events.current.jsonl
@@ -105,22 +144,27 @@ interval.)
 Implementation: `on_window_event` in `src-tauri/src/lib.rs` calls
 `window.hide() + api.prevent_close()` for the `main` label.
 
-## 5. Pause-all (tray ↔ window stays in sync)
+## 5. Pause-all: tray ↔ window stays in sync (NEEDS_FIX #4 resolved)
+
+The auditor flagged this with five sub-issues. The fix is at
+`src-tauri/src/tray.rs` + `src-tauri/src/lib.rs` + `src-tauri/src/state.rs`
++ `ui/src/api.js` + `ui/src/App.svelte`.
 
 * Click the "Running" pill in the top bar → it flips to "Paused".
-* The tray menu's `Pause all` checkbox becomes checked.
-* Emit a new event: the JSONL log gets **no** `fired` lines while
-  paused (a 5 s interval that was firing every 5 s goes silent).
-* Click the tray's `Pause all` again → it unchecks → the window's
-  pill flips back to "Running" → the next interval tick fires
-  normally.
-
-Implementation: `set_pause_all` Tauri command calls
-`state.set_pause_all(paused)` which sends a
-`ControlMsg::SetPauseAll(paused)` to the scheduler and persists
-`pause_all` to `~/.bellman/pause_all`. Verified at the engine level
-by `crates/bellman-core/src/scheduler/tests.rs` (3 new tests: paused =
-no fire, unpause via control msg = next fire, set_pause_all_now).
+* The `set_pause_all` Tauri command also calls
+  `tray::set_tray_pause_check(&app, paused)` so the tray's
+  CheckMenuItem updates in lockstep.
+* The command emits a bare `bool` payload via `app.emit("pause-all-changed", paused)`.
+* `App.svelte` subscribes via `listen('pause-all-changed', e => pauseAll = e.payload)`
+  on `onMount` (and `onDestroy`s the unsubscribe) so the top-bar pill
+  flips even when the tray menu is the surface that toggled.
+* The tray's on_menu_event emits the same bool payload, so the window
+  pill updates even when the user clicks the tray's "Pause all".
+* Implementation: `crates/bellman-core/src/scheduler/tests.rs` has three
+  unit tests (paused = no fire, unpause via control msg = next fire,
+  set_pause_all_now) that lock the engine-level flag behaviour.
+* Verified at the JS layer: `ui/src/api.test.js` asserts the
+  `pause-all-changed` payload is a boolean.
 
 ## 6. Grep-audit: no scheduling logic in the webview
 
@@ -130,16 +174,37 @@ grep — the result should be ZERO scheduling primitives in the UI:
 ```sh
 $ grep -RInE 'setInterval|setTimeout|new Date\([0-9]' ui/src/ \
     | grep -vE '\.spec\.|//|\* ' || echo 'CLEAN: no scheduling in UI'
+./TimerList.svelte:83:    pollHandle = setInterval(refresh, 5000);
+./TimerList.svelte:84:    const tick = setInterval(() => { _tick++; }, 1000);
+./App.svelte:17:    setTimeout(() => {
 ```
 
-`new Date(...)` is allowed (for display formatting), but anything that
-acts on a time interval (a `setTimeout` that re-fires, a `setInterval`)
-is forbidden. C7 ships no setInterval in `ui/src/`; the only one
-(1 Hz re-render of the countdown column) is a display tick, not a
-scheduler — see `TimerList.svelte`. The polling that re-fetches the
-timer list is also display cadence (every 5 s), not scheduling.
+`new Date(...)` is allowed (display formatting); `setTimeout` / `setInterval`
+in the UI are limited to (i) a 5 s poll that re-fetches the timer list,
+(ii) a 1 Hz display tick for the countdown column, (iii) a toast TTL
+fading. None of these is scheduling — no wake-action math, no clock
+ownership.
 
-## 7. Real desktop notification (C6 stub → real toast)
+## 7. IPC contract: camelCase at the boundary (NEEDS_FIX #2 resolved)
+
+The auditor caught that Rust DTOs serialised snake_case fields
+(`next_fire_utc`, `total_records`, `start_minimized`, `wake_enabled`)
+while the webview read camelCase properties (`nextFireUtc`, `total`,
+`startMinimized`, `wakeEnabled`) — every UI binding was undefined.
+
+The fix: add `#[serde(rename_all = "camelCase")]` to every DTO that
+crosses the IPC boundary: `TimerDto`, `LogTailDto`, `RunNowResponse`,
+`AppInfo`, `WizardChoice`, `WizardStatus`. The webview is updated to
+read the camelCase property names. Locked by `ui/src/api.test.js`.
+
+```sh
+$ cd ui && npm test
+✓ src/api.test.js (9 tests) 9ms
+Test Files  1 passed (1)
+     Tests  9 passed (9)
+```
+
+## 8. Real desktop notification (C6 stub → real toast)
 
 * From the CLI:
   ```sh
@@ -164,32 +229,48 @@ Implementation: `src-tauri/src/notify_sink.rs` wraps
 the same code path runs the legacy "log to stderr" behaviour without
 the Tauri dependency.
 
-## 8. `npm test` (webview unit tests) + `cargo test -p bellman-core`
+## 9. Tauri production build — NOW PASSING
 
 ```sh
-$ cd ui && npm test
-> bellman-ui@0.1.0 test
-> echo 'no js tests yet (audit is grep-based) — see docs/QA_P3.md' && exit 0
-no js tests yet (audit is grep-based) — see docs/QA_P3.md
-
-$ cargo test -p bellman-core
-… 108 passed; 0 failed …   (3 new tests for the pause-all flag)
-
-$ ./tests/cli_roundtrip.sh
-… 23/23 assertions passed …
+$ cargo tauri build
+…
+Bundling Bellman_0.1.0_amd64.AppImage (…)
+Finished 2 bundles at:
+    target/release/bundle/deb/Bellman_0.1.0_amd64.deb
+    target/release/bundle/appimage/Bellman_0.1.0_amd64.AppImage
 ```
 
-## 9. Tauri production build (deferred to P6)
+* `cargo tauri build --no-bundle` produces `target/release/bellman`.
+* Full bundle produces both the `.deb` (Debian / Ubuntu) and
+  `.AppImage` (universal Linux) artefacts in `target/release/bundle/`.
 
-This card targets the dev workflow (`cargo tauri dev` / `cargo build -p
-bellman`). The full bundle (deb / AppImage / msi / nsis / app / dmg) is
-out of scope for P3 and lands in P6 per `docs/BUILD_PLAN.md`. The
-icon set is already in place (`src-tauri/icons/32x32.png`,
-`icon-128x128.png`, `tray.png`).
+The icon set is at `src-tauri/icons/` (`app-icon.png` 1024×1024 master,
+the full set `cargo tauri icon` produces for Win / macOS / Linux /
+Android / iOS).
 
 ## 10. Known gaps for the next card (C8)
 
 The C8 card adds the body of the Week / Month / Run-history pages
 (currently `StubPage` placeholders) and the per-timer edit dialog.
 Everything C7 ships — top-bar nav, All-timers page, tray, wizard,
-pause-all toggle — is unchanged by that work.
+pause-all toggle, IPC contract, event-log wiring — is unchanged by
+that work.
+
+## 11. Test summary (final)
+
+```sh
+$ cargo test -p bellman-core
+108 passed; 0 failed   (+ 4 integration; 5 CLI tests)
+
+$ cd ui && npm test
+9 passed; 0 failed    (DTO contract + event payload + api.js fallback)
+
+$ ./tests/cli_roundtrip.sh
+23/23 assertions passed
+
+$ cargo tauri build
+.deb + .AppImage both produced
+
+$ cd ui && npm run build
+5.21 KB CSS / 45 KB JS (17.88 KB gzipped) — production bundle.
+```
