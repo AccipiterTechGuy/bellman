@@ -75,13 +75,13 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                     .copied()
                     .filter(|m| now.signed_duration_since(*m) <= grace)
                     .collect();
-                if in_grace.is_empty() {
+                // Latest in-grace occurrence (e.g. Monday 09:00 when recovering
+                // Monday 10:00 after a weekend, with 1h default grace). Nothing
+                // in grace ⇒ skip the whole backlog.
+                let Some(&fire_at) = in_grace.last() else {
                     self.advance_past_now(timer_id, now)?;
                     return Ok(vec![]);
-                }
-                // Latest in-grace occurrence (e.g. Monday 09:00 when recovering
-                // Monday 10:00 after a weekend, with 1h default grace).
-                let fire_at = *in_grace.last().expect("non-empty");
+                };
                 let missed = walk.len() as u32;
                 let late = now.signed_duration_since(fire_at);
                 let kind = if missed > 1 || in_grace.len() > 1 {

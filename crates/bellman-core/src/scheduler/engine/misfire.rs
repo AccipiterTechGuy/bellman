@@ -43,13 +43,16 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         let mut resolved = std::collections::HashSet::new();
         // Safety cap against pathological re-push bugs.
         for _ in 0..1_000 {
-            let Some(Reverse(head)) = self.heap.peek() else {
+            // Pop first so the entry we inspect is the entry we own: a
+            // not-yet-due head is pushed straight back (it is still the min, so
+            // the heap is unchanged) and the drain ends.
+            let Some(Reverse(entry)) = self.heap.pop() else {
                 break;
             };
-            if head.fire_at > now {
+            if entry.fire_at > now {
+                self.heap.push(Reverse(entry));
                 break;
             }
-            let Reverse(entry) = self.heap.pop().expect("peeked");
             if resolved.contains(&entry.timer_id) {
                 continue;
             }
