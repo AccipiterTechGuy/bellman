@@ -162,16 +162,24 @@ impl Occurrence {
         }
 
         // Hard safety cap so a bad cron / empty weekly never spins forever.
+        // Exclusion days are jumped in one step (see `jump_past_exclusion_day`),
+        // so a full day of 1-second interval ticks does not burn this budget.
         const MAX_CANDIDATES: usize = 10_000;
         let mut skipped = 0u32;
         let need_skip = self.pending_skips;
 
         for _ in 0..MAX_CANDIDATES {
-            let candidate = self.raw_next_after(cursor)?;
+            let Some(candidate) = self.raw_next_after(cursor) else {
+                // Consume skips that already matched a real candidate, even when
+                // nothing remains after (e.g. skip_next on a Once).
+                self.pending_skips = self.pending_skips.saturating_sub(skipped);
+                return None;
+            };
 
             // Validity end (exclusive).
             if let Some(until) = self.valid_until {
                 if candidate.with_timezone(&Utc) >= until {
+                    self.pending_skips = self.pending_skips.saturating_sub(skipped);
                     return None;
                 }
             }
@@ -183,9 +191,12 @@ impl Occurrence {
                 }
             }
 
-            // Exclusion dates (local calendar date).
+            // Exclusion dates (local calendar date): jump to the end of that
+            // local day so high-frequency intervals do not iterate every tick.
             if self.exclusions.contains(&candidate.date_naive()) {
-                cursor = candidate;
+                cursor = self
+                    .jump_past_exclusion_day(candidate)
+                    .unwrap_or(candidate);
                 continue;
             }
 
@@ -200,7 +211,33 @@ impl Occurrence {
             self.pending_skips = self.pending_skips.saturating_sub(skipped);
             return Some(candidate);
         }
+        self.pending_skips = self.pending_skips.saturating_sub(skipped);
         None
+    }
+
+    /// Move the search cursor to just before the next local calendar day after
+    /// an excluded date, so the next `raw_next_after` lands on (or after) that day.
+    fn jump_past_exclusion_day(&self, candidate: DateTime<Tz>) -> Option<DateTime<Tz>> {
+        let tz = self.timezone();
+        let next_day = candidate.date_naive().succ_opt()?;
+        let midnight = NaiveDateTime::new(next_day, NaiveTime::from_hms_opt(0, 0, 0)?);
+        let next_midnight = match midnight.and_local_timezone(tz) {
+            chrono::LocalResult::Single(dt) => dt,
+            chrono::LocalResult::Ambiguous(earliest, _) => earliest,
+            chrono::LocalResult::None => {
+                // Midnight in a DST gap: first valid instant on that local date.
+                return super::civil::resolve_local(
+                    tz,
+                    next_day,
+                    NaiveTime::from_hms_opt(0, 0, 0)?,
+                    self.dst_gap,
+                    self.dst_fold,
+                )
+                .map(|dt| dt - Duration::nanoseconds(1));
+            }
+        };
+        // Strictly-after cursor: one nanosecond before the next local midnight.
+        Some(next_midnight - Duration::nanoseconds(1))
     }
 
     /// Peek next fire without consuming skip-next state.

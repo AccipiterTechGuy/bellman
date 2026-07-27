@@ -414,6 +414,46 @@ fn preview_next5_cron() {
 // Exclusion dates
 // ---------------------------------------------------------------------------
 
+/// Supervisor finding: a 1-second interval with a full excluded day must not
+/// exhaust the candidate budget — next fire is the first tick on the next day.
+#[test]
+fn exclusion_full_day_on_one_second_interval() {
+    let anchor = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
+    let mut occ = Occurrence::new(
+        OccurrenceKind::Interval {
+            every_secs: 1,
+            anchor,
+        },
+        "UTC",
+    )
+    .unwrap();
+    occ.exclude_date(ymd(2026, 6, 1));
+
+    let after = anchor - chrono::Duration::seconds(1);
+    let fire = occ
+        .next_fire(after.with_timezone(&Tz::UTC))
+        .expect("fire after excluded day");
+    assert_fire(fire, Tz::UTC, 2026, 6, 2, 0, 0, 0);
+}
+
+/// Supervisor finding: skip_next on a Once must consume the skip even when the
+/// only candidate is skipped and next_fire returns None.
+#[test]
+fn skip_next_on_once_consumes_pending_when_exhausted() {
+    let at = NaiveDateTime::new(ymd(2026, 8, 1), hms(14, 30, 0));
+    let mut occ = Occurrence::new(OccurrenceKind::Once { at }, "UTC").unwrap();
+    let after = Utc.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap();
+
+    occ.skip_next();
+    assert_eq!(occ.pending_skips(), 1);
+    assert!(occ.next_fire(after.with_timezone(&Tz::UTC)).is_none());
+    assert_eq!(
+        occ.pending_skips(),
+        0,
+        "skip_next must consume exactly one occurrence even when nothing remains"
+    );
+}
+
 #[test]
 fn exclusion_skipped_by_next_fire_and_preview() {
     let mut occ = Occurrence::new(OccurrenceKind::Daily { at: hms(10, 0, 0) }, "UTC").unwrap();
