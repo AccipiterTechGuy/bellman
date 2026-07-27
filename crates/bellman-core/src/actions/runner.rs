@@ -16,9 +16,14 @@ use std::time::Duration;
 pub struct ActionRunnerConfig {
     pub launch_timeout: Duration,
     pub output_cap: usize,
-    /// Directory for `Action::None` write-slot side channel or explicit write-slot
-    /// tests. When set, a successful fire also writes a notification JSON here.
+    /// When set, a successful fire (any action type, including Launch) also
+    /// writes a fire-notification JSON here (`run-<run_id>.json`). Production
+    /// `run-now` points this at `slots/done/` so integrators see trigger data
+    /// alongside the launch (PLAN: launch + write JSON).
     pub write_slot_dir: Option<PathBuf>,
+    /// Optional fixed filename under `write_slot_dir` (e.g. `slot-0001.json`).
+    /// When `None`, uses `run-<run_id>.json`.
+    pub write_slot_file: Option<String>,
     /// When true (tests), sleep for retry delay is skipped — only the retry
     /// *count* is honored. Production leaves this false.
     pub skip_retry_sleep: bool,
@@ -30,6 +35,7 @@ impl Default for ActionRunnerConfig {
             launch_timeout: DEFAULT_TIMEOUT,
             output_cap: DEFAULT_OUTPUT_CAP_BYTES,
             write_slot_dir: None,
+            write_slot_file: None,
             skip_retry_sleep: false,
         }
     }
@@ -143,26 +149,8 @@ impl ActionRunner {
     }
 
     fn execute_once(&mut self, ctx: &FireContext<'_>) -> Result<String, String> {
-        match &ctx.timer.action {
-            Action::None => {
-                // Optional write-slot side channel when configured.
-                if let Some(dir) = &self.config.write_slot_dir {
-                    let file = format!("run-{}.json", ctx.run_id);
-                    let payload = WriteSlotPayload {
-                        schema: "bellman-fire/1",
-                        timer_id: ctx.timer.id,
-                        timer_name: ctx.timer.name.clone(),
-                        run_id: ctx.run_id,
-                        scheduled_for: ctx.scheduled_for,
-                        fired_at: chrono::Utc::now(),
-                        kind: format!("{:?}", ctx.kind),
-                    };
-                    write_output_slot(dir, &file, &payload)?;
-                    Ok(format!("write-output-slot {}", dir.join(file).display()))
-                } else {
-                    Ok("action=none".into())
-                }
-            }
+        let primary = match &ctx.timer.action {
+            Action::None => Ok("action=none".into()),
             Action::Launch {
                 command,
                 args,
@@ -184,21 +172,14 @@ impl ActionRunner {
                     ));
                 }
                 match outcome.exit_code {
-                    Some(0) | None => {
-                        // None can happen for signal-killed without timeout flag
-                        // if the process exited by signal without timeout — treat
-                        // non-timeout signal as failure.
-                        if outcome.exit_code.is_none() {
-                            return Err("launch exited by signal".into());
-                        }
-                        Ok(format!(
-                            "launch ok exit=0 duration={:?}",
-                            outcome.duration
-                        ))
-                    }
+                    Some(0) => Ok(format!(
+                        "launch ok exit=0 duration={:?}",
+                        outcome.duration
+                    )),
+                    None => Err("launch exited by signal".into()),
                     Some(code) => Err(format!(
                         "launch exit={code} output={}",
-                        truncate(&outcome.output, 200)
+                        truncate_utf8(&outcome.output, 200)
                     )),
                 }
             }
@@ -206,7 +187,47 @@ impl ActionRunner {
                 let out = notify_stub(title, body);
                 Ok(format!("notify stub title={:?}", out.title))
             }
+        }?;
+
+        // PLAN: launch + write JSON — always write the fire notification when a
+        // slots/output dir is configured, for every successful wake path.
+        if let Some(path) = self.write_fire_slot(ctx)? {
+            Ok(format!("{primary}; write-output-slot {}", path.display()))
+        } else {
+            Ok(primary)
         }
+    }
+
+    /// Write fire trigger JSON into `write_slot_dir` when configured.
+    fn write_fire_slot(&self, ctx: &FireContext<'_>) -> Result<Option<PathBuf>, String> {
+        let Some(dir) = &self.config.write_slot_dir else {
+            return Ok(None);
+        };
+        let file = self
+            .config
+            .write_slot_file
+            .clone()
+            .unwrap_or_else(|| format!("run-{}.json", ctx.run_id));
+        let payload = WriteSlotPayload {
+            schema: "bellman-fire/1",
+            timer_id: ctx.timer.id,
+            timer_name: ctx.timer.name.clone(),
+            run_id: ctx.run_id,
+            scheduled_for: ctx.scheduled_for,
+            fired_at: chrono::Utc::now(),
+            kind: fire_kind_label(&ctx.kind),
+        };
+        let path = write_output_slot(dir, &file, &payload)?;
+        Ok(Some(path))
+    }
+}
+
+fn fire_kind_label(kind: &FireKind) -> String {
+    match kind {
+        FireKind::OnTime => "on_time".into(),
+        FireKind::Late { .. } => "late".into(),
+        FireKind::Coalesced { .. } => "coalesced".into(),
+        FireKind::CatchUp { index } => format!("catch_up_{index}"),
     }
 }
 
@@ -282,10 +303,35 @@ impl FireAction for ActionRunner {
     }
 }
 
-fn truncate(s: &str, max: usize) -> String {
+/// Truncate to at most `max` bytes on a UTF-8 char boundary (never panics).
+fn truncate_utf8(s: &str, max: usize) -> String {
     if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max])
+        return s.to_string();
+    }
+    let mut end = max.min(s.len());
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
+}
+
+#[cfg(test)]
+mod truncate_tests {
+    use super::truncate_utf8;
+
+    #[test]
+    fn truncate_utf8_does_not_panic_on_multibyte() {
+        // Euro sign is 3 bytes; 100 of them = 300 bytes. Cap at 200 must not panic.
+        let s = "€".repeat(100);
+        let out = truncate_utf8(&s, 200);
+        assert!(out.ends_with('…'));
+        assert!(out.is_char_boundary(out.len() - '…'.len_utf8()) || out.ends_with('…'));
+        // Re-parse as valid UTF-8 (already a String).
+        assert!(out.chars().all(|c| c == '€' || c == '…'));
+    }
+
+    #[test]
+    fn truncate_utf8_short_passthrough() {
+        assert_eq!(truncate_utf8("hi", 200), "hi");
     }
 }

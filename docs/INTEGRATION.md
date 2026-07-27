@@ -101,21 +101,23 @@ into `bad/` with a `.err.json` sidecar (not a normal response).
 ## Copy-paste clients (< 10 lines each)
 
 Each example publishes an **interval 60 s** timer named `demo-wake` for app
-`demo-app`, then relies on Bellman (or `bellman slot-submit`) to process it.
-Set `BELLMAN_SLOTS` to the slots root (must already contain `free/` stubs —
-start Bellman once, or run `bellman slot-submit` which opens/replenishes).
+`demo-app`. Set `BELLMAN_SLOTS` to the slots root. `BELLMAN_DB` is optional —
+when unset, Bellman uses `~/.bellman/timers.db` (CLI default).
+`bellman slot-submit` opens/replenishes free stubs, so a pre-running daemon is
+not required.
 
 ### Python 3
 
 ```python
-import json, os, uuid, pathlib, tempfile
-root = pathlib.Path(os.environ["BELLMAN_SLOTS"])
-req = {"schema":"bellman-slot/1","slot_id":"","request_id":str(uuid.uuid4()),
-       "operation":"add","payload":{"app_name":"demo-app","timer_name":"demo-wake",
-       "tz":"UTC","occurrence":{"kind":"interval","every_secs":60}}}
-# Prefer the CLI helper for correct free-stub claim + atomic publish:
+import json, os, uuid, pathlib, subprocess
+root, db = os.environ["BELLMAN_SLOTS"], os.environ.get("BELLMAN_DB")
+req = {"schema":"bellman-slot/1","request_id":str(uuid.uuid4()),"operation":"add",
+  "payload":{"app_name":"demo-app","timer_name":"demo-wake","tz":"UTC",
+  "occurrence":{"kind":"interval","every_secs":60}}}
 pathlib.Path("/tmp/bellman-req.json").write_text(json.dumps(req))
-os.system(f'bellman slot-submit /tmp/bellman-req.json --slots "{root}" --db "{os.environ.get("BELLMAN_DB","")}"')
+cmd = ["bellman","slot-submit","/tmp/bellman-req.json","--slots",root]
+if db: cmd += ["--db", db]
+subprocess.check_call(cmd)
 ```
 
 ### Shell (bash)
@@ -123,11 +125,13 @@ os.system(f'bellman slot-submit /tmp/bellman-req.json --slots "{root}" --db "{os
 ```bash
 REQ=$(mktemp)
 cat >"$REQ" <<EOF
-{"schema":"bellman-slot/1","request_id":"$(uuidgen)","operation":"add",
+{"schema":"bellman-slot/1","request_id":"$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)","operation":"add",
  "payload":{"app_name":"demo-app","timer_name":"demo-wake","tz":"UTC",
  "occurrence":{"kind":"interval","every_secs":60}}}
 EOF
-bellman slot-submit "$REQ" --slots "${BELLMAN_SLOTS}" --db "${BELLMAN_DB}"
+args=(slot-submit "$REQ" --slots "${BELLMAN_SLOTS}")
+[[ -n "${BELLMAN_DB:-}" ]] && args+=(--db "$BELLMAN_DB")
+bellman "${args[@]}"
 ```
 
 ### PowerShell
@@ -137,7 +141,9 @@ $req = @{ schema="bellman-slot/1"; request_id=[guid]::NewGuid().ToString();
   operation="add"; payload=@{ app_name="demo-app"; timer_name="demo-wake";
   tz="UTC"; occurrence=@{ kind="interval"; every_secs=60 } } } | ConvertTo-Json -Depth 5
 $f = Join-Path $env:TEMP "bellman-req.json"; Set-Content $f $req
-bellman slot-submit $f --slots $env:BELLMAN_SLOTS --db $env:BELLMAN_DB
+$args = @("slot-submit", $f, "--slots", $env:BELLMAN_SLOTS)
+if ($env:BELLMAN_DB) { $args += @("--db", $env:BELLMAN_DB) }
+bellman @args
 ```
 
 ### Node.js
@@ -148,8 +154,9 @@ const f = "/tmp/bellman-req.json";
 fs.writeFileSync(f, JSON.stringify({schema:"bellman-slot/1", request_id:randomUUID(),
   operation:"add", payload:{app_name:"demo-app", timer_name:"demo-wake", tz:"UTC",
   occurrence:{kind:"interval", every_secs:60}}}));
-execFileSync("bellman", ["slot-submit", f, "--slots", process.env.BELLMAN_SLOTS,
-  "--db", process.env.BELLMAN_DB || ""], {stdio:"inherit"});
+const args = ["slot-submit", f, "--slots", process.env.BELLMAN_SLOTS];
+if (process.env.BELLMAN_DB) args.push("--db", process.env.BELLMAN_DB);
+execFileSync("bellman", args, {stdio:"inherit"});
 ```
 
 ---

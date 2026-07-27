@@ -357,6 +357,28 @@ impl Store {
         Ok(row)
     }
 
+    /// Most recent successful slot request that created/touched `timer_id`.
+    ///
+    /// Used by wake delivery to rewrite `done/slot-<id>.json` with fire events
+    /// for the integrating app (PLAN: launch + write output-slot JSON).
+    pub fn latest_slot_request_for_timer(
+        &self,
+        timer_id: TimerId,
+    ) -> StoreResult<Option<SlotRequestRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT request_id, slot_id, operation, app_name, timer_id, status,
+                    response_json, created_at
+             FROM slot_requests
+             WHERE timer_id = ?1 AND status = 'ok'
+             ORDER BY created_at DESC, request_id DESC
+             LIMIT 1",
+        )?;
+        let row = stmt
+            .query_row(params![timer_id.to_string()], row_to_slot_request)
+            .optional()?;
+        Ok(row)
+    }
+
     /// Persist a completed slot request response (first write wins for duplicates).
     ///
     /// Returns `true` if this call inserted the row; `false` if `request_id`

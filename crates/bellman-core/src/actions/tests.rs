@@ -231,6 +231,77 @@ fn write_output_slot_atomic_json() {
 }
 
 #[test]
+fn launch_also_writes_output_slot_when_configured() {
+    let dir = tempfile::tempdir().unwrap();
+    let slot_dir = dir.path().join("done");
+    let mut runner = ActionRunner::new(ActionRunnerConfig {
+        write_slot_dir: Some(slot_dir.clone()),
+        write_slot_file: Some("slot-0001.json".into()),
+        ..Default::default()
+    });
+    let timer = sample_timer(
+        Action::Launch {
+            command: "true".into(),
+            args: vec![],
+            workdir: None,
+        },
+        RetryPolicy::default(),
+    );
+    let run_id = Uuid::new_v4();
+    let c = ctx(&timer, run_id);
+    runner.on_fire(&c).expect("launch+write");
+    let path = slot_dir.join("slot-0001.json");
+    assert!(path.exists(), "launch must write output slot");
+    let body: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(body["schema"], "bellman-fire/1");
+    assert_eq!(body["run_id"], run_id.to_string());
+    assert!(
+        runner
+            .last_message
+            .as_deref()
+            .is_some_and(|m| m.contains("write-output-slot")),
+        "{:?}",
+        runner.last_message
+    );
+}
+
+#[test]
+fn failed_launch_with_multibyte_output_returns_failed_not_panic() {
+    let _g = test_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let log = EventLog::open(EventLogConfig::new(dir.path().join("logs"))).unwrap();
+    let mut runner = ActionRunner::new(ActionRunnerConfig {
+        skip_retry_sleep: true,
+        launch_timeout: Duration::from_secs(5),
+        ..Default::default()
+    })
+    .with_event_log(log);
+    // Print 100 euro signs then exit 1 — captured output crosses a multi-byte
+    // boundary at byte 200; truncate must not panic.
+    let timer = sample_timer(
+        Action::Launch {
+            command: "python3".into(),
+            args: vec![
+                "-c".into(),
+                "import sys; print(chr(8364)*100); sys.exit(1)".into(),
+            ],
+            workdir: None,
+        },
+        RetryPolicy {
+            max_retries: 1,
+            delay_secs: 0,
+        },
+    );
+    let c = ctx(&timer, Uuid::new_v4());
+    let err = runner.on_fire(&c).expect_err("must fail after retry");
+    assert!(err.contains("FAILED"), "err={err}");
+    let log = runner.take_event_log().unwrap();
+    let (recs, _) = read_events(log.current_path()).unwrap();
+    assert!(recs.iter().any(|r| r.kind == EventKind::WakeFailed));
+}
+
+#[test]
 fn overlap_skip_does_not_double_launch() {
     let mut runner = ActionRunner::new(ActionRunnerConfig::default());
     // Manually mark in-flight, then fire with Skip.
