@@ -40,45 +40,54 @@
       actionType: 'none',
       launchCommand: '',
       launchArgs: '',
+      launchWorkdir: '',
       notifyTitle: '',
       notifyBody: '',
     };
   }
 
   // Pull structured fields off the timer JSON. The Rust TimerDto surfaces
-  // the full occurrence object (tagged by `occ`) plus the tagged action
-  // under `actionKind`; we read those directly and never try to parse the
-  // pretty summary. The wire shape is pinned in
-  // `src-tauri/src/dto_serde_tests.rs::timer_dto_round_trips_occurrence_and_action`.
+  // the deliberate flat `WebOccurrenceDto` (tag `occ`) plus the tagged
+  // `WebActionDto` under `actionKind`. We read those directly and never
+  // parse the pretty summary. The wire shape is pinned by
+  // `src-tauri/src/web_testdata/weekly_dto.json` and the integration
+  // test `tauri_create_update_via_real_ipc_json` in
+  // `src-tauri/tests/`.
   function loadFromTimer(t) {
     const occ = t.occurrence || {};
     const occKind = occ.occ || 'daily';
-    // weekly shape: { occ:"weekly", days:{mon:true,tue:true,...}, at:"08:00:00", tz:"UTC", ... }
-    // chrono serializes Weekdays as a bitmask object, e.g. { mon:true, wed:true, fri:true }.
+    // weekly: {occ:"weekly", days:{mon:true,...}, at:"08:00:00", tz:"UTC", ...}
+    // chrono serializes Weekdays as a bitmask object — see web::encode_days.
     const days = occ.days || {};
     const daysCsv = Object.keys(days)
       .filter((k) => days[k])
       .sort()
       .join(',');
-    // NaiveTime serialized by chrono as HH:MM:SS.
-    const timeStr = typeof occ.at === 'string' ? occ.at : '09:00:00';
-    // Interval anchors: chrono DateTime → ISO string.
-    let intervalAnchorIso = null;
-    if (occ.anchor && typeof occ.anchor === 'string') {
-      intervalAnchorIso = occ.anchor;
-    }
+    // NaiveTime serialized by chrono as HH:MM:SS for daily/weekly/monthly/yearly.
+    // `once` uses `onceAt` (a NaiveDateTime ISO 8601).
+    const clockOrEmpty = (v) => (typeof v === 'string' ? v : '');
+    const timeStr = clockOrEmpty(occ.at) || '09:00:00';
+    const onceAtStr = occKind === 'once' ? clockOrEmpty(occ.onceAt) : '';
+    // Interval anchor (chrono DateTime<Utc>) → ISO string. Preserve verbatim
+    // so Edit+Save of a stable-anchor interval does NOT reset the anchor.
+    const intervalAnchorIso = occKind === 'interval' && occ.anchor ? occ.anchor : null;
+    const everySecsVal = occKind === 'interval' ? (occ.everySecs ?? 60) : 60;
     // Pretty action label: derive a ui-side radio default from the
-    // structured action_kind enum (tagged `type`).
+    // structured action_kind enum (tagged `type`). Preserve every
+    // field, including `Launch.workdir`, which the previous build
+    // dropped on save.
     const ak = t.actionKind || {};
     let actionType = 'none';
     let launchCommand = '';
     let launchArgs = '';
+    let launchWorkdir = '';
     let notifyTitle = '';
     let notifyBody = '';
     if (ak.type === 'launch') {
       actionType = 'launch';
       launchCommand = ak.command || '';
       launchArgs = Array.isArray(ak.args) ? ak.args.join(' ') : '';
+      launchWorkdir = typeof ak.workdir === 'string' ? ak.workdir : '';
     } else if (ak.type === 'notify') {
       actionType = 'notify';
       notifyTitle = ak.title || '';
@@ -91,8 +100,8 @@
         kind: occKind,
         tz: occ.tz || '',
         time: timeStr,
-        onceAt: occ.at && occKind === 'once' ? occ.at : '',
-        everySecs: occKind === 'interval' ? (occ.everySecs ?? 300) : 300,
+        onceAt: onceAtStr,
+        everySecs: everySecsVal,
         intervalAnchor: intervalAnchorIso,
         days: daysCsv || 'mon,wed,fri',
         day: occ.day ?? 1,
@@ -102,6 +111,7 @@
       actionType,
       launchCommand,
       launchArgs,
+      launchWorkdir,
       notifyTitle,
       notifyBody,
     };
@@ -114,20 +124,35 @@
 
   let isEdit = $derived(!!timer);
 
-  // Build the Rust-shaped OccurrenceInput / CreateTimerInput the IPC expects.
+  // Build the GUI-shaped flat `WebOccurrenceDto` the IPC commands expect.
+  // Mirrors `src-tauri/src/web.rs::WebOccurrenceDto` field-by-field.
   function buildInput() {
     const occ = form.occurrence;
     const o = {
-      kind: occ.kind,
-      tz: occ.tz || null,
-      time: occ.time || null,
-      onceAt: occ.onceAt || null,
-      everySecs: occ.everySecs ?? null,
-      intervalAnchor: null, // omit on edit; new timers use now()
-      days: occ.days || null,
-      day: occ.day ?? null,
-      month: occ.month ?? null,
-      cronExpr: occ.cronExpr || null,
+      occ: occ.kind,
+      tz: occ.tz || 'UTC',
+      // Encode weekly days as a `{mon:true, wed:false,...}` record so
+      // the chrono core can round-trip. Other kinds null.
+      days: occ.kind === 'weekly' ? weekdaysCsvToMap(occ.days) : null,
+      // NaiveTime "HH:MM:SS" applies to daily/weekly/monthly/yearly.
+      at:
+        occ.kind === 'daily' ||
+        occ.kind === 'weekly' ||
+        occ.kind === 'monthly' ||
+        occ.kind === 'yearly'
+          ? occ.time || '09:00:00'
+          : null,
+      onceAt: occ.kind === 'once' ? occ.onceAt || null : null,
+      everySecs: occ.kind === 'interval' ? occ.everySecs ?? 60 : null,
+      // Preserve a stable-anchor interval verbatim. Null for new timers
+      // (Rust falls back to `Utc::now()` inside `Interval` build).
+      anchor:
+        occ.kind === 'interval' && form.isEdit && occ.intervalAnchor
+          ? occ.intervalAnchor
+          : null,
+      day: occ.kind === 'monthly' || occ.kind === 'yearly' ? occ.day ?? 1 : null,
+      month: occ.kind === 'yearly' ? occ.month ?? 1 : null,
+      expr: occ.kind === 'cron' ? occ.cronExpr || null : null,
     };
     let action = { type: 'none' };
     if (form.actionType === 'launch') {
@@ -137,7 +162,9 @@
         args: form.launchArgs
           ? form.launchArgs.split(/\s+/).filter(Boolean)
           : [],
-        workdir: null,
+        // Persist workdir if the user typed one; null on no-op so the
+        // core's Option<...> stays empty.
+        workdir: form.launchWorkdir || null,
       };
     } else if (form.actionType === 'notify') {
       action = {
@@ -151,14 +178,19 @@
       enabled: form.enabled,
       occurrence: o,
       action,
-      // Misfire/overlap/retry are intentionally left out — Rust defaults to
-      // the product presets via NewTimer::new(); the dialog only exposes the
-      // knobs users tend to change.
-      misfire: null,
-      overlap: null,
-      retry: null,
-      tags: [],
     };
+  }
+
+  // Convert `"mon,wed,fri"` -> `{ mon:true, tue:false, ..., sun:false }`.
+  // Mirrors `src-tauri/src/web.rs::decode_days`.
+  function weekdaysCsvToMap(csv) {
+    const map = { mon: false, tue: false, wed: false, thu: false, fri: false, sat: false, sun: false };
+    if (typeof csv !== 'string') return map;
+    for (const tok of csv.split(/[,\s]+/)) {
+      const k = tok.trim().toLowerCase();
+      if (k in map) map[k] = true;
+    }
+    return map;
   }
 
   function buildPatch() {
@@ -167,7 +199,9 @@
       name: input.name,
       enabled: input.enabled,
       occurrence: input.occurrence,
-      action: input.action,
+      // Match the Rust `WebTimerPatchDto` wire contract exactly:
+      // `actionKind`, not `action`.
+      actionKind: input.action,
     };
   }
 
@@ -344,6 +378,10 @@
             <div class="form-row">
               <label for="td-args">Args (space-separated)</label>
               <input id="td-args" bind:value={form.launchArgs} placeholder="hello world" />
+            </div>
+            <div class="form-row">
+              <label for="td-workdir">Working directory</label>
+              <input id="td-workdir" bind:value={form.launchWorkdir} placeholder="/tmp" />
             </div>
           {/if}
           <label class="radio">

@@ -324,22 +324,25 @@ describe('api.js — C8 calendar UI command surface', () => {
     delete window.__TAURI_EVENT_PLUGIN_INTERNALS__;
   });
 
-  it('createTimer invokes create_timer with input payload', async () => {
+  it('createTimer invokes create_timer with the deliberate flat createTimer payload', async () => {
     const { createTimer } = await import('./api.js');
+    // Mirrors src-tauri/src/web.rs::WebOccurrenceDto + CreateTimerInput
+    // (camelCase, tagged action, weekly-days-as-record). The dialog
+    // builds exactly this shape via `buildInput()`.
     const input = {
       name: 'morning',
-      enabled: true,
+      enabled: false,
       occurrence: {
-        kind: 'daily',
+        occ: 'daily',
         tz: 'UTC',
-        time: '09:00:00',
+        days: null,
+        at: '09:00:00',
         onceAt: null,
         everySecs: null,
-        intervalAnchor: null,
-        days: null,
+        anchor: null,
         day: null,
         month: null,
-        cronExpr: null,
+        expr: null,
       },
       action: { type: 'none' },
     };
@@ -347,21 +350,25 @@ describe('api.js — C8 calendar UI command surface', () => {
     expect(state.invokes).toHaveLength(1);
     expect(state.invokes[0].cmd).toBe('create_timer');
     expect(state.invokes[0].args.input.name).toBe('morning');
-    expect(state.invokes[0].args.input.occurrence.kind).toBe('daily');
+    expect(state.invokes[0].args.input.enabled).toBe(false);
+    expect(state.invokes[0].args.input.occurrence.occ).toBe('daily');
+    expect(state.invokes[0].args.input.occurrence.tz).toBe('UTC');
+    expect(state.invokes[0].args.input.occurrence.at).toBe('09:00:00');
   });
 
-  it('updateTimer invokes update_timer with id + revision + patch', async () => {
+  it('updateTimer invokes update_timer with id + revision + patch (actionKind, not action)', async () => {
     const { updateTimer } = await import('./api.js');
     await updateTimer('timer-id-123', 4, {
       name: 'renamed',
       enabled: true,
-      occurrence: null,
-      action: null,
+      occurrence: { occ: 'daily', tz: 'UTC', at: '10:30:00' },
+      actionKind: { type: 'notify', title: 'go', body: 'now' },
     });
     expect(state.invokes[0].cmd).toBe('update_timer');
     expect(state.invokes[0].args.id).toBe('timer-id-123');
     expect(state.invokes[0].args.expectedRevision).toBe(4);
     expect(state.invokes[0].args.patch.name).toBe('renamed');
+    expect(state.invokes[0].args.patch.actionKind.title).toBe('go');
   });
 
   it('deleteTimer invokes delete_timer with id', async () => {
@@ -371,11 +378,29 @@ describe('api.js — C8 calendar UI command surface', () => {
     expect(state.invokes[0].args.id).toBe('abc');
   });
 
-  it('previewFires invokes preview_fires with input + n', async () => {
+  it('previewFires invokes preview_fires with the flat WebOccurrenceDto + n', async () => {
     const { previewFires } = await import('./api.js');
-    await previewFires({ kind: 'daily', tz: 'UTC', time: '12:00:00' }, 5);
+    // The dialog sends the deliberate WebOccurrenceDto shape (flat
+    // `{occ, tz, at, days, ...}`), not the legacy `kind/time/csv`
+    // triple. Mirrors `src-tauri/src/web.rs::WebOccurrenceDto`.
+    await previewFires(
+      {
+        occ: 'daily',
+        tz: 'UTC',
+        days: null,
+        at: '12:00:00',
+        onceAt: null,
+        everySecs: null,
+        anchor: null,
+        day: null,
+        month: null,
+        expr: null,
+      },
+      5,
+    );
     expect(state.invokes[0].cmd).toBe('preview_fires');
-    expect(state.invokes[0].args.input.kind).toBe('daily');
+    expect(state.invokes[0].args.input.occ).toBe('daily');
+    expect(state.invokes[0].args.input.at).toBe('12:00:00');
     expect(state.invokes[0].args.n).toBe(5);
   });
 
