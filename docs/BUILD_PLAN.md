@@ -115,11 +115,13 @@ data dir: ~/.bellman/ on Linux (AppData/Application Support equivalents):
   ts, operation: add|modify|delete, payload…}`.
 - **Naming**: a stored definition is a **Timer**, each firing is a **Run**; UI
   tabs are All timers / Week / Month / Run history ("Events" was ambiguous).
-- **Misfire default** (amends the earlier skip-everything default — research
-  found skip-all silently drops a missed daily reminder, the worst UX failure):
-  per-timer policy stays; defaults become **coalesce + run-once-on-recovery for
-  calendar timers** (grace 1 h) and **skip for interval timers** (grace = one
-  period). ⚠ pending operator confirmation.
+- **Misfire default** (CONFIRMED by operator 2026-07-27): per-timer policy —
+  defaults are **coalesce + run-once-on-recovery for calendar timers** (grace
+  1 h) and **skip for interval timers** (grace = one period). **`skip` is always
+  selectable per timer** for actions that are dangerous to re-run; coalesce
+  guarantees a missed backlog fires at most once, and the global
+  `max_concurrent_actions` cap queues mass-fires so nothing runs "all at the
+  same time".
 - **Per-timer settings additions** (priority order): exclusion dates /
   skip-next; DST gap/fold + invalid-monthday fields; catch-up limit;
   next-5-occurrences preview; Run-now button; overlap policy

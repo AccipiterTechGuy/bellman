@@ -75,9 +75,12 @@ register timers/events; Bellman fires them at the right moment.
 - **Wake action** (target app not running): **launch + write JSON** — start the app
   via its registered launch command AND write the output-slot JSON so it finds its
   trigger data on startup.
-- **Misfire** (machine/app was off at fire time): **per-timer policy** — each timer's
-  settings choose catch-up (run missed once at startup) or skip; **default = skip**,
-  and every miss is logged to JSONL as `MISSED`.
+- **Misfire** (machine/app was off at fire time): **per-timer policy** (amended
+  after research, confirmed 2026-07-27) — defaults: calendar timers coalesce +
+  run once on recovery (grace 1 h); interval timers skip (grace = one period).
+  `skip` always selectable per timer for actions dangerous to re-run. Every
+  miss/outcome is logged to JSONL (`fired_late`, `skipped_misfire`,
+  `coalesced`).
 - **Run model**: **ask per install** — installer/first-run asks whether to enable
   autostart+tray; both modes fully supported (manual-only users get the misfire
   policy applied at each start).
