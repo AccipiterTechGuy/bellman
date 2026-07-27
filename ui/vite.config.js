@@ -12,4 +12,8 @@ export default defineConfig({
     target: 'es2022',
     sourcemap: true,
   },
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.{js,mjs}'],
+  },
 });
