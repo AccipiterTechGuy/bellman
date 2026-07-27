@@ -134,6 +134,10 @@ impl SlotLayout {
     }
 
     /// Move a work (or free) file into `bad/` and write a sibling `.err.json`.
+    ///
+    /// Uses `symlink_metadata` (not `Path::exists`) so **dangling symlinks**
+    /// are still moved: `exists()` follows the target and returns false when
+    /// it is missing, which previously left hostile links in `free/`.
     pub fn quarantine(
         &self,
         path: &Path,
@@ -146,12 +150,22 @@ impl SlotLayout {
             .unwrap_or("unknown.json")
             .to_string();
         let dest = unique_dest(&self.bad_dir(), &name)?;
-        // Best-effort move; if source vanished, still write the err sidecar.
-        if path.exists() {
-            // Prefer rename; fall back to copy+remove for cross-fs.
+        // Lexical presence: regular file, live symlink, or dangling symlink.
+        let source_present = fs::symlink_metadata(path).is_ok();
+        if source_present {
+            // Prefer rename (moves the directory entry, including dangling links).
+            // Fall back to copy+remove only for regular files on cross-fs.
             if fs::rename(path, &dest).is_err() {
-                let _ = fs::copy(path, &dest);
-                let _ = fs::remove_file(path);
+                let is_symlink = fs::symlink_metadata(path)
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(false);
+                if is_symlink {
+                    // Cannot copy a dangling link usefully; drop the entry.
+                    let _ = fs::remove_file(path);
+                } else {
+                    let _ = fs::copy(path, &dest);
+                    let _ = fs::remove_file(path);
+                }
             }
         }
         let sidecar_name = format!("{}.err.json", dest.file_name().unwrap().to_string_lossy());

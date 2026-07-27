@@ -245,7 +245,7 @@ fn oversized_input_quarantined() {
 fn symlink_input_quarantined() {
     let (_dir, mut store, service) = open_harness();
     let free_dir = service.layout().free_dir();
-    // Create a real file elsewhere and symlink it into free/ with a new name.
+    // Live-target symlink.
     let outside = service.layout().root().join("outside.json");
     fs::write(
         &outside,
@@ -259,16 +259,15 @@ fn symlink_input_quarantined() {
     }
     #[cfg(not(unix))]
     {
-        // On non-unix, skip (Windows reparse points need elevation).
         return;
     }
     assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
     service.poll(&mut store).unwrap();
 
-    // Link must be gone from free/ and quarantined under bad/ with .err.json.
+    // Use symlink_metadata — Path::exists follows the target and is wrong for links.
     assert!(
-        !link.exists(),
-        "symlink must not remain in free/ after poll"
+        fs::symlink_metadata(&link).is_err(),
+        "live-target symlink must leave free/"
     );
     assert!(outside.exists(), "quarantine must not delete the link target");
     let bad_entries: Vec<_> = fs::read_dir(service.layout().bad_dir())
@@ -279,6 +278,46 @@ fn symlink_input_quarantined() {
     assert!(
         bad_entries.iter().any(|n| n.contains("slot-symlink")),
         "expected quarantined symlink in bad/, got {bad_entries:?}"
+    );
+    assert!(
+        bad_entries.iter().any(|n| n.ends_with(".err.json")),
+        "expected .err.json sidecar in bad/, got {bad_entries:?}"
+    );
+    assert!(free_stub_count(&service) >= MIN_FREE_SLOTS);
+}
+
+#[test]
+fn dangling_symlink_input_quarantined() {
+    // Acceptance: symlinked input is quarantined even when the target is missing.
+    let (_dir, mut store, service) = open_harness();
+    let free_dir = service.layout().free_dir();
+    let missing = free_dir.join("missing-target.json");
+    let link = free_dir.join("slot-dangle.json");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&missing, &link).expect("dangling symlink");
+    }
+    #[cfg(not(unix))]
+    {
+        return;
+    }
+    assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+    assert!(!link.exists(), "precondition: dangling (exists follows target)");
+
+    service.poll(&mut store).unwrap();
+
+    assert!(
+        fs::symlink_metadata(&link).is_err(),
+        "dangling symlink must be removed from free/, not left for rediscovery"
+    );
+    let bad_entries: Vec<_> = fs::read_dir(service.layout().bad_dir())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        bad_entries.iter().any(|n| n.contains("slot-dangle")),
+        "expected quarantined dangling link in bad/, got {bad_entries:?}"
     );
     assert!(
         bad_entries.iter().any(|n| n.ends_with(".err.json")),
