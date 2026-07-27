@@ -116,6 +116,18 @@ impl Occurrence {
         self.runs_done
     }
 
+    pub fn max_runs(&self) -> Option<u64> {
+        self.max_runs
+    }
+
+    pub fn valid_from(&self) -> Option<DateTime<Utc>> {
+        self.valid_from
+    }
+
+    pub fn valid_until(&self) -> Option<DateTime<Utc>> {
+        self.valid_until
+    }
+
     /// Add an EXDATE-style exclusion (local calendar date in the schedule tz).
     pub fn exclude_date(&mut self, date: NaiveDate) {
         self.exclusions.insert(date);
