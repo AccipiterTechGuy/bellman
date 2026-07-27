@@ -90,7 +90,7 @@
           // timer uses. Each cell IS an ISO date, but the timer fires in
           // its own tz: we conservatively place on the matching ISO weekday
           // here, matching what the Week page shows for the same window.
-          const dowSet = weeklyDaysFromOccurrence(occ);
+          const dowSet = new Set(weeklyDaysFromOccurrence(occ));
           for (const cell of grid) {
             if (dowSet.has(jsIsoWeekday(cell))) {
               matchingDays.add(isoDate(cell));

@@ -215,12 +215,29 @@ export const WEEKDAY_FROM_KEY = {
   mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 7,
 };
 
-/** Pull the kind discriminator out of a TimerDto's structured `occurrence`. */
+/**
+ * Pull the kind discriminator out of a TimerDto's structured `occurrence`.
+ *
+ * The Rust-side `WebTimerDto` (re-exported as `TimerDto`) flattens the
+ * core nested serde enum:
+ *   occurrence: { occ: "weekly", tz: "...", days: {mon:true,...}, at: "08:00:00", ... }
+ *
+ * Crucially, the inner `days` bitmask is a `{name: true|false}` record,
+ * NOT a numeric bitmask. The dialog / Week / Month pages must read this
+ * shape — see `src-tauri/src/web.rs` for the wire contract and the
+ * `weekly_dto.json` fixture pinned by `web::tests::weekly_dto_matches_pinned_json_fixture`.
+ */
 export function kindFromOccurrence(occ) {
   return (occ && typeof occ.occ === 'string') ? occ.occ : '';
 }
 
-/** Parse a TimerDto's structured weekly `days` bitmask → sorted ISO DOW list. */
+/**
+ * Parse a TimerDto's structured weekly `days` bitmask → sorted ISO DOW list.
+ * chrono serializes `Weekdays` as a JSON object `{mon: true, tue: false, ...}`
+ * via `web::encode_days`. The RoundTrip CRUD test in
+ * `src-tauri/src/dto_serde_tests.rs::seven_kinds_round_trip_through_store_crud`
+ * pins that this round-trips losslessly through `Store::update_timer`.
+ */
 export function weeklyDaysFromOccurrence(occ) {
   const days = occ && occ.days ? occ.days : {};
   const out = [];
