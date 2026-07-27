@@ -275,21 +275,93 @@ fn argv_wants_json() -> bool {
 }
 
 /// Best-effort subcommand name from argv for the error envelope.
-///
-/// Scans the whole argv for a known subcommand token so global flags that take
-/// values (`--db PATH`) do not steal the name (e.g. path segment before `add`).
 fn argv_command_name() -> &'static str {
+    command_name_from_args(std::env::args().skip(1))
+}
+
+/// Walk argv left-to-right, skipping option values so a path like `--db list`
+/// cannot be mistaken for the `list` subcommand.
+///
+/// Handles `--opt value`, `--opt=value`, and flag-only options (`--json`).
+fn command_name_from_args<I, S>(args: I) -> &'static str
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
     const SUBS: &[&str] = &[
         "add", "list", "edit", "rm", "next", "run-now", "pause", "resume",
     ];
-    for arg in std::env::args().skip(1) {
-        for s in SUBS {
-            if arg == *s {
-                return s;
+    // Options that consume the next argv token as a value (global + common).
+    const VALUE_OPTS: &[&str] = &[
+        "--db",
+        "--name",
+        "--occurrence",
+        "--time",
+        "--tz",
+        "--every-secs",
+        "--days",
+        "--day",
+        "--month",
+        "--cron",
+        "--tag",
+        "--enabled",
+    ];
+    // Boolean / count flags that do not take a value.
+    const FLAG_OPTS: &[&str] = &["--json", "-h", "--help", "-V", "--version"];
+
+    let args: Vec<String> = args.into_iter().map(|s| s.as_ref().to_string()).collect();
+    let mut i = 0usize;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if a == "--" {
+            // Positional-only region: first known subcommand wins.
+            i += 1;
+            while i < args.len() {
+                if let Some(cmd) = match_sub(args[i].as_str(), SUBS) {
+                    return cmd;
+                }
+                i += 1;
             }
+            break;
         }
+        if a.starts_with('-') {
+            // --opt=value (never consumes a following token)
+            if let Some((opt, _val)) = a.split_once('=') {
+                let _ = opt;
+                i += 1;
+                continue;
+            }
+            if FLAG_OPTS.contains(&a) {
+                i += 1;
+                continue;
+            }
+            if VALUE_OPTS.contains(&a) {
+                // Skip option and its value (if present).
+                i = i.saturating_add(2);
+                continue;
+            }
+            // Unknown flag: skip it; if the next token looks like a bare value
+            // (not a flag and not a known subcommand), skip that too.
+            i += 1;
+            if i < args.len() {
+                let next = args[i].as_str();
+                if !next.starts_with('-') && match_sub(next, SUBS).is_none() {
+                    i += 1;
+                }
+            }
+            continue;
+        }
+        if let Some(cmd) = match_sub(a, SUBS) {
+            return cmd;
+        }
+        // Bare token that is not a subcommand (should be rare before a command).
+        i += 1;
     }
     "unknown"
+}
+
+fn match_sub(token: &str, subs: &[&'static str]) -> Option<&'static str> {
+    subs.iter().copied().find(|&s| s == token)
 }
 
 /// Map clap parse / help errors into the stable CLI contract.
@@ -342,5 +414,41 @@ fn clap_error_message(err: &clap::Error) -> String {
         err.to_string()
     } else {
         msg
+    }
+}
+
+#[cfg(test)]
+mod argv_command_tests {
+    use super::command_name_from_args;
+
+    #[test]
+    fn db_path_named_list_does_not_steal_add() {
+        // Auditor REPRO: --db list add --name broken → command=add
+        let cmd = command_name_from_args(["--json", "--db", "list", "add", "--name", "broken"]);
+        assert_eq!(cmd, "add");
+    }
+
+    #[test]
+    fn db_equals_form_then_add() {
+        let cmd = command_name_from_args(["--json", "--db=list", "add", "--name", "broken"]);
+        assert_eq!(cmd, "add");
+    }
+
+    #[test]
+    fn plain_add_after_json() {
+        let cmd = command_name_from_args(["--json", "add", "--name", "broken"]);
+        assert_eq!(cmd, "add");
+    }
+
+    #[test]
+    fn list_subcommand_still_detected() {
+        let cmd = command_name_from_args(["--json", "list"]);
+        assert_eq!(cmd, "list");
+    }
+
+    #[test]
+    fn run_now_hyphenated() {
+        let cmd = command_name_from_args(["--db", "timers.db", "run-now", "tick"]);
+        assert_eq!(cmd, "run-now");
     }
 }

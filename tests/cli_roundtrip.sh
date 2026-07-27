@@ -123,6 +123,28 @@ fi
 # stderr must not be the only signal when --json is set (may be empty or unused)
 ok "parse-time --json error envelope (rc=$PARSE_RC code=$CODE)"
 
+echo "==> parse-time --db path 'list' does not steal command=add"
+# Auditor REPRO #2: relative --db value equal to a subcommand name must not
+# mislabel the JSON envelope command field.
+set +e
+# Invoke with explicit argv order (do not use BELLMAN array which already has --json).
+PARSE2_OUT="$("$BELLMAN_BIN" --json --db list add --name broken 2>"$TMP/parse2.err")"
+PARSE2_RC=$?
+set -e
+if [[ "$PARSE2_RC" -eq 0 ]]; then
+  die "db-list steal exit" "expected non-zero rc, got 0"
+fi
+if [[ -z "$PARSE2_OUT" ]]; then
+  die "db-list steal stdout" "expected JSON on stdout, empty (stderr=$(cat "$TMP/parse2.err"))"
+fi
+assert_ok_false "db-list steal ok" "$PARSE2_OUT"
+assert_cmd "db-list steal command" "$PARSE2_OUT" "add"
+CODE2="$(jget "$PARSE2_OUT" 'obj.get("error",{}).get("code")')"
+if [[ "$CODE2" != "invalid_args" ]]; then
+  die "db-list steal code" "expected invalid_args, got $CODE2: $PARSE2_OUT"
+fi
+ok "parse-time --db list add → command=add (not list)"
+
 echo "==> add all 7 occurrence kinds"
 
 JSON="$(run_json add --name once-job --occurrence once --time 2030-06-15T12:00:00 --tz UTC)" \
