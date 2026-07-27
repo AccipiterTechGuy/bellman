@@ -20,6 +20,9 @@ pub mod notify_sink;
 pub mod state;
 pub mod tray;
 
+#[cfg(test)]
+mod dto_serde_tests;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 

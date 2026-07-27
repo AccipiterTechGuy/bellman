@@ -55,19 +55,39 @@
     refresh();
   }
 
+  // Subscribe to backend events. We subscribe SYNCHRONOUSLY in onMount
+  // (before any awaits) so the unsub closure is registered with
+  // onDestroy before anything else can run; once the listen promise
+  // settles we swap the placeholder for the real unsubscriber. If the
+  // component is destroyed before the promise resolves, the placeholder
+  // cancels the listener when it eventually arrives.
+  const _unsubPausePlaceholder = { called: false, realUnsub: null };
+  function unsubPause() {
+    _unsubPausePlaceholder.called = true;
+    if (_unsubPausePlaceholder.realUnsub) {
+      const u = _unsubPausePlaceholder.realUnsub;
+      _unsubPausePlaceholder.realUnsub = null;
+      u();
+    }
+  }
+  onDestroy(unsubPause);
+
   onMount(async () => {
     await refresh();
     await checkWizard();
-    // Subscribe to the pause-all event so the top-bar pill stays in sync
-    // with whichever surface flipped the flag (window toggle OR tray
-    // menu). Payload is a bool — consistent with the Tauri command.
-    const unsubPause = listen('pause-all-changed', (e) => {
+    listen('pause-all-changed', (e) => {
       const next = e?.payload;
       if (typeof next === 'boolean') {
         pauseAll = next;
       }
+    }).then((realUnsub) => {
+      if (_unsubPausePlaceholder.called) {
+        // Component already destroyed — tear the listener down.
+        try { realUnsub(); } catch { /* ignore */ }
+      } else {
+        _unsubPausePlaceholder.realUnsub = realUnsub;
+      }
     });
-    onDestroy(unsubPause);
   });
 </script>
 
