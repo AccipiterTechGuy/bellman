@@ -49,16 +49,13 @@ impl Weekdays {
             Weekday::Sat,
             Weekday::Sun,
         ];
-        ORDER
-            .into_iter()
-            .enumerate()
-            .filter_map(move |(i, d)| {
-                if self.0 & (1u8 << i) != 0 {
-                    Some(d)
-                } else {
-                    None
-                }
-            })
+        ORDER.into_iter().enumerate().filter_map(move |(i, d)| {
+            if self.0 & (1u8 << i) != 0 {
+                Some(d)
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -132,6 +129,21 @@ impl OccurrenceKind {
     /// Whether this kind uses UTC elapsed time (interval) vs wall-clock local.
     pub fn is_elapsed_time(&self) -> bool {
         matches!(self, Self::Interval { .. })
+    }
+
+    /// Short, type-stable kind label (lowercase, used as the webview
+    /// discriminator on the wire). Mirrors `kind_label` in
+    /// `src-tauri/src/commands.rs`.
+    pub fn kind_label(&self) -> &'static str {
+        match self {
+            Self::Once { .. } => "once",
+            Self::Interval { .. } => "interval",
+            Self::Daily { .. } => "daily",
+            Self::Weekly { .. } => "weekly",
+            Self::Monthly { .. } => "monthly",
+            Self::Yearly { .. } => "yearly",
+            Self::Cron { .. } => "cron",
+        }
     }
 
     /// Helper: last day-of-month for a year/month (1-based month).
