@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Open options for a store database.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct OpenOptions {
     /// When true (default), refuse paths on network filesystems.
     pub refuse_network_fs: bool,
@@ -164,7 +164,7 @@ impl Store {
             params![
                 id.to_string(),
                 new.name,
-                new.enabled as i64,
+                i64::from(new.enabled),
                 occ_json,
                 tz,
                 next.map(fmt_dt),
@@ -174,7 +174,7 @@ impl Store {
                 retry,
                 valid_from.map(fmt_dt),
                 valid_until.map(fmt_dt),
-                max_runs.map(|n| n as i64),
+                max_runs_to_sql(max_runs),
                 tags_json,
                 action_json,
                 revision,
@@ -255,7 +255,7 @@ impl Store {
              WHERE id = ?16 AND revision = ?17",
             params![
                 next.name,
-                next.enabled as i64,
+                i64::from(next.enabled),
                 serde_json::to_string(&next.occurrence)?,
                 next.tz,
                 next.next_fire_utc.map(fmt_dt),
@@ -265,7 +265,7 @@ impl Store {
                 serde_json::to_string(&next.retry)?,
                 next.valid_from.map(fmt_dt),
                 next.valid_until.map(fmt_dt),
-                next.max_runs.map(|n| n as i64),
+                max_runs_to_sql(next.max_runs),
                 serde_json::to_string(&next.tags)?,
                 serde_json::to_string(&next.action)?,
                 next.revision,
@@ -552,8 +552,8 @@ fn row_to_timer(r: &rusqlite::Row<'_>) -> rusqlite::Result<Timer> {
     let misfire_json: String = r.get(7)?;
     let overlap_json: String = r.get(8)?;
     let retry_json: String = r.get(9)?;
-    let vf_s: Option<String> = r.get(10)?;
-    let vu_s: Option<String> = r.get(11)?;
+    let valid_from_s: Option<String> = r.get(10)?;
+    let valid_until_s: Option<String> = r.get(11)?;
     let max_runs: Option<i64> = r.get(12)?;
     let tags_json: String = r.get(13)?;
     let action_json: String = r.get(14)?;
@@ -601,21 +601,21 @@ fn row_to_timer(r: &rusqlite::Row<'_>) -> rusqlite::Result<Timer> {
         misfire,
         overlap,
         retry,
-        valid_from: parse_opt_dt(vf_s).map_err(|e| {
+        valid_from: parse_opt_dt(valid_from_s).map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(
                 10,
                 rusqlite::types::Type::Text,
                 Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())),
             )
         })?,
-        valid_until: parse_opt_dt(vu_s).map_err(|e| {
+        valid_until: parse_opt_dt(valid_until_s).map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(
                 11,
                 rusqlite::types::Type::Text,
                 Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())),
             )
         })?,
-        max_runs: max_runs.map(|n| n as u64),
+        max_runs: max_runs_from_sql(max_runs),
         tags,
         action,
         revision,
@@ -702,6 +702,22 @@ fn parse_opt_dt(s: Option<String>) -> StoreResult<Option<DateTime<Utc>>> {
 
 fn occ_max_runs(occ: &Occurrence) -> Option<u64> {
     occ.max_runs()
+}
+
+/// `max_runs` for the database column, saturating instead of wrapping.
+///
+/// The column is a denormalized mirror used for querying; the authoritative
+/// cap lives in the serialized occurrence, so clamping here loses nothing. A
+/// bare `as i64` would turn a cap above `i64::MAX` negative — i.e. a timer
+/// that reads back as already exhausted.
+fn max_runs_to_sql(max_runs: Option<u64>) -> Option<i64> {
+    max_runs.map(|n| i64::try_from(n).unwrap_or(i64::MAX))
+}
+
+/// Inverse of [`max_runs_to_sql`]. Saturates the same direction, so a value
+/// that clamped on the way in stays "effectively unlimited" on the way out.
+fn max_runs_from_sql(max_runs: Option<i64>) -> Option<u64> {
+    max_runs.map(|n| u64::try_from(n).unwrap_or(u64::MAX))
 }
 
 fn occ_valid_from(occ: &Occurrence) -> Option<DateTime<Utc>> {

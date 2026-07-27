@@ -152,6 +152,11 @@ impl Occurrence {
     /// Consumes one `pending_skips` entry per skipped candidate. Does **not**
     /// mutate `runs_done` — the caller records runs via `record_run`.
     pub fn next_fire(&mut self, after: DateTime<Tz>) -> Option<DateTime<Tz>> {
+        // Hard safety cap so a bad cron / empty weekly never spins forever.
+        // Exclusion days are jumped in one step (see `jump_past_exclusion_day`),
+        // so a full day of 1-second interval ticks does not burn this budget.
+        const MAX_CANDIDATES: usize = 10_000;
+
         if let Some(max) = self.max_runs {
             if self.runs_done >= max {
                 return None;
@@ -173,10 +178,6 @@ impl Occurrence {
             }
         }
 
-        // Hard safety cap so a bad cron / empty weekly never spins forever.
-        // Exclusion days are jumped in one step (see `jump_past_exclusion_day`),
-        // so a full day of 1-second interval ticks does not burn this budget.
-        const MAX_CANDIDATES: usize = 10_000;
         let mut skipped = 0u32;
         let need_skip = self.pending_skips;
 
@@ -303,7 +304,7 @@ impl Occurrence {
                 anchor,
             } => self.next_interval(*every_secs, *anchor, after),
             OccurrenceKind::Daily { at } => self.next_daily(*at, after),
-            OccurrenceKind::Weekly { days, at } => self.next_weekly(days, *at, after),
+            OccurrenceKind::Weekly { days, at } => self.next_weekly(*days, *at, after),
             OccurrenceKind::Monthly { day, at } => self.next_monthly(*day, *at, after),
             OccurrenceKind::Yearly { month, day, at } => {
                 self.next_yearly(*month, *day, *at, after)
@@ -384,7 +385,7 @@ impl Occurrence {
 
     fn next_weekly(
         &self,
-        days: &Weekdays,
+        days: Weekdays,
         at: NaiveTime,
         after: DateTime<Tz>,
     ) -> Option<DateTime<Tz>> {
@@ -477,16 +478,13 @@ impl Iterator for PreviewIter {
         if self.done {
             return None;
         }
-        match self.working.next_fire(self.cursor) {
-            Some(t) => {
-                self.cursor = t;
-                self.working.record_run();
-                Some(t)
-            }
-            None => {
-                self.done = true;
-                None
-            }
+        if let Some(t) = self.working.next_fire(self.cursor) {
+            self.cursor = t;
+            self.working.record_run();
+            Some(t)
+        } else {
+            self.done = true;
+            None
         }
     }
 }

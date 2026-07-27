@@ -23,7 +23,7 @@ pub struct SchedulerConfig {
 impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
-            horizon: Duration::from_secs(24 * 60 * 60),
+            horizon: Duration::from_hours(24),
             max_sleep: Duration::from_secs(30),
             jump_threshold: Duration::from_secs(3),
         }
