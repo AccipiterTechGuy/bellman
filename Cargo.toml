@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/bellman-core",
+    "crates/bellman-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+bellman-core = { path = "crates/bellman-core" }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+chrono-tz = "0.10"
+croner = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

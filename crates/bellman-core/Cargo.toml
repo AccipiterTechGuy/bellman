@@ -1,0 +1,16 @@
+[package]
+name = "bellman-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bellman scheduling engine core library"
+
+[dependencies]
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+croner = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true, features = ["clock"] }

@@ -1,0 +1,14 @@
+[package]
+name = "bellman-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bellman command-line interface"
+default-run = "bellman"
+
+[[bin]]
+name = "bellman"
+path = "src/main.rs"
+
+[dependencies]
+bellman-core = { workspace = true }
