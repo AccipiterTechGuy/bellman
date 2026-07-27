@@ -127,21 +127,29 @@ fn migrate_v2(conn: &Connection) -> StoreResult<()> {
 }
 
 /// Durable run event sequences + per-timer ack cursors for the slot output feed.
+///
+/// Idempotent under crash/restart: SQLite commits each DDL statement, so a
+/// process that dies after `ALTER TABLE` but before `user_version` advances
+/// must reopen without failing on "duplicate column name".
 fn migrate_v3(conn: &Connection) -> StoreResult<()> {
+    // Guard: only ADD COLUMN when missing (partial-migration safe).
+    if !table_has_column(conn, "runs", "event_sequence")? {
+        conn.execute("ALTER TABLE runs ADD COLUMN event_sequence INTEGER", [])
+            .map_err(|e| StoreError::Sqlite(format!("migrate v3 add event_sequence: {e}")))?;
+    }
+
     conn.execute_batch(
         r"
-        -- Monotonic per-timer sequence for un-acked run events in slot output.
-        ALTER TABLE runs ADD COLUMN event_sequence INTEGER;
-
         CREATE TABLE IF NOT EXISTS slot_event_acks (
             timer_id              TEXT PRIMARY KEY NOT NULL,
             last_acked_sequence   INTEGER NOT NULL DEFAULT 0
         );
         ",
     )
-    .map_err(|e| StoreError::Sqlite(format!("migrate v3: {e}")))?;
+    .map_err(|e| StoreError::Sqlite(format!("migrate v3 slot_event_acks: {e}")))?;
 
     // Backfill sequences for any pre-existing runs (stable order by scheduled_for, run_id).
+    // Safe to re-run: only fills NULL sequences.
     conn.execute_batch(
         r"
         UPDATE runs
@@ -159,4 +167,23 @@ fn migrate_v3(conn: &Connection) -> StoreResult<()> {
     )
     .map_err(|e| StoreError::Sqlite(format!("migrate v3 backfill: {e}")))?;
     Ok(())
+}
+
+/// True when `table` has a column named `column` (via `PRAGMA table_info`).
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> StoreResult<bool> {
+    // table name is internal; never pass untrusted input.
+    let pragma = format!("PRAGMA table_info({table})");
+    let mut stmt = conn
+        .prepare(&pragma)
+        .map_err(|e| StoreError::Sqlite(format!("table_info {table}: {e}")))?;
+    let rows = stmt
+        .query_map([], |r| r.get::<_, String>(1))
+        .map_err(|e| StoreError::Sqlite(format!("table_info query {table}: {e}")))?;
+    for row in rows {
+        let name = row.map_err(|e| StoreError::Sqlite(format!("table_info row: {e}")))?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

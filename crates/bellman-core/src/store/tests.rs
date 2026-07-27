@@ -100,6 +100,112 @@ fn schema_version_is_current_after_open() {
     assert!(meta.last_prune.is_none());
 }
 
+/// Crash window: `event_sequence` already present (ALTER committed) but
+/// `user_version` still 2. Reopen must finish migrate_v3 without
+/// "duplicate column name" and land on schema 3.
+#[test]
+fn migrate_v3_partial_restart_is_idempotent() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("partial-v3.db");
+
+    {
+        let conn = rusqlite::Connection::open(&path).expect("open raw");
+        conn.execute_batch(
+            r"
+            PRAGMA user_version = 2;
+
+            CREATE TABLE meta (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                schema_version INTEGER NOT NULL,
+                last_prune TEXT,
+                last_recalibration TEXT,
+                tzdata_version TEXT
+            );
+            INSERT INTO meta VALUES (1, 2, NULL, NULL, NULL);
+
+            CREATE TABLE timers (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                occurrence TEXT NOT NULL,
+                tz TEXT NOT NULL,
+                next_fire_utc TEXT,
+                last_fired TEXT,
+                misfire_policy TEXT NOT NULL,
+                overlap_policy TEXT NOT NULL,
+                retry_policy TEXT NOT NULL,
+                valid_from TEXT,
+                valid_until TEXT,
+                max_runs INTEGER,
+                tags TEXT NOT NULL DEFAULT '[]',
+                action TEXT NOT NULL,
+                revision INTEGER NOT NULL DEFAULT 1
+            );
+
+            CREATE TABLE runs (
+                run_id TEXT PRIMARY KEY NOT NULL,
+                timer_id TEXT NOT NULL,
+                scheduled_for TEXT NOT NULL,
+                status TEXT NOT NULL,
+                claimed_at TEXT NOT NULL,
+                completed_at TEXT,
+                event_sequence INTEGER,
+                UNIQUE (timer_id, scheduled_for)
+            );
+
+            CREATE TABLE slot_requests (
+                request_id TEXT PRIMARY KEY NOT NULL,
+                slot_id TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                app_name TEXT,
+                timer_id TEXT,
+                status TEXT NOT NULL,
+                response_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE timer_owners (
+                timer_id TEXT PRIMARY KEY NOT NULL,
+                app_name TEXT NOT NULL
+            );
+
+            -- slot_event_acks intentionally missing: also created by v3.
+            ",
+        )
+        .expect("seed partial v3");
+    }
+
+    let store = Store::open_with(
+        &path,
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
+    .expect("reopen after partial v3 must succeed");
+    assert_eq!(store.schema_version().unwrap(), 3);
+
+    // Second open (fully migrated) still succeeds.
+    drop(store);
+    let store2 = Store::open_with(
+        &path,
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
+    .expect("second open");
+    assert_eq!(store2.schema_version().unwrap(), 3);
+
+    // claim_run uses event_sequence column.
+    let mut store2 = store2;
+    let t = store2
+        .create_timer(NewTimer::new("partial", once_at(2035, 1, 1, 0, 0, 0)))
+        .unwrap();
+    let claim = store2.claim_run(t.id, Utc::now()).unwrap();
+    assert_eq!(claim.event_sequence, 1);
+}
+
 #[test]
 fn crud_round_trip_every_occurrence_kind() {
     let (_dir, mut store) = open_tmp();
