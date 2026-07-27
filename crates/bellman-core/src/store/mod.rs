@@ -410,6 +410,25 @@ impl Store {
         Ok(out)
     }
 
+    /// Look up the claim ledger row for `(timer_id, scheduled_for)`, if any.
+    pub fn get_claim_for(
+        &self,
+        timer_id: TimerId,
+        scheduled_for: DateTime<Utc>,
+    ) -> StoreResult<Option<RunClaim>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT run_id, timer_id, scheduled_for, status, claimed_at, completed_at
+             FROM runs WHERE timer_id = ?1 AND scheduled_for = ?2",
+        )?;
+        let row = stmt
+            .query_row(
+                params![timer_id.to_string(), fmt_dt(scheduled_for)],
+                row_to_claim,
+            )
+            .optional()?;
+        Ok(row)
+    }
+
     /// Checkpoint WAL with TRUNCATE (also invoked on clean drop).
     pub fn checkpoint_truncate(&self) -> StoreResult<()> {
         self.conn

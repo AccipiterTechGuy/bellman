@@ -125,7 +125,9 @@ fn suspend_resume_oversleep_recovered_interval_skip() {
 fn weekend_gap_daily_coalesce_fires_once() {
     let (_dir, mut store) = open_tmp();
     // Daily at 09:00 UTC. Start Thursday 08:00 so next is Thursday 09:00, then
-    // jump the wall clock over the weekend.
+    // jump the wall clock over the weekend. Default calendar grace is 1 h:
+    // Thu–Sun are out of grace at Monday 10:00, but Monday 09:00 is inside
+    // grace and must fire once (coalesce), not be dropped with the oldest miss.
     let at = NaiveTime::from_hms_opt(9, 0, 0).unwrap();
     let thursday_morning = Utc.with_ymd_and_hms(2030, 6, 6, 8, 0, 0).unwrap();
     let clock = SimulatedClock::new(thursday_morning);
@@ -137,10 +139,7 @@ fn weekend_gap_daily_coalesce_fires_once() {
         "daily",
         at,
         Some(last),
-        MisfirePolicy::Coalesce {
-            // Cover Fri–Mon gap so recovery is allowed.
-            grace_secs: 5 * 24 * 3600,
-        },
+        MisfirePolicy::default_calendar(),
     );
     let expected_thu = Utc.with_ymd_and_hms(2030, 6, 6, 9, 0, 0).unwrap();
     assert_eq!(timer.next_fire_utc.unwrap(), expected_thu);
@@ -154,10 +153,9 @@ fn weekend_gap_daily_coalesce_fires_once() {
     sched.boot().unwrap();
 
     // Laptop closed all weekend: wall → Monday 10:00, mono frozen relative to last tick.
-    // First establish baseline at thursday morning via boot, then wall-only jump.
     let monday = Utc.with_ymd_and_hms(2030, 6, 10, 10, 0, 0).unwrap();
+    let monday_nine = Utc.with_ymd_and_hms(2030, 6, 10, 9, 0, 0).unwrap();
     clock.set_wall(monday);
-    // mono still ~0 while wall jumped days ⇒ huge divergence.
     let r = sched.tick().unwrap();
     assert!(r.clock_jump);
     assert_eq!(
@@ -167,13 +165,16 @@ fn weekend_gap_daily_coalesce_fires_once() {
         r.fires.len()
     );
     assert_eq!(r.fires[0].timer_id, timer.id);
+    assert_eq!(
+        r.fires[0].scheduled_for, monday_nine,
+        "must fire the in-grace Monday 09:00 slot, not the oldest Thursday miss"
+    );
     match &r.fires[0].kind {
-        FireKind::Coalesced { missed_count } => assert!(*missed_count >= 1),
+        FireKind::Coalesced { missed_count } => assert!(*missed_count >= 2),
         FireKind::Late { .. } | FireKind::OnTime => {}
         other => panic!("unexpected kind: {other:?}"),
     }
 
-    // No second fire on subsequent ticks without time advance.
     let r2 = sched.tick().unwrap();
     assert!(r2.fires.is_empty());
 
@@ -679,5 +680,180 @@ fn store_update_after_fire_advances_subsecond_interval() {
         "next {:?} must be > scheduled {:?}",
         updated.next_fire_utc,
         scheduled
+    );
+}
+
+#[test]
+fn crash_after_claim_recovers_pending_action() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("timers.db");
+    let t0 = epoch();
+    let scheduled = t0 + ChronoDuration::seconds(10);
+
+    let timer_id = {
+        let mut store = Store::open(&path).unwrap();
+        let timer = interval_timer(
+            &mut store,
+            "crash",
+            10,
+            t0,
+            Some(t0),
+            MisfirePolicy::Skip,
+        );
+        assert_eq!(timer.next_fire_utc.unwrap(), scheduled);
+        // Crash boundary: claim written, action never ran, process dies.
+        let claim = store.claim_run(timer.id, scheduled).unwrap();
+        assert_eq!(claim.status, crate::store::ClaimStatus::Claimed);
+        timer.id
+    };
+
+    // Reopen + boot must recover the pending claim via the action callback.
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.pending_claims().unwrap().len(), 1);
+
+    let clock = SimulatedClock::new(scheduled + ChronoDuration::seconds(1));
+    let mut sched = Scheduler::new(
+        store,
+        clock,
+        RecordingAction::new(),
+        SchedulerConfig::default(),
+    );
+    let boot_fires = sched.boot().unwrap();
+    assert_eq!(
+        boot_fires.len(),
+        1,
+        "pending claim must recover into one delivered fire"
+    );
+    assert_eq!(boot_fires[0].timer_id, timer_id);
+    assert_eq!(boot_fires[0].scheduled_for, scheduled);
+    assert_eq!(sched.action().len(), 1);
+    assert!(
+        sched.store().pending_claims().unwrap().is_empty(),
+        "claim must be completed after recovery"
+    );
+    let run = sched
+        .store()
+        .get_run(boot_fires[0].run_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, crate::store::ClaimStatus::Completed);
+}
+
+#[test]
+fn catch_up_skips_old_delivers_recent_within_grace() {
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+    let clock = SimulatedClock::new(t0);
+    // 10 s interval; grace 30 s; max 10.
+    let timer = interval_timer(
+        &mut store,
+        "cu-mix",
+        10,
+        t0,
+        Some(t0),
+        MisfirePolicy::CatchUp {
+            grace_secs: 30,
+            max_catch_up: 10,
+        },
+    );
+    assert_eq!(
+        timer.next_fire_utc.unwrap(),
+        t0 + ChronoDuration::seconds(10)
+    );
+
+    let mut sched = Scheduler::new(
+        store,
+        clock.clone(),
+        RecordingAction::new(),
+        SchedulerConfig::default(),
+    );
+    sched.boot().unwrap();
+
+    // Jump 100 s: misses at +10..+100. Only +70,+80,+90,+100 are within 30 s of
+    // now=t0+100? late for +70 = 30 s → in grace; +60 late=40 → out.
+    // Misses: 10,20,30,40,50,60,70,80,90,100 (10 slots).
+    // In grace (late <= 30): 70 (30), 80 (20), 90 (10), 100 (0) → 4 fires.
+    clock.advance_wall_only(Duration::from_secs(100));
+    let r = sched.tick().unwrap();
+    assert!(r.clock_jump);
+    assert_eq!(
+        r.fires.len(),
+        4,
+        "catch_up must skip out-of-grace then deliver recent; got {:?}",
+        r.fires.iter().map(|f| f.scheduled_for).collect::<Vec<_>>()
+    );
+    let expected = [
+        t0 + ChronoDuration::seconds(70),
+        t0 + ChronoDuration::seconds(80),
+        t0 + ChronoDuration::seconds(90),
+        t0 + ChronoDuration::seconds(100),
+    ];
+    for (f, exp) in r.fires.iter().zip(expected.iter()) {
+        assert_eq!(f.scheduled_for, *exp);
+    }
+}
+
+#[test]
+fn control_refill_wakes_running_loop() {
+    use std::thread;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("timers.db");
+    let store = Store::open(&path).unwrap();
+
+    let mut sched = Scheduler::new(
+        store,
+        SystemClock::new(),
+        RecordingAction::new(),
+        // Empty heap would otherwise sleep a full 30 s between polls.
+        SchedulerConfig::default().with_max_sleep(Duration::from_secs(30)),
+    );
+    sched.boot().unwrap();
+    assert_eq!(sched.heap_len(), 0);
+
+    let handle = sched.control_handle();
+    let path_bg = path.clone();
+
+    let bg = thread::spawn(move || {
+        // Let the main loop enter its long empty-heap sleep.
+        thread::sleep(Duration::from_millis(200));
+        let mut store = Store::open(&path_bg).unwrap();
+        let now = Utc::now();
+        let occ = Occurrence::new(
+            OccurrenceKind::Interval {
+                every_secs: 2,
+                anchor: now,
+            },
+            "UTC",
+        )
+        .unwrap();
+        let mut new = NewTimer::new("wake-me", occ);
+        new.last_fired = Some(now);
+        new.misfire = MisfirePolicy::Skip;
+        store.create_timer(new).unwrap();
+        handle.refill();
+        // Allow ~one interval fire, then stop the loop.
+        thread::sleep(Duration::from_millis(2800));
+        handle.shutdown();
+    });
+
+    let start = std::time::Instant::now();
+    let result = sched.run_until_shutdown().unwrap();
+    let elapsed = start.elapsed();
+    bg.join().unwrap();
+
+    assert!(
+        result.refilled,
+        "refill must be observed by the running loop"
+    );
+    assert!(
+        !result.fires.is_empty(),
+        "expected at least one fire after refill, got {}",
+        result.fires.len()
+    );
+    // Must not wait the full 30 s empty-heap backstop before noticing the edit.
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "loop slept too long before refill/fire: {elapsed:?}"
     );
 }

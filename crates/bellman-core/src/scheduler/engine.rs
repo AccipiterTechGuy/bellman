@@ -12,12 +12,13 @@ use super::clock::{Clock, MonoTime};
 use super::config::{SchedulerConfig, HIGH_FREQ_PERIOD_SECS};
 use crate::occurrence::OccurrenceKind;
 use crate::store::{
-    MisfirePolicy, Store, StoreError, Timer, TimerId, TimerPatch, TimerUpdate,
+    ClaimStatus, MisfirePolicy, RunClaim, Store, StoreError, Timer, TimerId, TimerPatch,
+    TimerUpdate,
 };
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::time::Duration;
 
 /// Control messages for the running loop (refill after insert/edit, shutdown).
@@ -191,13 +192,15 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             .map(|Reverse(e)| (e.fire_at, e.timer_id))
     }
 
-    /// Startup: record clock baselines, run misfire pass, rebuild horizon.
+    /// Startup: recover pending claims, misfire pass, rebuild horizon.
     ///
-    /// Returns fires delivered by the startup misfire pass (if any).
+    /// Recovery order matches BUILD_PLAN: pending run-claim recovery → misfire
+    /// scan → horizon rebuild. Returns all fires delivered during boot.
     pub fn boot(&mut self) -> SchedulerResult<Vec<DeliveredFire>> {
         self.last_wall = self.clock.wall_now();
         self.last_mono = self.clock.mono_now();
-        let fires = self.misfire_pass()?;
+        let mut fires = self.recover_pending_claims()?;
+        fires.extend(self.misfire_pass()?);
         self.rebuild_horizon()?;
         self.booted = true;
         Ok(fires)
@@ -313,12 +316,21 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 // tight CPU spin). SimulatedClock advances both axes.
                 sleep = Duration::from_millis(1).min(remain);
             }
-            self.clock.sleep(sleep);
+            if let Some(msg) = self.wait_interruptible(sleep) {
+                self.apply_control_msg(msg, &mut acc)?;
+                if acc.shutdown {
+                    break;
+                }
+            }
         }
         Ok(acc)
     }
 
     /// Run until a shutdown control message is received.
+    ///
+    /// Sleeps are interruptible: a [`ControlMsg::Refill`] or
+    /// [`ControlMsg::Shutdown`] on the control channel wakes the loop immediately
+    /// so insert/edit does not wait for `max_sleep`.
     pub fn run_until_shutdown(&mut self) -> SchedulerResult<TickResult> {
         if !self.booted {
             self.boot()?;
@@ -337,9 +349,66 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 d if d.is_zero() => Duration::from_millis(1),
                 d => d,
             };
-            self.clock.sleep(sleep);
+            if let Some(msg) = self.wait_interruptible(sleep) {
+                self.apply_control_msg(msg, &mut acc)?;
+                if acc.shutdown {
+                    break;
+                }
+            }
         }
         Ok(acc)
+    }
+
+    /// Block until `d` elapses or a control message arrives.
+    ///
+    /// On OS clocks, uses `recv_timeout` so senders wake the loop. On simulated
+    /// clocks, drains pending messages then advances virtual time by `d`.
+    fn wait_interruptible(&self, d: Duration) -> Option<ControlMsg> {
+        if let Ok(msg) = self.control_rx.try_recv() {
+            return Some(msg);
+        }
+        if d.is_zero() {
+            return None;
+        }
+        if self.clock.uses_os_time() {
+            match self.control_rx.recv_timeout(d) {
+                Ok(msg) => Some(msg),
+                Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => None,
+            }
+        } else {
+            self.clock.sleep(d);
+            self.control_rx.try_recv().ok()
+        }
+    }
+
+    fn apply_control_msg(
+        &mut self,
+        msg: ControlMsg,
+        acc: &mut TickResult,
+    ) -> SchedulerResult<()> {
+        match msg {
+            ControlMsg::Refill => {
+                self.rebuild_horizon()?;
+                acc.refilled = true;
+            }
+            ControlMsg::Shutdown => {
+                acc.shutdown = true;
+            }
+        }
+        // Drain any further queued control messages without sleeping.
+        loop {
+            match self.control_rx.try_recv() {
+                Ok(ControlMsg::Refill) => {
+                    self.rebuild_horizon()?;
+                    acc.refilled = true;
+                }
+                Ok(ControlMsg::Shutdown) => {
+                    acc.shutdown = true;
+                }
+                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+            }
+        }
+        Ok(())
     }
 
     /// Explicit horizon rebuild (also triggered by control Refill).
@@ -520,34 +589,43 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 }
             }
             MisfirePolicy::Coalesce { .. } => {
-                if lateness <= grace {
-                    // Count missed slots for the event kind (best-effort).
-                    let missed = count_missed(&timer, scheduled_for, now);
-                    let kind = if missed > 1 {
-                        FireKind::Coalesced {
-                            missed_count: missed,
-                        }
-                    } else if lateness <= ChronoDuration::seconds(1) {
-                        FireKind::OnTime
-                    } else {
-                        FireKind::Late { lateness }
-                    };
-                    // Fire once for the original scheduled instant, then jump to future.
-                    match self.deliver_one(&timer, scheduled_for, kind)? {
-                        Some(d) => {
-                            // Coalesce: after one recovery fire, skip any further
-                            // backlog still ≤ now.
-                            self.advance_past_now(timer_id, now)?;
-                            Ok(vec![d])
-                        }
-                        None => {
-                            self.advance_past_now(timer_id, now)?;
-                            Ok(vec![])
-                        }
-                    }
-                } else {
+                // Grace is checked per missed occurrence against *now*, not only
+                // the oldest. Walk the backlog: drop out-of-grace slots, fire
+                // once for the latest in-grace slot (coalesce), then jump ahead.
+                let walk = walk_missed(&timer, scheduled_for, now);
+                let in_grace: Vec<DateTime<Utc>> = walk
+                    .iter()
+                    .copied()
+                    .filter(|m| now.signed_duration_since(*m) <= grace)
+                    .collect();
+                if in_grace.is_empty() {
                     self.advance_past_now(timer_id, now)?;
-                    Ok(vec![])
+                    return Ok(vec![]);
+                }
+                // Latest in-grace occurrence (e.g. Monday 09:00 when recovering
+                // Monday 10:00 after a weekend, with 1h default grace).
+                let fire_at = *in_grace.last().expect("non-empty");
+                let missed = walk.len() as u32;
+                let late = now.signed_duration_since(fire_at);
+                let kind = if missed > 1 || in_grace.len() > 1 {
+                    FireKind::Coalesced {
+                        missed_count: missed,
+                    }
+                } else if late <= ChronoDuration::seconds(1) {
+                    FireKind::OnTime
+                } else {
+                    FireKind::Late { lateness: late }
+                };
+                // mark_fired(last_fired=fire_at) jumps the ledger past older misses.
+                match self.deliver_one(&timer, fire_at, kind)? {
+                    Some(d) => {
+                        self.advance_past_now(timer_id, now)?;
+                        Ok(vec![d])
+                    }
+                    None => {
+                        self.advance_past_now(timer_id, now)?;
+                        Ok(vec![])
+                    }
                 }
             }
             MisfirePolicy::CatchUp {
@@ -559,14 +637,26 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 let mut delivered = Vec::new();
                 let mut scheduled = scheduled_for;
                 let mut index = 0u32;
-                while index < max {
-                    if scheduled > now {
+                // Safety cap on walk steps (includes out-of-grace skips).
+                for _ in 0..100_000 {
+                    if scheduled > now || index >= max {
                         break;
                     }
                     let late = now.signed_duration_since(scheduled);
                     if late > grace {
-                        // This (and older) misses are outside grace — drop them.
-                        break;
+                        // Older than grace: drop this slot and continue to newer
+                        // misses that may still be inside the window.
+                        self.anchor_last_fired(timer_id, scheduled)?;
+                        let Some(t) = self.store.get_timer(timer_id)? else {
+                            break;
+                        };
+                        match t.next_fire_utc {
+                            Some(nf) if nf > scheduled => {
+                                scheduled = nf;
+                                continue;
+                            }
+                            _ => break,
+                        }
                     }
                     let Some(timer_now) = self.store.get_timer(timer_id)? else {
                         break;
@@ -578,11 +668,10 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                     )? {
                         Some(d) => delivered.push(d),
                         None => {
-                            // Already claimed — still walk forward.
+                            // Recovered or already completed — still count step.
                         }
                     }
                     index += 1;
-                    // Next candidate from occurrence after this scheduled time.
                     let Some(t) = self.store.get_timer(timer_id)? else {
                         break;
                     };
@@ -595,7 +684,6 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                             }
                         }
                         Some(_) | None => {
-                            // deliver_one already advanced; stop if nothing due.
                             if t.next_fire_utc.map(|nf| nf > now).unwrap_or(true) {
                                 if let Some(nf) = t.next_fire_utc {
                                     self.push_if_in_horizon(nf, timer_id);
@@ -606,7 +694,6 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                         }
                     }
                 }
-                // Drop any remaining backlog beyond catch-up cap / grace.
                 let Some(t) = self.store.get_timer(timer_id)? else {
                     return Ok(delivered);
                 };
@@ -620,7 +707,32 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         }
     }
 
+    /// Recover claims left in `claimed` state after a crash (at-least-once).
+    fn recover_pending_claims(&mut self) -> SchedulerResult<Vec<DeliveredFire>> {
+        let pending = self.store.pending_claims()?;
+        let mut out = Vec::new();
+        for claim in pending {
+            let Some(timer) = self.store.get_timer(claim.timer_id)? else {
+                // Timer gone — complete the orphan claim so it does not loop.
+                let _ = self.store.complete_run(claim.run_id);
+                continue;
+            };
+            if let Some(d) = self.finish_claimed_run(&timer, &claim, FireKind::Late {
+                lateness: self
+                    .clock
+                    .wall_now()
+                    .signed_duration_since(claim.scheduled_for),
+            })? {
+                out.push(d);
+            }
+        }
+        Ok(out)
+    }
+
     /// Claim → action → complete → advance last_fired / next_fire.
+    ///
+    /// If a prior crash left a `claimed` row, re-runs the action (at-least-once).
+    /// Completed claims are not re-acted (backward-jump / double-fire guard).
     fn deliver_one(
         &mut self,
         timer: &Timer,
@@ -629,22 +741,70 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
     ) -> SchedulerResult<Option<DeliveredFire>> {
         let claim = match self.store.claim_run(timer.id, scheduled_for) {
             Ok(c) => c,
-            Err(StoreError::AlreadyClaimed { .. }) => {
-                // Prior claim (crash recovery or re-entry). Do not re-fire.
-                // Still ensure the timer has moved past this scheduled instant.
-                self.ensure_advanced_past(timer.id, scheduled_for)?;
-                return Ok(None);
+            Err(StoreError::AlreadyClaimed {
+                timer_id,
+                scheduled_for,
+            }) => {
+                match self.store.get_claim_for(timer_id, scheduled_for)? {
+                    Some(existing) if existing.status == ClaimStatus::Claimed => {
+                        // Crash between claim and complete — recover the action.
+                        return self.finish_claimed_run(timer, &existing, kind);
+                    }
+                    Some(_) => {
+                        // Already completed — never re-fire this slot.
+                        self.ensure_advanced_past(timer.id, scheduled_for)?;
+                        return Ok(None);
+                    }
+                    None => {
+                        return Err(SchedulerError::Internal(format!(
+                            "AlreadyClaimed but no row for {timer_id} @ {scheduled_for}"
+                        )));
+                    }
+                }
             }
             Err(e) => return Err(e.into()),
         };
 
-        let ctx = FireContext::from_claim(timer, &claim, kind.clone());
+        self.finish_claimed_run(timer, &claim, kind)
+    }
+
+    /// Run the action for an existing claim, complete it, and advance the timer.
+    fn finish_claimed_run(
+        &mut self,
+        timer: &Timer,
+        claim: &RunClaim,
+        kind: FireKind,
+    ) -> SchedulerResult<Option<DeliveredFire>> {
+        if claim.status == ClaimStatus::Completed {
+            self.ensure_advanced_past(timer.id, claim.scheduled_for)?;
+            return Ok(None);
+        }
+
+        let ctx = FireContext::from_claim(timer, claim, kind.clone());
         let action_res = self.action.on_fire(&ctx);
 
-        // Complete the claim regardless — action failures are surfaced after
-        // ledger bookkeeping so we never double-fire on retry of the same slot.
-        self.store.complete_run(claim.run_id)?;
-        self.mark_fired(timer.id, scheduled_for)?;
+        // Complete even when the action fails so recovery does not infinite-loop;
+        // action errors still surface to the caller.
+        if claim.status == ClaimStatus::Claimed {
+            self.store.complete_run(claim.run_id)?;
+        }
+
+        // Advance last_fired only when this slot is not yet recorded (crash may
+        // have updated next_fire already).
+        let fresh = self.store.get_timer(timer.id)?;
+        let needs_mark = fresh
+            .as_ref()
+            .map(|t| {
+                t.last_fired
+                    .map(|lf| lf < claim.scheduled_for)
+                    .unwrap_or(true)
+            })
+            .unwrap_or(false);
+        if needs_mark {
+            self.mark_fired(timer.id, claim.scheduled_for)?;
+        } else {
+            self.requeue_timer(timer.id)?;
+        }
 
         if let Err(e) = action_res {
             return Err(SchedulerError::Action(e));
@@ -652,10 +812,31 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
 
         Ok(Some(DeliveredFire {
             timer_id: timer.id,
-            scheduled_for,
+            scheduled_for: claim.scheduled_for,
             run_id: claim.run_id,
             kind,
         }))
+    }
+
+    /// Set `last_fired` without `record_run` so next_fire advances past `anchor`.
+    fn anchor_last_fired(
+        &mut self,
+        timer_id: TimerId,
+        anchor: DateTime<Utc>,
+    ) -> SchedulerResult<()> {
+        let timer = self
+            .store
+            .get_timer(timer_id)?
+            .ok_or_else(|| SchedulerError::Internal(format!("timer {timer_id} missing")))?;
+        self.store.update_timer(TimerUpdate {
+            id: timer_id,
+            expected_revision: timer.revision,
+            patch: TimerPatch {
+                last_fired: Some(Some(anchor)),
+                ..Default::default()
+            },
+        })?;
+        Ok(())
     }
 
     fn mark_fired(
@@ -838,12 +1019,20 @@ fn grace_for(timer: &Timer) -> ChronoDuration {
     }
 }
 
-/// Best-effort count of missed scheduled instants in (scheduled_for, now].
-fn count_missed(timer: &Timer, scheduled_for: DateTime<Utc>, now: DateTime<Utc>) -> u32 {
+/// Missed scheduled instants from `first_due` through `now` (inclusive), in order.
+fn walk_missed(
+    timer: &Timer,
+    first_due: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Vec<DateTime<Utc>> {
+    let mut out = Vec::new();
+    if first_due > now {
+        return out;
+    }
+    out.push(first_due);
     let mut occ = timer.occurrence.clone();
     let tz = occ.timezone();
-    let mut cursor = scheduled_for.with_timezone(&tz);
-    let mut count = 1u32; // the original scheduled_for itself
+    let mut cursor = first_due.with_timezone(&tz);
     for _ in 0..10_000 {
         match occ.next_fire(cursor) {
             Some(c) => {
@@ -851,11 +1040,11 @@ fn count_missed(timer: &Timer, scheduled_for: DateTime<Utc>, now: DateTime<Utc>)
                 if c_utc > now {
                     break;
                 }
-                count = count.saturating_add(1);
+                out.push(c_utc);
                 cursor = c;
             }
             None => break,
         }
     }
-    count
+    out
 }

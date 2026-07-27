@@ -32,6 +32,14 @@ pub trait Clock: Send {
 
     /// Block (or advance simulated time) by `d`. Wall and mono both move by `d`.
     fn sleep(&self, d: Duration);
+
+    /// Whether wall time advances during an OS blocking wait (e.g. `recv_timeout`).
+    ///
+    /// - [`SystemClock`]: `true` — real wall clock moves while the thread blocks.
+    /// - [`SimulatedClock`]: `false` — must call [`Clock::sleep`] to advance.
+    fn uses_os_time(&self) -> bool {
+        true
+    }
 }
 
 /// Production clock: `Utc::now` + `Instant`.
@@ -139,6 +147,10 @@ impl Clock for SimulatedClock {
     fn sleep(&self, d: Duration) {
         self.advance(d);
     }
+
+    fn uses_os_time(&self) -> bool {
+        false
+    }
 }
 
 impl Clock for Arc<SimulatedClock> {
@@ -152,6 +164,10 @@ impl Clock for Arc<SimulatedClock> {
 
     fn sleep(&self, d: Duration) {
         (**self).sleep(d);
+    }
+
+    fn uses_os_time(&self) -> bool {
+        false
     }
 }
 
