@@ -39,6 +39,18 @@ impl Weekdays {
         self.0 == 0
     }
 
+    /// Raw bitmask (Mon=bit 0 .. Sun=bit 6). Used by the UI DTO so the
+    /// webview can show weekday checkboxes without parsing pretty
+    /// summaries.
+    pub fn as_u8(self) -> u8 {
+        self.0
+    }
+
+    /// Construct from a raw bitmask. Used by the UI DTO on save round-trip.
+    pub fn from_u8(bits: u8) -> Self {
+        Self(bits & 0b0111_1111)
+    }
+
     pub fn iter(self) -> impl Iterator<Item = Weekday> {
         const ORDER: [Weekday; 7] = [
             Weekday::Mon,

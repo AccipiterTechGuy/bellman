@@ -1,0 +1,31 @@
+{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "name": "weekly-mwf",
+  "enabled": true,
+  "tz": "Europe/Helsinki",
+  "nextFireUtc": "2030-01-01T00:00:00Z",
+  "lastFired": null,
+  "kind": "weekly",
+  "summary": "weekly mon,wed,fri 08:00:00 Europe/Helsinki",
+  "action": "notify: hello",
+  "revision": 1,
+  "occurrence": {
+    "occ": "weekly",
+    "tz": "Europe/Helsinki",
+    "days": {
+      "fri": true,
+      "mon": true,
+      "sat": false,
+      "sun": false,
+      "thu": false,
+      "tue": false,
+      "wed": true
+    },
+    "at": "08:00:00"
+  },
+  "actionKind": {
+    "type": "notify",
+    "title": "hello",
+    "body": "world"
+  }
+}

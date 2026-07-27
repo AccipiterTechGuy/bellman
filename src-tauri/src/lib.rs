@@ -20,6 +20,7 @@ pub mod notify_sink;
 pub mod occurrence_input;
 pub mod state;
 pub mod tray;
+pub mod web;
 
 #[cfg(test)]
 mod dto_serde_tests;
