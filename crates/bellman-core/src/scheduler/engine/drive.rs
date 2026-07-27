@@ -1,0 +1,245 @@
+//! The loop that drives the engine.
+//!
+//! Boot ordering, one-tick semantics, sleep sizing, the two run helpers, the
+//! interruptible wait, control-message application, and the wall-vs-monotonic
+//! clock-jump detector. Everything here is about *when* work happens; the work
+//! itself lives in the sibling modules.
+
+use super::types::{ControlMsg, DeliveredFire, SchedulerError, SchedulerResult, TickResult};
+use super::Scheduler;
+use crate::scheduler::action::FireAction;
+use crate::scheduler::clock::{Clock, MonoTime};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
+use std::time::Duration;
+
+impl<C: Clock, A: FireAction> Scheduler<C, A> {
+    /// Startup: recover pending claims, misfire pass, rebuild horizon.
+    ///
+    /// Recovery order matches BUILD_PLAN: pending run-claim recovery → misfire
+    /// scan → horizon rebuild. Returns all fires delivered during boot.
+    pub fn boot(&mut self) -> SchedulerResult<Vec<DeliveredFire>> {
+        self.last_wall = self.clock.wall_now();
+        self.last_mono = self.clock.mono_now();
+        let mut fires = self.recover_pending_claims()?;
+        fires.extend(self.misfire_pass()?);
+        self.rebuild_horizon()?;
+        self.booted = true;
+        Ok(fires)
+    }
+
+    /// One loop iteration: control msgs, clock-jump check, drain due timers.
+    ///
+    /// Does **not** sleep — the caller (or [`Self::run_for`]) handles sleeping
+    /// via [`Self::next_sleep`].
+    pub fn tick(&mut self) -> SchedulerResult<TickResult> {
+        if !self.booted {
+            self.boot()?;
+        }
+
+        let mut result = TickResult::default();
+
+        // Drain control channel first so edits apply before we fire.
+        loop {
+            match self.control_rx.try_recv() {
+                Ok(ControlMsg::Refill) => {
+                    self.rebuild_horizon()?;
+                    result.refilled = true;
+                }
+                Ok(ControlMsg::Shutdown) => {
+                    result.shutdown = true;
+                    return Ok(result);
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => break,
+            }
+        }
+
+        let wall = self.clock.wall_now();
+        let mono = self.clock.mono_now();
+
+        if self.is_clock_jump(wall, mono) {
+            result.clock_jump = true;
+            let jumped = self.misfire_pass()?;
+            result.fires.extend(jumped);
+            self.rebuild_horizon()?;
+            result.refilled = true;
+            self.last_wall = wall;
+            self.last_mono = mono;
+            // After jump, still drain anything due at the new wall time.
+        } else {
+            self.last_wall = wall;
+            self.last_mono = mono;
+        }
+
+        let now = self.clock.wall_now();
+        let fires = self.drain_due(now)?;
+        result.fires.extend(fires);
+        Ok(result)
+    }
+
+    /// Sleep duration until the next useful wake: `min(next_fire − now, max_sleep)`.
+    ///
+    /// Zero when work is due now. `max_sleep` when the heap is empty (periodic
+    /// refill / jump check backstop).
+    pub fn next_sleep(&self) -> Duration {
+        let now = self.clock.wall_now();
+        match self.peek_next() {
+            Some((fire_at, _)) if fire_at <= now => Duration::ZERO,
+            Some((fire_at, _)) => {
+                let delta = fire_at.signed_duration_since(now);
+                let as_std = delta.to_std().unwrap_or(Duration::ZERO);
+                if as_std.is_zero() {
+                    Duration::ZERO
+                } else {
+                    as_std.min(self.config.max_sleep)
+                }
+            }
+            None => self.config.max_sleep,
+        }
+    }
+
+    /// Run the loop for approximately `duration` of wall time (uses `clock.sleep`).
+    pub fn run_for(&mut self, duration: Duration) -> SchedulerResult<TickResult> {
+        if !self.booted {
+            self.boot()?;
+        }
+        let start = self.clock.wall_now();
+        let end = start
+            + ChronoDuration::from_std(duration).map_err(|e| {
+                SchedulerError::Internal(format!("run_for duration: {e}"))
+            })?;
+        let mut acc = TickResult::default();
+        loop {
+            let t = self.tick()?;
+            acc.fires.extend(t.fires);
+            acc.clock_jump |= t.clock_jump;
+            acc.refilled |= t.refilled;
+            if t.shutdown {
+                acc.shutdown = true;
+                break;
+            }
+            let now = self.clock.wall_now();
+            if now >= end {
+                break;
+            }
+            let mut sleep = self.next_sleep();
+            let remain = end
+                .signed_duration_since(now)
+                .to_std()
+                .unwrap_or(Duration::ZERO);
+            if remain.is_zero() {
+                break;
+            }
+            sleep = sleep.min(remain);
+            if sleep.is_zero() {
+                // Head still reports due after a drain with no progress — yield a
+                // short slice so SystemClock wall time can advance (and avoid a
+                // tight CPU spin). SimulatedClock advances both axes.
+                sleep = Duration::from_millis(1).min(remain);
+            }
+            if let Some(msg) = self.wait_interruptible(sleep) {
+                self.apply_control_msg(msg, &mut acc)?;
+                if acc.shutdown {
+                    break;
+                }
+            }
+        }
+        Ok(acc)
+    }
+
+    /// Run until a shutdown control message is received.
+    ///
+    /// Sleeps are interruptible: a [`ControlMsg::Refill`] or
+    /// [`ControlMsg::Shutdown`] on the control channel wakes the loop immediately
+    /// so insert/edit does not wait for `max_sleep`.
+    pub fn run_until_shutdown(&mut self) -> SchedulerResult<TickResult> {
+        if !self.booted {
+            self.boot()?;
+        }
+        let mut acc = TickResult::default();
+        loop {
+            let t = self.tick()?;
+            acc.fires.extend(t.fires);
+            acc.clock_jump |= t.clock_jump;
+            acc.refilled |= t.refilled;
+            if t.shutdown {
+                acc.shutdown = true;
+                break;
+            }
+            let sleep = match self.next_sleep() {
+                d if d.is_zero() => Duration::from_millis(1),
+                d => d,
+            };
+            if let Some(msg) = self.wait_interruptible(sleep) {
+                self.apply_control_msg(msg, &mut acc)?;
+                if acc.shutdown {
+                    break;
+                }
+            }
+        }
+        Ok(acc)
+    }
+
+    /// Block until `d` elapses or a control message arrives.
+    ///
+    /// On OS clocks, uses `recv_timeout` so senders wake the loop. On simulated
+    /// clocks, drains pending messages then advances virtual time by `d`.
+    fn wait_interruptible(&self, d: Duration) -> Option<ControlMsg> {
+        if let Ok(msg) = self.control_rx.try_recv() {
+            return Some(msg);
+        }
+        if d.is_zero() {
+            return None;
+        }
+        if self.clock.uses_os_time() {
+            match self.control_rx.recv_timeout(d) {
+                Ok(msg) => Some(msg),
+                Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => None,
+            }
+        } else {
+            self.clock.sleep(d);
+            self.control_rx.try_recv().ok()
+        }
+    }
+
+    fn apply_control_msg(
+        &mut self,
+        msg: ControlMsg,
+        acc: &mut TickResult,
+    ) -> SchedulerResult<()> {
+        match msg {
+            ControlMsg::Refill => {
+                self.rebuild_horizon()?;
+                acc.refilled = true;
+            }
+            ControlMsg::Shutdown => {
+                acc.shutdown = true;
+            }
+        }
+        // Drain any further queued control messages without sleeping.
+        loop {
+            match self.control_rx.try_recv() {
+                Ok(ControlMsg::Refill) => {
+                    self.rebuild_horizon()?;
+                    acc.refilled = true;
+                }
+                Ok(ControlMsg::Shutdown) => {
+                    acc.shutdown = true;
+                }
+                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+            }
+        }
+        Ok(())
+    }
+
+    fn is_clock_jump(&self, wall: DateTime<Utc>, mono: MonoTime) -> bool {
+        let wall_delta = wall.signed_duration_since(self.last_wall);
+        let wall_ms = wall_delta.num_milliseconds();
+        let mono_delta = mono.saturating_sub(self.last_mono);
+        let mono_ms = mono_delta.as_millis() as i64;
+        let divergence = (wall_ms - mono_ms).unsigned_abs();
+        let threshold_ms = self.config.jump_threshold.as_millis() as u64;
+        divergence > threshold_ms
+    }
+}
