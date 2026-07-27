@@ -10,7 +10,7 @@ use super::Scheduler;
 use crate::scheduler::action::FireAction;
 use crate::scheduler::clock::{Clock, MonoTime};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
+use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 
 impl<C: Clock, A: FireAction> Scheduler<C, A> {
@@ -50,8 +50,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                     result.shutdown = true;
                     return Ok(result);
                 }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }
         }
 
@@ -193,10 +192,9 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             return None;
         }
         if self.clock.uses_os_time() {
-            match self.control_rx.recv_timeout(d) {
-                Ok(msg) => Some(msg),
-                Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => None,
-            }
+            // Timeout and Disconnected both mean "no message"; the loop then
+            // re-ticks and re-evaluates the clock.
+            self.control_rx.recv_timeout(d).ok()
         } else {
             self.clock.sleep(d);
             self.control_rx.try_recv().ok()
@@ -227,7 +225,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 Ok(ControlMsg::Shutdown) => {
                     acc.shutdown = true;
                 }
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }
         }
         Ok(())

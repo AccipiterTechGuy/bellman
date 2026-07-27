@@ -124,7 +124,7 @@ impl CommandPayload {
                 "id": id,
                 "name": name,
                 "n": n,
-                "fires": fires.iter().map(|t| t.to_rfc3339()).collect::<Vec<_>>(),
+                "fires": fires.iter().map(chrono::DateTime::to_rfc3339).collect::<Vec<_>>(),
             }),
             Self::RunNow {
                 command,
@@ -155,8 +155,7 @@ impl CommandPayload {
                 timer.enabled,
                 timer
                     .next_fire_utc
-                    .map(|t| t.to_rfc3339())
-                    .unwrap_or_else(|| "-".into()),
+                    .map_or_else(|| "-".into(), |t| t.to_rfc3339()),
                 timer.revision
             ),
             Self::Timers { timers, .. } => {
@@ -171,8 +170,7 @@ impl CommandPayload {
                         t.name,
                         t.enabled,
                         t.next_fire_utc
-                            .map(|x| x.to_rfc3339())
-                            .unwrap_or_else(|| "-".into())
+                            .map_or_else(|| "-".into(), |x| x.to_rfc3339())
                     ));
                 }
                 lines.join("\n")

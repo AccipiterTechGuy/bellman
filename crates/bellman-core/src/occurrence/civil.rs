@@ -64,12 +64,12 @@ fn first_valid_after_gap(tz: Tz, naive: NaiveDateTime) -> Option<DateTime<Tz>> {
         match tz.from_local_datetime(&probe) {
             LocalResult::Single(dt) => {
                 // Back up to the first valid second in this minute window.
-                return first_second_in_window(tz, probe - Duration::minutes(1), dt);
+                return Some(first_second_in_window(tz, probe - Duration::minutes(1), dt));
             }
             LocalResult::Ambiguous(earliest, _) => {
                 return Some(earliest);
             }
-            LocalResult::None => continue,
+            LocalResult::None => {}
         }
     }
     // Second-by-second fallback (covers sub-minute gaps if any).
@@ -79,7 +79,7 @@ fn first_valid_after_gap(tz: Tz, naive: NaiveDateTime) -> Option<DateTime<Tz>> {
         match tz.from_local_datetime(&probe) {
             LocalResult::Single(dt) => return Some(dt),
             LocalResult::Ambiguous(earliest, _) => return Some(earliest),
-            LocalResult::None => continue,
+            LocalResult::None => {}
         }
     }
     None
@@ -91,18 +91,18 @@ fn first_second_in_window(
     tz: Tz,
     before_or_at_gap: NaiveDateTime,
     after_gap: DateTime<Tz>,
-) -> Option<DateTime<Tz>> {
+) -> DateTime<Tz> {
     let mut probe = before_or_at_gap;
     let end = after_gap.naive_local() + Duration::seconds(1);
     while probe <= end {
         probe += Duration::seconds(1);
         match tz.from_local_datetime(&probe) {
-            LocalResult::Single(dt) => return Some(dt),
-            LocalResult::Ambiguous(earliest, _) => return Some(earliest),
-            LocalResult::None => continue,
+            LocalResult::Single(dt) => return dt,
+            LocalResult::Ambiguous(earliest, _) => return earliest,
+            LocalResult::None => {}
         }
     }
-    Some(after_gap)
+    after_gap
 }
 
 #[cfg(test)]

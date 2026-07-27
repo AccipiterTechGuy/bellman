@@ -40,7 +40,7 @@ pub fn migrate(conn: &Connection) -> StoreResult<()> {
 
 fn migrate_v1(conn: &Connection) -> StoreResult<()> {
     conn.execute_batch(
-        r#"
+        r"
         CREATE TABLE IF NOT EXISTS timers (
             id              TEXT PRIMARY KEY NOT NULL,
             name            TEXT NOT NULL,
@@ -89,7 +89,7 @@ fn migrate_v1(conn: &Connection) -> StoreResult<()> {
 
         INSERT OR IGNORE INTO meta (id, schema_version, last_prune, last_recalibration, tzdata_version)
         VALUES (1, 1, NULL, NULL, NULL);
-        "#,
+        ",
     )
     .map_err(|e| StoreError::Sqlite(format!("migrate v1: {e}")))?;
     Ok(())

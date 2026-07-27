@@ -47,7 +47,7 @@ impl std::fmt::Display for ResolveError {
         match self {
             Self::NotFound(s) => write!(f, "timer not found: {s}"),
             Self::Ambiguous { name, count, ids } => {
-                let id_list: Vec<String> = ids.iter().map(|i| i.to_string()).collect();
+                let id_list: Vec<String> = ids.iter().map(std::string::ToString::to_string).collect();
                 write!(
                     f,
                     "ambiguous timer name '{name}' matches {count} timers ({}); use id",
@@ -62,9 +62,8 @@ impl std::fmt::Display for ResolveError {
 impl ResolveError {
     pub fn code(&self) -> &'static str {
         match self {
-            Self::NotFound(_) => "not_found",
             Self::Ambiguous { .. } => "ambiguous_name",
-            Self::Store(StoreError::NotFound(_)) => "not_found",
+            Self::NotFound(_) | Self::Store(StoreError::NotFound(_)) => "not_found",
             Self::Store(StoreError::StaleRevision { .. }) => "stale_revision",
             Self::Store(StoreError::InvalidOccurrence(_)) => "invalid_occurrence",
             Self::Store(StoreError::NetworkFilesystem(_)) => "network_filesystem",

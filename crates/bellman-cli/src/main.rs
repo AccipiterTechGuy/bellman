@@ -175,7 +175,7 @@ fn main() -> ExitCode {
     // envelope (Cli::parse would print human help to stderr and exit 2).
     let cli = match Cli::try_parse() {
         Ok(c) => c,
-        Err(err) => return handle_clap_error(err),
+        Err(err) => return handle_clap_error(&err),
     };
     let db_path = resolve_db_path(cli.db.as_ref());
     let result = match cli.command {
@@ -264,8 +264,7 @@ fn resolve_db_path(cli_db: Option<&PathBuf>) -> PathBuf {
 fn default_db_path() -> PathBuf {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+        .map_or_else(|| PathBuf::from("."), PathBuf::from);
     home.join(".bellman").join("timers.db")
 }
 
@@ -369,7 +368,7 @@ fn match_sub(token: &str, subs: &[&'static str]) -> Option<&'static str> {
 /// With `--json`, argument/parse failures print
 /// `{ok:false,command,error:{code,message}}` on **stdout** and exit 1.
 /// Help/version keep clap's normal human output (even if `--json` is present).
-fn handle_clap_error(err: clap::Error) -> ExitCode {
+fn handle_clap_error(err: &clap::Error) -> ExitCode {
     match err.kind() {
         ErrorKind::DisplayHelp
         | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
@@ -383,7 +382,7 @@ fn handle_clap_error(err: clap::Error) -> ExitCode {
             }
         }
         _ if argv_wants_json() => {
-            let message = clap_error_message(&err);
+            let message = clap_error_message(err);
             output::emit_parse_error(argv_command_name(), "invalid_args", &message);
             ExitCode::FAILURE
         }

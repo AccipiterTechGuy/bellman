@@ -223,8 +223,7 @@ pub fn patch_occurrence(
             let expr = args
                 .cron
                 .as_deref()
-                .map(|s| s.to_string())
-                .unwrap_or(expr);
+                .map_or(expr, std::string::ToString::to_string);
             OccurrenceKind::Cron { expr }
         }
     };

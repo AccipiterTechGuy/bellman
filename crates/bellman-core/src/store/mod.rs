@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Open options for a store database.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct OpenOptions {
     /// When true (default), refuse paths on network filesystems.
     pub refuse_network_fs: bool,
@@ -552,8 +552,8 @@ fn row_to_timer(r: &rusqlite::Row<'_>) -> rusqlite::Result<Timer> {
     let misfire_json: String = r.get(7)?;
     let overlap_json: String = r.get(8)?;
     let retry_json: String = r.get(9)?;
-    let vf_s: Option<String> = r.get(10)?;
-    let vu_s: Option<String> = r.get(11)?;
+    let valid_from_s: Option<String> = r.get(10)?;
+    let valid_until_s: Option<String> = r.get(11)?;
     let max_runs: Option<i64> = r.get(12)?;
     let tags_json: String = r.get(13)?;
     let action_json: String = r.get(14)?;
@@ -601,14 +601,14 @@ fn row_to_timer(r: &rusqlite::Row<'_>) -> rusqlite::Result<Timer> {
         misfire,
         overlap,
         retry,
-        valid_from: parse_opt_dt(vf_s).map_err(|e| {
+        valid_from: parse_opt_dt(valid_from_s).map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(
                 10,
                 rusqlite::types::Type::Text,
                 Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())),
             )
         })?,
-        valid_until: parse_opt_dt(vu_s).map_err(|e| {
+        valid_until: parse_opt_dt(valid_until_s).map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(
                 11,
                 rusqlite::types::Type::Text,
@@ -704,7 +704,7 @@ fn occ_max_runs(occ: &Occurrence) -> Option<u64> {
     occ.max_runs()
 }
 
-/// `max_runs` for the SQLite column, saturating instead of wrapping.
+/// `max_runs` for the database column, saturating instead of wrapping.
 ///
 /// The column is a denormalized mirror used for querying; the authoritative
 /// cap lives in the serialized occurrence, so clamping here loses nothing. A

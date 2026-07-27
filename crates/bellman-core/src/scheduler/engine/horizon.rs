@@ -76,8 +76,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             .unwrap_or_else(|| {
                 timer
                     .next_fire_utc
-                    .map(|nf| nf - ChronoDuration::nanoseconds(1))
-                    .unwrap_or(now)
+                    .map_or(now, |nf| nf - ChronoDuration::nanoseconds(1))
             })
             .with_timezone(&tz);
 
@@ -148,7 +147,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 let Some(t2) = self.store.get_timer(timer_id)? else {
                     return Ok(());
                 };
-                if t2.next_fire_utc.map(|nf| nf <= now).unwrap_or(false) {
+                if t2.next_fire_utc.is_some_and(|nf| nf <= now) {
                     self.advance_past_now(timer_id, now)?;
                 } else {
                     self.requeue_timer(timer_id)?;
@@ -174,15 +173,13 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         let now = self.clock.wall_now();
         let horizon_ok = ChronoDuration::from_std(self.config.horizon)
             .ok()
-            .map(|h| fire_at <= now + h)
-            .unwrap_or(true);
+            .is_none_or(|h| fire_at <= now + h);
         let force = self
             .store
             .get_timer(timer_id)
             .ok()
             .flatten()
-            .map(|t| is_high_frequency(&t))
-            .unwrap_or(false);
+            .is_some_and(|t| is_high_frequency(&t));
         if horizon_ok || force {
             self.heap.push(Reverse(HeapEntry {
                 fire_at,

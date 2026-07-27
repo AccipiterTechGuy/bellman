@@ -49,15 +49,12 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                     } else {
                         FireKind::Late { lateness }
                     };
-                    match self.deliver_one(&timer, scheduled_for, kind)? {
-                        Some(d) => {
-                            self.requeue_timer(timer_id)?;
-                            Ok(vec![d])
-                        }
-                        None => {
-                            self.requeue_timer(timer_id)?;
-                            Ok(vec![])
-                        }
+                    if let Some(d) = self.deliver_one(&timer, scheduled_for, kind)? {
+                        self.requeue_timer(timer_id)?;
+                        Ok(vec![d])
+                    } else {
+                        self.requeue_timer(timer_id)?;
+                        Ok(vec![])
                     }
                 } else {
                     // Beyond grace: skip backlog, advance to first fire after now.
@@ -97,15 +94,12 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                     FireKind::Late { lateness: late }
                 };
                 // mark_fired(last_fired=fire_at) jumps the ledger past older misses.
-                match self.deliver_one(&timer, fire_at, kind)? {
-                    Some(d) => {
-                        self.advance_past_now(timer_id, now)?;
-                        Ok(vec![d])
-                    }
-                    None => {
-                        self.advance_past_now(timer_id, now)?;
-                        Ok(vec![])
-                    }
+                if let Some(d) = self.deliver_one(&timer, fire_at, kind)? {
+                    self.advance_past_now(timer_id, now)?;
+                    Ok(vec![d])
+                } else {
+                    self.advance_past_now(timer_id, now)?;
+                    Ok(vec![])
                 }
             }
             MisfirePolicy::CatchUp {
@@ -141,15 +135,12 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                     let Some(timer_now) = self.store.get_timer(timer_id)? else {
                         break;
                     };
-                    match self.deliver_one(
-                        &timer_now,
-                        scheduled,
-                        FireKind::CatchUp { index },
-                    )? {
-                        Some(d) => delivered.push(d),
-                        None => {
-                            // Recovered or already completed — still count step.
-                        }
+                    // A `None` means recovered or already completed — the step
+                    // still counts.
+                    if let Some(d) =
+                        self.deliver_one(&timer_now, scheduled, FireKind::CatchUp { index })?
+                    {
+                        delivered.push(d);
                     }
                     index += 1;
                     let Some(t) = self.store.get_timer(timer_id)? else {
@@ -164,7 +155,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                             }
                         }
                         Some(_) | None => {
-                            if t.next_fire_utc.map(|nf| nf > now).unwrap_or(true) {
+                            if t.next_fire_utc.is_none_or(|nf| nf > now) {
                                 if let Some(nf) = t.next_fire_utc {
                                     self.push_if_in_horizon(nf, timer_id);
                                 }
@@ -177,7 +168,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 let Some(t) = self.store.get_timer(timer_id)? else {
                     return Ok(delivered);
                 };
-                if t.next_fire_utc.map(|nf| nf <= now).unwrap_or(false) {
+                if t.next_fire_utc.is_some_and(|nf| nf <= now) {
                     self.advance_past_now(timer_id, now)?;
                 } else {
                     self.requeue_timer(timer_id)?;
@@ -274,12 +265,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         let fresh = self.store.get_timer(timer.id)?;
         let needs_mark = fresh
             .as_ref()
-            .map(|t| {
-                t.last_fired
-                    .map(|lf| lf < claim.scheduled_for)
-                    .unwrap_or(true)
-            })
-            .unwrap_or(false);
+            .is_some_and(|t| t.last_fired.is_none_or(|lf| lf < claim.scheduled_for));
         if needs_mark {
             self.mark_fired(timer.id, claim.scheduled_for)?;
         } else {
