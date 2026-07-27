@@ -35,6 +35,12 @@ pub struct AppState {
     pub notify_sink: Arc<dyn NotifySink>,
     /// Control handle for the scheduler (set after `start_scheduler`).
     pub control_handle: Mutex<Option<ControlHandle>>,
+    /// Handle to the tray's "Pause all" CheckMenuItem, set when the
+    /// tray is installed. Used by the `set_pause_all` Tauri command
+    /// to keep the tray in sync with the in-window toggle. The `Wry`
+    /// runtime is the default Tauri runtime. `CheckMenuItem: Clone`,
+    /// so the inner `Mutex` is not needed.
+    pub tray_pause_check: parking_lot::Mutex<Option<tauri::menu::CheckMenuItem<tauri::Wry>>>,
 }
 
 impl AppState {
@@ -52,6 +58,7 @@ impl AppState {
             pause_all: Mutex::new(pause_all),
             notify_sink,
             control_handle: Mutex::new(None),
+            tray_pause_check: parking_lot::Mutex::new(None),
         }
     }
 

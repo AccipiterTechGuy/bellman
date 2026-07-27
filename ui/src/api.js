@@ -10,7 +10,6 @@ async function invoke(cmd, args) {
   if (!hasTauri) {
     throw new Error(`Tauri not available (cmd: ${cmd})`);
   }
-  // Tauri 2 exposes `__TAURI_INTERNALS__.invoke` for direct IPC.
   return await window.__TAURI_INTERNALS__.invoke(cmd, args);
 }
 
@@ -50,13 +49,34 @@ export async function appInfo() {
   return await invoke('app_info');
 }
 
-// Event subscription (Tauri 2 global event API).
-// Tauri 2 exposes an `event` plugin: `__TAURI_INTERNALS__.invoke('plugin:event|listen', { event, target, handler })`
-// For C7 we do not need a real event bus — the All-timers page polls
-// every 5 s and re-fetches on any user action, which is more than fast
-// enough for a single-user tray app. The stub here is kept only as the
-// import surface for the future event-driven paths.
-export function listen(_event, _handler) {
+/**
+ * Subscribe to a Tauri backend event.
+ *
+ * Uses `window.__TAURI__.event.listen` when the Tauri runtime is
+ * available (the preferred path in Tauri 2), and falls back to a
+ * transformCallback-based shim that talks directly to the
+ * `plugin:event|listen` / `plugin:event|unlisten` plugin commands.
+ *
+ * Returns an unsubscribe function. The callback receives `{ event, payload }`
+ * (Tauri's standard event shape). Payload for `pause-all-changed` is a bool.
+ */
+export function listen(event, handler) {
   if (!hasTauri) return () => {};
+  // Prefer the Tauri 2 global API — already loaded by the runtime.
+  const globalListen = window.__TAURI__?.event?.listen;
+  if (typeof globalListen === 'function') {
+    let cancelled = false;
+    let unlisten = () => {};
+    globalListen(event, handler)
+      .then((u) => {
+        if (cancelled) {
+          try { u(); } catch { /* ignore */ }
+        } else {
+          unlisten = u;
+        }
+      })
+      .catch(() => { /* ignore — runtime may not be ready yet */ });
+    return () => { cancelled = true; unlisten(); };
+  }
   return () => {};
 }

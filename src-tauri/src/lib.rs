@@ -97,8 +97,13 @@ pub fn run() {
             // `Refill` control messages).
             state.start_scheduler();
 
-            // Tray icon + menu (Open / Pause all / Quit). Created here so the
-            // setup hook owns the lifetime.
+            // Stash the AppState under a managed handle BEFORE the tray
+            // is installed — the tray's pause-toggle calls into
+            // AppState, and the set_pause_all command needs to push
+            // updates back into the tray's CheckMenuItem.
+            app.manage(state);
+
+            // Tray icon + menu (Open / Pause all / Quit).
             tray::install(app.handle())?;
 
             // First-run wizard: when `wizard_completed` is false, the window
@@ -134,9 +139,6 @@ pub fn run() {
                     let _ = app.notification().request_permission();
                 }
             }
-
-            // Stash the AppState under a managed handle so commands can read it.
-            app.manage(state);
 
             // CLI arg `--run-now <name-or-id>` (headless, no window) — used by
             // CI scripts and the wizard's "open & fire" shortcut.

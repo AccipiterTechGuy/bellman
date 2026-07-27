@@ -1,6 +1,6 @@
 <script>
-  import { onMount } from 'svelte';
-  import { isTauri, getPauseAll, setPauseAll, wizardStatus, appInfo } from './api.js';
+  import { onMount, onDestroy } from 'svelte';
+  import { isTauri, getPauseAll, setPauseAll, wizardStatus, appInfo, listen } from './api.js';
   import TimerList from './TimerList.svelte';
   import Wizard from './Wizard.svelte';
   import StubPage from './StubPage.svelte';
@@ -58,6 +58,16 @@
   onMount(async () => {
     await refresh();
     await checkWizard();
+    // Subscribe to the pause-all event so the top-bar pill stays in sync
+    // with whichever surface flipped the flag (window toggle OR tray
+    // menu). Payload is a bool — consistent with the Tauri command.
+    const unsubPause = listen('pause-all-changed', (e) => {
+      const next = e?.payload;
+      if (typeof next === 'boolean') {
+        pauseAll = next;
+      }
+    });
+    onDestroy(unsubPause);
   });
 </script>
 

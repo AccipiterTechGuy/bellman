@@ -246,6 +246,10 @@ pub fn set_pause_all(
     paused: bool,
 ) -> Result<bool, String> {
     state.set_pause_all(paused);
+    // Keep the tray's "Pause all" check item in sync with the in-window
+    // toggle. Silently no-ops when the tray is not installed.
+    crate::tray::set_tray_pause_check(&app, paused);
+    // Emit a bool payload (consistent with the tray-side emit).
     let _ = app.emit("pause-all-changed", paused);
     Ok(state.pause_all())
 }
