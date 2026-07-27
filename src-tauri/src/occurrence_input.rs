@@ -740,27 +740,62 @@ mod tests {
     }
 
     #[test]
-    fn dst_warning_present_for_helsinki_spring_gap() {
-        // A daily @ 03:30 Helsinki is in the spring-forward gap for a few weeks
-        // each year. Stable check: choose the simplest case (UTC = no warning).
-        // For Helsinki zone, pick noon which is clean → no warning.
-        let inp = OccurrenceInput {
-            kind: "daily".into(),
-            tz: Some("Europe/Helsinki".into()),
-            time: Some("12:00".into()),
-            once_at: None,
-            every_secs: None,
-            interval_anchor: None,
-            days: None,
-            day: None,
-            month: None,
-            cron_expr: None,
-            dst_gap: None,
-            dst_fold: None,
-            invalid_monthday: None,
-        };
-        let occ = inp.build().unwrap();
-        assert!(dst_warning(occ.kind(), "Europe/Helsinki").is_none());
+    fn dst_warning_fires_for_once_at_helsinki_spring_gap() {
+        // Deterministic gap test. Helsinki 2026-03-29: clocks go 03:00 → 04:00
+        // (EET→EEST). 03:30 does not exist as a local time — the helper
+        // resolves the naive local to the first valid instant and the
+        // warning must fire. This is the proof Finding 5 demanded.
+        let at = NaiveDateTime::parse_from_str("2026-03-29T03:30:00", "%Y-%m-%dT%H:%M:%S").unwrap();
+        let kind = OccurrenceKind::Once { at };
+        let w = dst_warning(&kind, "Europe/Helsinki");
+        assert!(
+            w.is_some(),
+            "expected a DST warning for Helsinki 2026-03-29 03:30 (in the spring-forward gap)"
+        );
+        let msg = w.unwrap();
+        assert!(
+            msg.contains("gap") || msg.contains("DST") || msg.contains("do not exist") || msg.contains("skipped"),
+            "warning should mention DST / gap / non-existence / skipped; got: {msg}"
+        );
+        // Cross-check that the schedule actually resolves to a valid
+        // post-gap instant via the core's preview path. Use the NEXT
+        // upcoming Helsinki spring-forward moment (2027-03-28 03:30) so
+        // the preview-from-now call returns a non-empty list; today
+        // (2026-07-27) the 2026-03-29 03:30 time is already in the past.
+        let tz = chrono_tz::Tz::from_str("Europe/Helsinki").unwrap();
+        let at_future = NaiveDateTime::parse_from_str("2027-03-28T03:30:00", "%Y-%m-%dT%H:%M:%S").unwrap();
+        let preview = Occurrence::new(
+            OccurrenceKind::Once { at: at_future },
+            "Europe/Helsinki",
+        )
+        .unwrap()
+        .preview(chrono::Utc::now().with_timezone(&tz), 1);
+        assert!(!preview.is_empty(), "core preview returned nothing for in-gap 03:30 (future date)");
+        // Resolves to the first valid second after the gap, 04:00:00.
+        let first = preview[0];
+        assert_eq!(
+            first.format("%H:%M:%S").to_string(),
+            "04:00:00",
+            "preview should land at 04:00 after the spring-forward gap"
+        );
+    }
+
+    #[test]
+    fn dst_warning_clean_for_once_at_helsinki_outside_gap() {
+        // Same zone, same day, but at 02:30 (well before the gap) and at
+        // 12:00 (well after). Both should NOT produce a gap warning.
+        let cases = [
+            NaiveDateTime::parse_from_str("2026-03-29T02:30:00", "%Y-%m-%dT%H:%M:%S").unwrap(),
+            NaiveDateTime::parse_from_str("2026-03-29T12:00:00", "%Y-%m-%dT%H:%M:%S").unwrap(),
+            NaiveDateTime::parse_from_str("2026-12-31T23:59:59", "%Y-%m-%dT%H:%M:%S").unwrap(),
+        ];
+        for at in cases {
+            let kind = OccurrenceKind::Once { at };
+            assert!(
+                dst_warning(&kind, "Europe/Helsinki").is_none(),
+                "unexpected warning for {at}"
+            );
+        }
     }
 
     #[test]

@@ -20,8 +20,9 @@ use crate::first_run::{WizardChoice, WizardStatus};
 use crate::occurrence_input::{self, CreateTimerInput, OccurrenceInput, PreviewFire};
 use crate::state::{AppState, RunNowResponse};
 
-/// `Timer` shape the webview consumes. Mirrors the core type but with a
-/// `tz_name` shortcut so the UI does not have to dig into `occurrence.tz`.
+/// `Timer` shape the webview consumes. Includes the structured
+/// `occurrence` and `action` so the dialog / Week / Month pages can
+/// round-trip an edit without parsing pretty-printed summaries.
 ///
 /// Serialized as **camelCase** so the webview's idiomatic JS bindings
 /// (`timer.nextFireUtc`, `timer.lastFired`) match the Rust field names.
@@ -40,6 +41,12 @@ pub struct TimerDto {
     pub summary: String,
     /// Pretty action label: "none", "launch: /usr/bin/true", "notify: hello".
     pub action: String,
+    /// Structured occurrence (tagged enum: kind + kind-specific fields +
+    /// tz + DST policies + validity). The dialog prefills its form
+    /// straight from these — pretty summaries are display-only.
+    pub occurrence: bellman_core::Occurrence,
+    /// Structured action (tagged enum: none | launch | notify).
+    pub action_kind: bellman_core::Action,
     pub revision: i64,
 }
 
@@ -58,6 +65,8 @@ impl From<Timer> for TimerDto {
             kind,
             summary,
             action,
+            occurrence: t.occurrence,
+            action_kind: t.action,
             revision: t.revision,
         }
     }
