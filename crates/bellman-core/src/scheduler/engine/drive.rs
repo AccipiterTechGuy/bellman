@@ -50,8 +50,19 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                     result.shutdown = true;
                     return Ok(result);
                 }
+                Ok(ControlMsg::SetPauseAll(paused)) => {
+                    self.pause_all = paused;
+                }
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }
+        }
+
+        // Global pause-all: the heap stays warm (so we wake up at the right
+        // moments to clear it on resume), but nothing fires while paused.
+        if self.pause_all {
+            // Treat the tick as "did nothing" — the loop's sleep helper will use
+            // the normal horizon to keep the wake cadence correct.
+            return Ok(result);
         }
 
         let wall = self.clock.wall_now();
@@ -214,6 +225,9 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             ControlMsg::Shutdown => {
                 acc.shutdown = true;
             }
+            ControlMsg::SetPauseAll(paused) => {
+                self.pause_all = paused;
+            }
         }
         // Drain any further queued control messages without sleeping.
         loop {
@@ -224,6 +238,9 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 }
                 Ok(ControlMsg::Shutdown) => {
                     acc.shutdown = true;
+                }
+                Ok(ControlMsg::SetPauseAll(paused)) => {
+                    self.pause_all = paused;
                 }
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }

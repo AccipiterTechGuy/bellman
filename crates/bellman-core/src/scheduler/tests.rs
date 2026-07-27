@@ -857,3 +857,129 @@ fn control_refill_wakes_running_loop() {
         "loop slept too long before refill/fire: {elapsed:?}"
     );
 }
+
+// --- global pause-all ---------------------------------------------------
+
+#[test]
+fn pause_all_keeps_heap_warm_but_blocks_fires() {
+    // Build a scheduler that is already paused; an interval timer with a fire
+    // time in the past must NOT fire while paused.
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+    let clock = SimulatedClock::new(t0);
+    // 2 s interval, last_fired = t0 so next_fire = t0+2 (the simulated clock
+    // returns t0, so the timer is due immediately at the first tick).
+    let timer = interval_timer(
+        &mut store,
+        "paused",
+        2,
+        t0,
+        Some(t0),
+        MisfirePolicy::Skip,
+    );
+    let mut sched = Scheduler::new_paused(
+        store,
+        clock,
+        RecordingAction::default(),
+        SchedulerConfig::default(),
+    );
+    sched.boot().unwrap();
+    assert!(sched.pause_all(), "scheduler must report pause-all set");
+    // Advance simulated time past the next fire.
+    sched.clock().sleep(Duration::from_secs(5));
+    let r = sched.run_for(Duration::from_millis(50)).unwrap();
+    assert_eq!(r.fires.len(), 0, "no fire should happen while paused");
+    assert_eq!(
+        sched.action().events.len(),
+        0,
+        "RecordingAction stays empty while paused"
+    );
+    // The timer must still be in the store, with the same next_fire (we did
+    // not advance it).
+    let still_there = sched
+        .store()
+        .get_timer(timer.id)
+        .unwrap()
+        .expect("timer still present");
+    assert_eq!(
+        still_there.next_fire_utc, timer.next_fire_utc,
+        "next_fire must not advance while paused"
+    );
+}
+
+#[test]
+fn unpause_via_control_msg_lets_due_timer_fire() {
+    // Start paused; the timer's next_fire_utc is already at t0 (so it would
+    // be due the instant unpause is set). Unpause via the control handle and
+    // confirm the very next tick delivers a fire.
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+    let clock = SimulatedClock::new(t0);
+    // 60s interval, last_fired at t0, so next_fire = t0+60. Anchor the clock at
+    // t0+61 so next_fire is well in the past → guaranteed-due at the unpause.
+    let _timer = interval_timer(
+        &mut store,
+        "flip",
+        60,
+        t0,
+        Some(t0),
+        MisfirePolicy::Coalesce {
+            grace_secs: 3600,
+        },
+    );
+    let mut sched = Scheduler::new_paused(
+        store,
+        clock.clone(),
+        RecordingAction::default(),
+        SchedulerConfig::default(),
+    );
+    sched.boot().unwrap();
+    assert!(sched.pause_all());
+    // While paused, advance the clock past the fire time and tick — no fire.
+    clock.advance(Duration::from_secs(61));
+    let r = sched.run_for(Duration::from_millis(20)).unwrap();
+    assert_eq!(r.fires.len(), 0, "paused → no fires");
+    assert_eq!(sched.action().events.len(), 0);
+
+    // Unpause via the public control handle; next tick should fire.
+    sched.control_handle().set_pause_all(false);
+    let r = sched.run_for(Duration::from_millis(50)).unwrap();
+    assert!(
+        !r.fires.is_empty(),
+        "after unpause, due timer must fire (got {:?})",
+        r.fires
+    );
+    assert_eq!(sched.action().events.len(), 1);
+    assert!(!sched.pause_all());
+}
+
+#[test]
+fn set_pause_all_now_observable_immediately() {
+    // In-place flag update via the scheduler struct; no control message needed.
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+    let clock = SimulatedClock::new(t0);
+    let _timer = interval_timer(
+        &mut store,
+        "now",
+        2,
+        t0,
+        Some(t0),
+        MisfirePolicy::Skip,
+    );
+    let mut sched = Scheduler::new(
+        store,
+        clock,
+        RecordingAction::default(),
+        SchedulerConfig::default(),
+    );
+    sched.boot().unwrap();
+    assert!(!sched.pause_all());
+    sched.set_pause_all_now(true);
+    assert!(sched.pause_all());
+    // Advance time past due and tick; no fire.
+    sched.clock().sleep(Duration::from_secs(5));
+    let r = sched.run_for(Duration::from_millis(20)).unwrap();
+    assert_eq!(r.fires.len(), 0);
+}
+

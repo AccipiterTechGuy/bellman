@@ -252,8 +252,8 @@ assert_cmd "run-now" "$JSON" "run-now"
 RUN_ID="$(jget "$JSON" 'obj.get("run_id")')"
 MSG="$(jget "$JSON" 'obj.get("message") or ""')"
 [[ -n "$RUN_ID" && "$RUN_ID" != "None" ]] || die "run-now run_id" "$JSON"
-if ! echo "$MSG" | grep -q 'stub action'; then
-  die "run-now message" "expected stub action log line, got: $MSG"
+if ! echo "$MSG" | grep -qE '(action=none|notify stub)'; then
+  die "run-now message" "expected 'action=none' or 'notify stub', got: $MSG"
 fi
 ok "run-now (run_id=$RUN_ID)"
 

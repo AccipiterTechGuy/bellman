@@ -2,3 +2,9 @@
 **/*.rs.bk
 .DS_Store
 .train-worktrees/
+src-tauri/gen/
+src-tauri/target/
+
+ui/node_modules/
+ui/dist/
+ui/.svelte-kit/

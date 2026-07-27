@@ -1,13 +1,14 @@
 //! [`ActionRunner`]: [`FireAction`] impl with overlap, retry, and event logging.
 
 use super::launch::{run_launch, LaunchConfig, DEFAULT_OUTPUT_CAP_BYTES, DEFAULT_TIMEOUT};
-use super::notify::notify_stub;
+use super::notify_sink::{NotifySink, StubNotifySink};
 use super::write_slot::{write_output_slot, WriteSlotPayload};
 use crate::events::{EventKind, EventLog, EventRecord};
 use crate::scheduler::{FireAction, FireContext, FireKind};
 use crate::store::{Action, OverlapPolicy, TimerId};
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -69,6 +70,9 @@ pub struct ActionRunner {
     pub(crate) in_flight: HashSet<TimerId>,
     /// Last human-readable message (run-now JSON).
     pub last_message: Option<String>,
+    /// Pluggable desktop-notification sink. C6 leaves it as the stub; C7 wires
+    /// the Tauri plugin so notification timers surface a real toast.
+    notify_sink: Arc<dyn NotifySink>,
 }
 
 impl ActionRunner {
@@ -78,7 +82,20 @@ impl ActionRunner {
             event_log: None,
             in_flight: HashSet::new(),
             last_message: None,
+            notify_sink: Arc::new(StubNotifySink),
         }
+    }
+
+    /// Install a custom notification sink (real toast in the Tauri shell).
+    pub fn with_notify_sink(mut self, sink: Arc<dyn NotifySink>) -> Self {
+        self.notify_sink = sink;
+        self
+    }
+
+    /// Current notification sink (read-only; for tests that want to assert
+    /// that a fire actually surfaced a toast).
+    pub fn notify_sink(&self) -> &Arc<dyn NotifySink> {
+        &self.notify_sink
     }
 
     pub fn with_event_log(mut self, log: EventLog) -> Self {
@@ -184,8 +201,13 @@ impl ActionRunner {
                 }
             }
             Action::Notify { title, body } => {
-                let out = notify_stub(title, body);
-                Ok(format!("notify stub title={:?}", out.title))
+                let out = self.notify_sink.show(title, body);
+                let label = if self.notify_sink.is_stub() {
+                    "notify stub"
+                } else {
+                    "notify"
+                };
+                Ok(format!("{label} title={:?}", out.title))
             }
         }?;
 
