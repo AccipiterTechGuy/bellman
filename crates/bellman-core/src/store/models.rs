@@ -245,6 +245,21 @@ impl std::str::FromStr for ClaimStatus {
     }
 }
 
+/// Durable record of a processed slot request (`request_id` is the idempotency key).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlotRequestRecord {
+    pub request_id: String,
+    pub slot_id: String,
+    pub operation: String,
+    pub app_name: Option<String>,
+    pub timer_id: Option<TimerId>,
+    /// `"ok"` or `"error"` (mirrors the output-slot status).
+    pub status: String,
+    /// Full serialized slot response JSON (`SlotResponse`).
+    pub response_json: String,
+    pub created_at: DateTime<Utc>,
+}
+
 /// One row of the runs claim ledger.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunClaim {
@@ -254,6 +269,8 @@ pub struct RunClaim {
     pub status: ClaimStatus,
     pub claimed_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
+    /// Durable monotonic sequence for this timer's run events (slot output feed).
+    pub event_sequence: u64,
 }
 
 /// Meta bookkeeping row (single-row table).

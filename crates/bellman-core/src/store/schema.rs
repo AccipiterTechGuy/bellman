@@ -4,7 +4,7 @@ use super::error::{StoreError, StoreResult};
 use rusqlite::Connection;
 
 /// Current on-disk schema version (also stored in `PRAGMA user_version` and `meta`).
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 3;
 
 /// Apply pending migrations. Safe to call on every open.
 pub fn migrate(conn: &Connection) -> StoreResult<()> {
@@ -21,9 +21,12 @@ pub fn migrate(conn: &Connection) -> StoreResult<()> {
     if current < 1 {
         migrate_v1(conn)?;
     }
-
-    // Future migrations land here:
-    // if current < 2 { migrate_v2(conn)?; }
+    if current < 2 {
+        migrate_v2(conn)?;
+    }
+    if current < 3 {
+        migrate_v3(conn)?;
+    }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|e| StoreError::Sqlite(format!("set user_version: {e}")))?;
@@ -93,4 +96,94 @@ fn migrate_v1(conn: &Connection) -> StoreResult<()> {
     )
     .map_err(|e| StoreError::Sqlite(format!("migrate v1: {e}")))?;
     Ok(())
+}
+
+/// Slot IPC tables: durable idempotency ledger + timer ownership by integrating app.
+fn migrate_v2(conn: &Connection) -> StoreResult<()> {
+    conn.execute_batch(
+        r"
+        CREATE TABLE IF NOT EXISTS slot_requests (
+            request_id      TEXT PRIMARY KEY NOT NULL,
+            slot_id         TEXT NOT NULL,
+            operation       TEXT NOT NULL,
+            app_name        TEXT,
+            timer_id        TEXT,
+            status          TEXT NOT NULL,
+            response_json   TEXT NOT NULL,
+            created_at      TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_slot_requests_created
+            ON slot_requests (created_at);
+
+        CREATE TABLE IF NOT EXISTS timer_owners (
+            timer_id        TEXT PRIMARY KEY NOT NULL,
+            app_name        TEXT NOT NULL
+        );
+        ",
+    )
+    .map_err(|e| StoreError::Sqlite(format!("migrate v2: {e}")))?;
+    Ok(())
+}
+
+/// Durable run event sequences + per-timer ack cursors for the slot output feed.
+///
+/// Idempotent under crash/restart: SQLite commits each DDL statement, so a
+/// process that dies after `ALTER TABLE` but before `user_version` advances
+/// must reopen without failing on "duplicate column name".
+fn migrate_v3(conn: &Connection) -> StoreResult<()> {
+    // Guard: only ADD COLUMN when missing (partial-migration safe).
+    if !table_has_column(conn, "runs", "event_sequence")? {
+        conn.execute("ALTER TABLE runs ADD COLUMN event_sequence INTEGER", [])
+            .map_err(|e| StoreError::Sqlite(format!("migrate v3 add event_sequence: {e}")))?;
+    }
+
+    conn.execute_batch(
+        r"
+        CREATE TABLE IF NOT EXISTS slot_event_acks (
+            timer_id              TEXT PRIMARY KEY NOT NULL,
+            last_acked_sequence   INTEGER NOT NULL DEFAULT 0
+        );
+        ",
+    )
+    .map_err(|e| StoreError::Sqlite(format!("migrate v3 slot_event_acks: {e}")))?;
+
+    // Backfill sequences for any pre-existing runs (stable order by scheduled_for, run_id).
+    // Safe to re-run: only fills NULL sequences.
+    conn.execute_batch(
+        r"
+        UPDATE runs
+        SET event_sequence = (
+            SELECT COUNT(*)
+            FROM runs AS r2
+            WHERE r2.timer_id = runs.timer_id
+              AND (
+                    r2.scheduled_for < runs.scheduled_for
+                 OR (r2.scheduled_for = runs.scheduled_for AND r2.run_id <= runs.run_id)
+              )
+        )
+        WHERE event_sequence IS NULL;
+        ",
+    )
+    .map_err(|e| StoreError::Sqlite(format!("migrate v3 backfill: {e}")))?;
+    Ok(())
+}
+
+/// True when `table` has a column named `column` (via `PRAGMA table_info`).
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> StoreResult<bool> {
+    // table name is internal; never pass untrusted input.
+    let pragma = format!("PRAGMA table_info({table})");
+    let mut stmt = conn
+        .prepare(&pragma)
+        .map_err(|e| StoreError::Sqlite(format!("table_info {table}: {e}")))?;
+    let rows = stmt
+        .query_map([], |r| r.get::<_, String>(1))
+        .map_err(|e| StoreError::Sqlite(format!("table_info query {table}: {e}")))?;
+    for row in rows {
+        let name = row.map_err(|e| StoreError::Sqlite(format!("table_info row: {e}")))?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
