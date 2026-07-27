@@ -4,7 +4,7 @@
 //! behind, running the action under a store claim, and the two ledger writes
 //! (`last_fired` anchor and the full fired mark) that move a timer forward.
 
-use super::misfire::{grace_for, walk_missed};
+use super::misfire::{grace_for, saturating_secs, walk_missed};
 use super::types::{DeliveredFire, SchedulerError, SchedulerResult};
 use super::Scheduler;
 use crate::scheduler::action::{FireAction, FireContext, FireKind};
@@ -82,7 +82,10 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                     self.advance_past_now(timer_id, now)?;
                     return Ok(vec![]);
                 };
-                let missed = walk.len() as u32;
+                // `walk_missed` caps its output well below u32::MAX, so this
+                // never clamps in practice; saturate rather than wrap so a
+                // reported missed-count can never come back as a small number.
+                let missed = u32::try_from(walk.len()).unwrap_or(u32::MAX);
                 let late = now.signed_duration_since(fire_at);
                 let kind = if missed > 1 || in_grace.len() > 1 {
                     FireKind::Coalesced {
@@ -109,7 +112,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 grace_secs,
                 max_catch_up,
             } => {
-                let grace = ChronoDuration::seconds(*grace_secs as i64);
+                let grace = saturating_secs(*grace_secs);
                 let max = *max_catch_up;
                 let mut delivered = Vec::new();
                 let mut scheduled = scheduled_for;

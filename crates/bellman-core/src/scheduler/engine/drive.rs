@@ -237,9 +237,17 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         let wall_delta = wall.signed_duration_since(self.last_wall);
         let wall_ms = wall_delta.num_milliseconds();
         let mono_delta = mono.saturating_sub(self.last_mono);
-        let mono_ms = mono_delta.as_millis() as i64;
-        let divergence = (wall_ms - mono_ms).unsigned_abs();
-        let threshold_ms = self.config.jump_threshold.as_millis() as u64;
+        // Saturate, never truncate: i64::MAX ms of monotonic time is ~292
+        // million years, so this cannot clamp in practice — and clamping *high*
+        // keeps the divergence large, so a real jump still gets reported. A
+        // wrapping `as` could shrink the delta and hide one.
+        let mono_ms = i64::try_from(mono_delta.as_millis()).unwrap_or(i64::MAX);
+        let divergence = wall_ms.saturating_sub(mono_ms).unsigned_abs();
+        // Same for the configured threshold: clamping high degrades to "never
+        // report a jump", which is what an absurd config asks for. Wrapping
+        // would instead produce a tiny threshold and spurious jumps.
+        let threshold_ms =
+            u64::try_from(self.config.jump_threshold.as_millis()).unwrap_or(u64::MAX);
         divergence > threshold_ms
     }
 }

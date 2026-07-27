@@ -89,19 +89,38 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
     }
 }
 
+/// A user-supplied second count as a [`ChronoDuration`], saturating instead of
+/// wrapping.
+///
+/// Interval periods and grace windows arrive as `u64` from the store. A bare
+/// `as i64` turns a huge value **negative**, i.e. a window in the past, so every
+/// fire would read as out-of-grace (and a period-derived grace would go the
+/// wrong way entirely). `ChronoDuration` has its own ceiling below `i64::MAX`
+/// seconds, so both limits clamp to [`ChronoDuration::MAX`]: an absurdly large
+/// window means "always in grace", which is what such a value asks for.
+pub(super) fn saturating_secs(secs: u64) -> ChronoDuration {
+    i64::try_from(secs)
+        .ok()
+        .and_then(ChronoDuration::try_seconds)
+        .unwrap_or(ChronoDuration::MAX)
+}
+
 /// Grace window for a timer under its misfire policy.
 pub(super) fn grace_for(timer: &Timer) -> ChronoDuration {
     match &timer.misfire {
         MisfirePolicy::Skip => match timer.occurrence.kind() {
-            OccurrenceKind::Interval { every_secs, .. } => {
-                ChronoDuration::seconds(*every_secs as i64)
-            }
-            _ => ChronoDuration::zero(),
+            OccurrenceKind::Interval { every_secs, .. } => saturating_secs(*every_secs),
+            // Calendar kinds listed explicitly: a new occurrence kind must be a
+            // compile error here, not a silent zero-grace fall-through.
+            OccurrenceKind::Once { .. }
+            | OccurrenceKind::Daily { .. }
+            | OccurrenceKind::Weekly { .. }
+            | OccurrenceKind::Monthly { .. }
+            | OccurrenceKind::Yearly { .. }
+            | OccurrenceKind::Cron { .. } => ChronoDuration::zero(),
         },
         MisfirePolicy::Coalesce { grace_secs }
-        | MisfirePolicy::CatchUp { grace_secs, .. } => {
-            ChronoDuration::seconds(*grace_secs as i64)
-        }
+        | MisfirePolicy::CatchUp { grace_secs, .. } => saturating_secs(*grace_secs),
     }
 }
 
@@ -133,4 +152,148 @@ pub(super) fn walk_missed(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    //! Saturation regression tests for the user-supplied second counts that
+    //! feed the grace window. Before the cast audit these were bare `as i64`
+    //! casts: a value near `u64::MAX` wrapped **negative**, turning the grace
+    //! window into a duration in the past so every overdue fire read as
+    //! out-of-grace and was silently dropped.
+
+    use super::{grace_for, saturating_secs, Scheduler};
+    use crate::occurrence::{Occurrence, OccurrenceKind};
+    use crate::scheduler::action::RecordingAction;
+    use crate::scheduler::clock::SimulatedClock;
+    use crate::scheduler::config::SchedulerConfig;
+    use crate::store::{
+        Action, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy, Store, Timer,
+    };
+    use chrono::{Duration as ChronoDuration, NaiveTime, TimeZone, Utc};
+
+    fn timer_with(kind: OccurrenceKind, misfire: MisfirePolicy) -> Timer {
+        let occurrence = Occurrence::new(kind, "UTC").expect("occurrence");
+        Timer {
+            id: uuid::Uuid::nil(),
+            name: "saturation".into(),
+            enabled: true,
+            tz: occurrence.tz_name().to_string(),
+            occurrence,
+            next_fire_utc: None,
+            last_fired: None,
+            misfire,
+            overlap: OverlapPolicy::default(),
+            retry: RetryPolicy::default(),
+            valid_from: None,
+            valid_until: None,
+            max_runs: None,
+            tags: Vec::new(),
+            action: Action::default(),
+            revision: 1,
+        }
+    }
+
+    #[test]
+    fn saturating_secs_is_monotonic_and_never_negative() {
+        let huge = u64::try_from(i64::MAX).expect("i64::MAX fits u64");
+        let mut prev = ChronoDuration::zero();
+        for secs in [0u64, 1, 3600, 86_400, huge - 1, huge, u64::MAX] {
+            let d = saturating_secs(secs);
+            assert!(d >= ChronoDuration::zero(), "{secs}s produced {d} (negative)");
+            assert!(d >= prev, "{secs}s produced {d}, below the previous step {prev}");
+            prev = d;
+        }
+        assert_eq!(saturating_secs(u64::MAX), ChronoDuration::MAX);
+    }
+
+    #[test]
+    fn near_max_interval_period_gives_a_future_skip_grace() {
+        for every_secs in [u64::MAX, u64::MAX - 1, 1 << 63] {
+            let t = timer_with(
+                OccurrenceKind::Interval {
+                    every_secs,
+                    anchor: Utc.with_ymd_and_hms(2030, 6, 1, 12, 0, 0).unwrap(),
+                },
+                MisfirePolicy::Skip,
+            );
+            let grace = grace_for(&t);
+            assert!(
+                grace > ChronoDuration::zero(),
+                "every_secs={every_secs} wrapped to a past grace window: {grace}"
+            );
+        }
+    }
+
+    #[test]
+    fn near_max_grace_secs_gives_a_future_window_for_both_policies() {
+        for grace_secs in [u64::MAX, u64::MAX - 1, 1 << 63] {
+            for misfire in [
+                MisfirePolicy::Coalesce { grace_secs },
+                MisfirePolicy::CatchUp {
+                    grace_secs,
+                    max_catch_up: 5,
+                },
+            ] {
+                let t = timer_with(
+                    OccurrenceKind::Daily {
+                        at: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+                    },
+                    misfire.clone(),
+                );
+                let grace = grace_for(&t);
+                assert!(
+                    grace > ChronoDuration::zero(),
+                    "grace_secs={grace_secs} under {misfire:?} wrapped to a past window: {grace}"
+                );
+            }
+        }
+    }
+
+    /// End-to-end proof: a `u64::MAX` coalesce grace must still deliver the
+    /// overdue slot. With the old wrapping cast the window was −1 s, nothing was
+    /// ever in grace, and the backlog was skipped without firing.
+    #[test]
+    fn near_max_coalesce_grace_still_delivers_the_overdue_fire() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = Store::open(dir.path().join("timers.db")).expect("open");
+
+        let at = NaiveTime::from_hms_opt(9, 0, 0).unwrap();
+        let thursday_morning = Utc.with_ymd_and_hms(2030, 6, 6, 8, 0, 0).unwrap();
+        let clock = SimulatedClock::new(thursday_morning);
+
+        // last_fired = Wednesday 09:00 ⇒ next = Thursday 09:00.
+        let occ = Occurrence::new(OccurrenceKind::Daily { at }, "UTC").unwrap();
+        let mut new = NewTimer::new("huge-grace", occ);
+        new.last_fired = Some(Utc.with_ymd_and_hms(2030, 6, 5, 9, 0, 0).unwrap());
+        new.misfire = MisfirePolicy::Coalesce {
+            grace_secs: u64::MAX,
+        };
+        let timer = store.create_timer(new).expect("create");
+
+        let mut sched = Scheduler::new(
+            store,
+            clock.clone(),
+            RecordingAction::new(),
+            SchedulerConfig::default(),
+        );
+        sched.boot().unwrap();
+
+        // Suspended over the weekend; wake at Monday 10:00.
+        let monday_nine = Utc.with_ymd_and_hms(2030, 6, 10, 9, 0, 0).unwrap();
+        clock.set_wall(Utc.with_ymd_and_hms(2030, 6, 10, 10, 0, 0).unwrap());
+        let r = sched.tick().unwrap();
+
+        assert_eq!(
+            r.fires.len(),
+            1,
+            "a u64::MAX grace must coalesce the backlog into one fire, got {}",
+            r.fires.len()
+        );
+        assert_eq!(r.fires[0].timer_id, timer.id);
+        assert_eq!(
+            r.fires[0].scheduled_for, monday_nine,
+            "must fire the latest in-grace slot, never a past/negative instant"
+        );
+    }
 }
