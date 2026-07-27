@@ -75,11 +75,27 @@ bellman/                                (one Cargo workspace)
 │  ├─ actions/      launch (arg array, NO shell, timeout, output cap) |
 │  │                write output slot | desktop notification; overlap policy;
 │  │                retry 1×/30 s; global max_concurrent_actions (16)
-│  └─ pruner/       system.prune weekly internal timer (visible in GUI) +
-│                   startup catch-up; Jan-1 consistency pass
+│  ├─ pruner/       system.prune weekly internal timer (visible in GUI) +
+│  │                startup catch-up; Jan-1 consistency pass
+│  └─ platform/     wake/ — RTC wake-from-sleep (research synthesis 2026-07-27):
+│                   trait Wake { program_wake(utc), cancel_wake(),
+│                   capability() -> WakeCapability } with per-OS impls behind
+│                   cfg: linux.rs (timerfd CLOCK_REALTIME_ALARM via rustix;
+│                   sysfs wakealarm cooperative fallback), windows.rs
+│                   (SetWaitableTimer fResume=TRUE, absolute UTC; power-policy
+│                   probe), macos.rs (XPC client to the helper daemon).
+│                   single_next_wake.rs — the bridge: elect min next_due of
+│                   wake-enabled timers, rearm() on store mutation / pre-suspend
+│                   / resume / start, arm at wake_utc − 45 s; the wake event
+│                   NEVER fires actions (normal loop + misfire pass do).
 ├─ crates/bellman-cli/   bellman add|list|edit|rm|next|run-now|pause|slot-submit
-├─ src-tauri/            tray, single-instance, autostart, on-demand windows
-└─ ui/  (Svelte 5)       tabs: All timers | Week | Month | Run history
+├─ helpers/macos-wake-daemon/  tiny root daemon (SMAppService, macOS 13+):
+│                   XPC schedule_wake/cancel_my_wakes, client code-sig check,
+│                   IOPMSchedulePowerEvent one-shots tagged "com.bellman.wake";
+│                   never pmset repeat / cancelall. Bundled + signed in P6.
+├─ src-tauri/            tray, single-instance, autostart, on-demand windows,
+│                        first-run wizard (see "First-run wizard" below)
+└─ ui/  (Svelte 5)       tabs: All timers | Week | Month | Run history | Settings
 
 data dir: ~/.bellman/ on Linux (AppData/Application Support equivalents):
   timers.db(+wal,shm) · logs/events.current.jsonl · logs/archive/*.jsonl
@@ -128,6 +144,88 @@ data dir: ~/.bellman/ on Linux (AppData/Application Support equivalents):
   skip|queue_one|parallel(cap)|replace; global action backpressure; pause-all
   vacation mode; jitter + accuracy slack; pre-notification offset (v1.1);
   run conditions only-on-AC/idle (v1.1); slot TTL + per-app auth key (v1.1).
+
+## Wake-from-sleep: settings page + first-run wizard + per-OS setup (2026-07-27)
+
+Full design: `docs/research/synthesis.md` (RTC pair, adopted verdicts: Linux
+timerfd/CAP_WAKE_ALARM, Windows waitable timer policy-gated, macOS root daemon
+via SMAppService or Disabled). Wake is an OPTIONAL enhancement everywhere —
+probe-driven, never elevation at runtime, never an unexpected prompt; when
+Disabled the misfire-on-resume pass covers the gap.
+
+### Settings page (new UI tab)
+
+- **Wake from sleep** section, per-OS aware via `capability()`:
+  - Master toggle "Allow Bellman to wake this machine" (config.json:
+    `wake.enabled`, default follows the wizard answer). Greyed with the reason
+    sentence when capability is Disabled.
+  - Status line, always visible: `Wake from sleep: ON via <mechanism>
+    (<caveat>)` or `OFF — <DisabledReason sentence>` — same string logged as
+    the `wake_capability` JSONL event.
+  - **Fix-it buttons** (each user-initiated, the ONLY places elevation ever
+    appears): Windows policy-blocked → elevated
+    `powercfg /setacvalueindex SCHEME_CURRENT SUB_SLEEP RTCWAKE 1`;
+    macOS helper not enrolled → one-click SMAppService register + deep-link to
+    System Settings → Login Items; Linux pre-systemd-254 → show the udev-rule
+    snippet with a copy button (admin applies it manually).
+  - Re-probe button + auto re-probe on resume / power-source change (Windows
+    AC↔DC flips the answer — show which rail is active).
+- Also on Settings: autostart toggle (moved from tray-only), misfire defaults,
+  `max_concurrent_actions`, pause-all vacation mode. Per-timer `wake_machine`
+  stays in the timer edit dialog (default false, greyed when Disabled).
+
+### First-run wizard (install window, src-tauri)
+
+Runs once on first launch (and re-runnable from Settings → "Run setup again"):
+
+1. **Autostart?** yes/no (existing spec choice — XDG desktop file / Run key /
+   Login Item). On Linux XDG autostart is ALSO what preserves the ambient
+   CAP_WAKE_ALARM lineage — say so in the wizard body text.
+2. **"Do you want to set up automatic wake-up from sleep?" yes/no.**
+   - yes → run the per-OS wake setup (below), then show the live probe result
+     as the wizard's confirmation screen (the Settings status line, verbatim).
+   - no → `wake.enabled=false`; feature stays available later via Settings.
+3. **Dependency check** (informational, per-OS): Windows — WebView2 runtime
+   presence (evergreen bootstrapper already in the installer, P6); Linux —
+   webkit2gtk + tray AppIndicator extension detection (GNOME: link to install
+   it, degrade gracefully); macOS — nothing extra. Missing optional deps are
+   listed with install hints, never blocking.
+
+### Per-OS wake setup (what the wizard's "yes" actually does)
+
+| OS | First-install action | Elevation? |
+|---|---|---|
+| Linux, systemd ≥ 254 | **Nothing to install** — ambient CAP_WAKE_ALARM makes the in-process timerfd probe pass on a local session. Wizard just runs the probe. | none |
+| Linux, older / probe EPERM | Offer the sysfs fallback: display the one-line udev rule (`ETC` snippet granting wakealarm group-write) with copy button; user applies as admin, hits Re-probe. | admin, manual, optional |
+| Windows | **Nothing to install** — user-process waitable timers. Probe checks the Allow-wake-timers policy per power rail; if Disabled-by-policy the wizard offers the elevated powercfg fix-it (UAC prompt, user-initiated). | optional UAC |
+| macOS | Register the bundled wake daemon via SMAppService → macOS shows the Login Items approval; wizard deep-links and waits, then probes through the daemon (sentinel schedule/cancel round-trip). Decline ⇒ Disabled(HelperAwaitingApproval), feature reads as optional, never broken. | one-time approval |
+
+No installer-time scripts run outside these wizard-driven, user-answered steps —
+capability is always re-derived by the runtime probe, never assumed from what
+the installer did.
+
+## Dev-machine toolchain (Linux, what we actually installed — 2026-07-27)
+
+Verified from apt history + tool versions on the build box (Mint, x86_64).
+Three commands + the cargo install:
+
+```sh
+# 1. Rust toolchain (rustup) → rustc 1.97.1
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# 2. Tauri v2 Linux system deps (verbatim from apt history)
+sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+# 3. Node 24 via nvm → v24.13.0 (ui/ toolchain)
+nvm install 24
+
+# then: Tauri CLI → tauri-cli 2.11.4
+cargo install tauri-cli --locked
+```
+
+These four are exactly what a fresh contributor machine (or CI runner) needs
+before `cargo tauri dev` works; P6's CI recipe starts from this list.
 
 ## Build phases (each = one crew card; exit gate before the next departs)
 
@@ -194,6 +292,26 @@ positives are a launch blocker, not a polish item.
 **Exit gate:** fresh-VM install + autostart + timer-fires-after-reboot on
 Win 11, macOS, Ubuntu GNOME/Wayland, KDE/X11; idle-footprint numbers recorded
 in docs.
+
+### P7 — wake-from-sleep (RTC) + Settings page + first-run wizard
+Board position: after C10 (packaging), before C11 (validation) — the macOS
+daemon rides the P6 bundle/signing machinery, and C11 then validates wake as
+part of the full system.
+`platform::wake` trait + linux.rs/windows.rs/macos.rs impls + probes exactly
+per `docs/research/synthesis.md` §2–3; single-next-wake bridge (§4) wired to
+store mutations, pre-suspend hooks (login1 inhibitor / WM_POWERBROADCAST /
+daemon IORegisterForSystemPower), resume and start; macOS helper daemon +
+SMAppService enrollment; Settings tab (status line, master toggle, fix-it
+buttons, re-probe); first-run wizard (autostart? / wake-up? / dependency
+check); per-timer `wake_machine` flag in edit dialogs; `wake_capability` JSONL
+events; packaging amendment — daemon in the dmg, wizard in all three builds.
+**Exit gate:** Linux (this box, systemd 255): timerfd probe Enabled from a
+desktop launch AND Disabled(NoPermission) from a daemon-descended shell (both
+observed live in research); arm − suspend − RTC resume − timer fires once via
+the normal loop − displaced-alarm restore on the sysfs fallback path. Windows +
+macOS: probe decision tree unit-tested against mocked API answers (real-HW QA
+lands in C11). Wizard yes/no both paths leave config + probe + Settings line
+consistent; declining the macOS helper reads as optional, not broken.
 
 ## Top risks to re-read before each phase
 (1) suspend oversleep — chunked sleeps mandatory; (2) DST — explicit policies,
