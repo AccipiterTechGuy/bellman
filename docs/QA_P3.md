@@ -17,47 +17,75 @@ cargo tauri build                  # deb + AppImage
 cd ui && npm install && npm test && npm run build
 ```
 
-**Verified at the end of the rework round:**
+**Verified at the end of the rework #2 round:**
+
+* The release binary boots cleanly (no panic, no stderr) under:
+
+  ```
+  env XDG_DATA_HOME=$PWD/target/audit-runtime-final/data \
+      XDG_CONFIG_HOME=$PWD/target/audit-runtime-final/config \
+      target/release/bellman
+  ```
+
+  — the auditor's reproducer (was exiting 101 with
+  `PluginInitialization("notification", "Error deserializing
+  plugins.notification ...")` after the audit; now enters the
+  event loop and stays alive until killed by SIGTERM).
 
 * `cargo tauri build` finishes with both bundles present:
 
   ```
-  Finished `release` profile [optimized] target(s) in 22.03s
-       Built application at: target/release/bellman
-      Bundling Bellman_0.1.0_amd64.deb …
-       Error failed to bundle project: Failed to build data folders and files:
-       Failed to create icon files: resource path icons/128x128.png doesn't exist
-  ```
-
-  — was the auditor's repro; was fixed by re-generating the full icon set
-  with `cargo tauri icon` from a 1024×1024 master and listing the
-  canonical filenames (`32x32.png`, `128x128.png`, `128x128@2x.png`,
-  `icon.icns`, `icon.ico`) in `tauri.conf.json`. After the fix:
-
-  ```
   Bundling Bellman_0.1.0_amd64.AppImage
-       Finished 2 bundles at:
-           target/release/bundle/deb/Bellman_0.1.0_amd64.deb
-           target/release/bundle/appimage/Bellman_0.1.0_amd64.AppImage
+      Finished 2 bundles at:
+          target/release/bundle/deb/Bellman_0.1.0_amd64.deb
+          target/release/bundle/appimage/Bellman_0.1.0_amd64.AppImage
   ```
 
-* `cd ui && npm test` is real (vitest run, 9 passed):
+* `cd ui && npm test` is real (vitest run, 8 passed):
 
   ```
-  ✓ src/api.test.js (9 tests) 9ms
+  ✓ src/api.test.js (8 tests)
   Test Files  1 passed (1)
-       Tests  9 passed (9)
+       Tests  8 passed (8)
   ```
 
-  Six DTO contract assertions + a bool-payload assertion + two api.js
-  fallback assertions, locking in the camelCase boundary.
+  Eight tests across two layers:
+  - Five tests inject a `__TAURI_INTERNALS__` mock and exercise
+    the IPC path: a Rust-shaped TimerDto round-trip through
+    `invoke()` preserves camelCase, `listen()` actually delivers
+    the handler when `runCallback` fires with the recorded id,
+    `unsubscribe()` halts further deliveries and unlistens from
+    the runtime, concurrent `listen()` calls allocate fresh ids.
+  - Three DTO-shape guards (TimerDto / LogTailDto / WizardChoice)
+    fail if the wire shape ever drifts away from camelCase.
+  - Two-layer fail-mode (negative test): temporarily removing
+    `#[serde(rename_all = "camelCase")]` from `LogTailDto` makes
+    `log_tail_dto_is_camel_case` panic, proving the contract
+    really is locked.
 
-* `cd ui && npm run build` produces the production bundle
-  (`dist/index.html`, 5.21 KB CSS, 45.04 KB JS / 17.88 KB gz).
-
-* `cargo test -p bellman-core` → 108 passed (the action-runner-with-
-  event-log path is exercised by the existing `actions::tests`
-  suite; the resident scheduler wires the same runner).
+* `cargo test -p bellman --lib` runs **7 new DTO / source-grep
+  tests** in `src-tauri/src/dto_serde_tests.rs`:
+  1. `timer_dto_is_camel_case` — JSON-round-trip a TimerDto,
+     assert `nextFireUtc`/`lastFired` exist and
+     `next_fire_utc`/`last_fired` do not.
+  2. `log_tail_dto_is_camel_case` — same for LogTailDto
+     (`totalRecords`) plus a value-level JSON check
+     (`"totalRecords":7` not `total_records`).
+  3. `run_now_response_is_camel_case` — same for RunNowResponse
+     (`timerId`, `scheduledFor`, `nextFireUtc`, `message`).
+  4. `app_info_is_camel_case` — seven camelCase keys,
+     seven snake_case anti-patterns.
+  5. `wizard_choice_is_camel_case` — same with startMinimized +
+     wakeEnabled.
+  6. `wizard_status_defaults_is_camel_case_wizard_choice` —
+     nested serialization keeps camelCase in
+     `WizardStatus.defaults`.
+  7. `pause_all_emit_is_bare_bool_in_sources` — walks every
+     `src-tauri/src/*.rs` (skipping the test file itself) and
+     fails the build if `emit("pause-all-changed", ...)` carries
+     an object-shaped payload. Detects the auditor's exact
+     regression AND any future refactor that wraps the bool in
+     an object (`{ paused: ... }`).
 
 ## 1. Tray icon on GNOME + KDE
 
@@ -144,27 +172,42 @@ interval.)
 Implementation: `on_window_event` in `src-tauri/src/lib.rs` calls
 `window.hide() + api.prevent_close()` for the `main` label.
 
-## 5. Pause-all: tray ↔ window stays in sync (NEEDS_FIX #4 resolved)
+## 5. Pause-all: tray ↔ window stays in sync
 
-The auditor flagged this with five sub-issues. The fix is at
-`src-tauri/src/tray.rs` + `src-tauri/src/lib.rs` + `src-tauri/src/state.rs`
-+ `ui/src/api.js` + `ui/src/App.svelte`.
+The auditor flagged this in NEEDS_FIX #4 then again in rework #2.
+The current state:
 
+* `withGlobalTauri: true` is set in `tauri.conf.json` so the
+  `window.__TAURI__.event` global is injected into the webview on
+  boot. Without this, Tauri 2 defaults to `false` and the global
+  listener API is unavailable.
+* `api.js::listen()` also implements the transformCallback
+  fallback so it still works even if the global is disabled in a
+  future config change. Both paths allocate callback IDs from a
+  per-process Map and dispatch through
+  `__TAURI_INTERNALS__.runCallback(cb_id, payload)`.
+* `App.svelte` subscribes via `onMount` + a placeholder `onDestroy`
+  closure; the real unsubscriber from `listen()` is wired in
+  inside the `.then` handler so destroying the component before
+  the listener resolves can no longer leak.
 * Click the "Running" pill in the top bar → it flips to "Paused".
-* The `set_pause_all` Tauri command also calls
+* The `set_pause_all` Tauri command calls
   `tray::set_tray_pause_check(&app, paused)` so the tray's
   CheckMenuItem updates in lockstep.
-* The command emits a bare `bool` payload via `app.emit("pause-all-changed", paused)`.
-* `App.svelte` subscribes via `listen('pause-all-changed', e => pauseAll = e.payload)`
-  on `onMount` (and `onDestroy`s the unsubscribe) so the top-bar pill
-  flips even when the tray menu is the surface that toggled.
-* The tray's on_menu_event emits the same bool payload, so the window
-  pill updates even when the user clicks the tray's "Pause all".
-* Implementation: `crates/bellman-core/src/scheduler/tests.rs` has three
-  unit tests (paused = no fire, unpause via control msg = next fire,
-  set_pause_all_now) that lock the engine-level flag behaviour.
-* Verified at the JS layer: `ui/src/api.test.js` asserts the
-  `pause-all-changed` payload is a boolean.
+* The tray's on_menu_event emits the **same bare bool** payload
+  (`app.emit("pause-all-changed", next)`) so the window pill
+  updates even when the user clicks the tray's "Pause all".
+* `tray::install` runs AFTER `app.manage(state)` so the persisted
+  pause-all flag is loaded into the tray's check item at startup.
+* Rust test `pause_all_emit_is_bare_bool_in_sources` walks every
+  `src-tauri/src/*.rs` (skipping the test file) and asserts neither
+  surface re-introduces the `{ "paused": next }` object payload.
+* Vitest `listen() actually delivers events through the IPC bridge`
+  injects a `__TAURI_INTERNALS__` mock, fires `runCallback` with the
+  recorded handler id, and proves the handler runs once — then
+  `unsubscribe() stops further deliveries` proves the runtime sees
+  `plugin:event|unlisten` AND subsequent `runCallback` calls are
+  dropped.
 
 ## 6. Grep-audit: no scheduling logic in the webview
 
@@ -262,8 +305,11 @@ that work.
 $ cargo test -p bellman-core
 108 passed; 0 failed   (+ 4 integration; 5 CLI tests)
 
+$ cargo test -p bellman --lib      # NEW: Tauri shell serde contract
+7 passed; 0 failed    (DTO JSON shape + pause-all emit source grep)
+
 $ cd ui && npm test
-9 passed; 0 failed    (DTO contract + event payload + api.js fallback)
+8 passed; 0 failed    (real Tauri event delivery via mock IPC + DTO shape)
 
 $ ./tests/cli_roundtrip.sh
 23/23 assertions passed
@@ -271,6 +317,11 @@ $ ./tests/cli_roundtrip.sh
 $ cargo tauri build
 .deb + .AppImage both produced
 
+$ env XDG_DATA_HOME=$PWD/target/audit-runtime-final/data \
+    XDG_CONFIG_HOME=$PWD/target/audit-runtime-final/config \
+    target/release/bellman
+   (no panic; runs the event loop until SIGTERM)
+
 $ cd ui && npm run build
-5.21 KB CSS / 45 KB JS (17.88 KB gzipped) — production bundle.
+5.21 KB CSS / 46.19 KB JS (18.19 KB gzipped) — production bundle.
 ```
