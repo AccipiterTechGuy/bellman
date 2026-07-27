@@ -32,7 +32,8 @@ pub use service::{
     make_add_request, reserved_slot_id_from_path, response_is_ok, SlotConfig, SlotService,
 };
 pub use watcher::{
-    poll_once, run_slot_loop, spawn_slot_thread, watch_free_dir, SlotWake, SlotWatcherStop,
+    poll_once, run_slot_loop, run_slot_loop_with_debounce, spawn_slot_thread, watch_free_dir,
+    watch_free_dir_with_debounce, SlotWake, SlotWatcherStop, DEFAULT_DEBOUNCE,
 };
 
 #[cfg(test)]
