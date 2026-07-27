@@ -3,9 +3,7 @@
 use crate::output;
 use crate::parse;
 use crate::resolve::{resolve_timer, ResolveError};
-use bellman_core::actions::{ActionRunner, ActionRunnerConfig};
-use bellman_core::events::{EventLog, EventLogConfig, EventRecord, EventKind};
-use bellman_core::scheduler::{FireAction, FireContext, FireKind};
+use bellman_core::events::{EventKind, EventLog, EventLogConfig, EventRecord};
 use bellman_core::slots::{
     SlotConfig, SlotRequest, SlotService, SlotStatus, SCHEMA_V1,
 };
@@ -504,130 +502,47 @@ pub fn run_now(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> 
         e
     })?;
     let timer = resolve_timer(&store, name_or_id).map_err(|e| e.with_command(CMD))?;
-    let scheduled_for = Utc::now();
 
-    let claim = store
-        .claim_run(timer.id, scheduled_for)
-        .map_err(|e| e.with_command(CMD))?;
-
-    let logs_dir = resolve_logs_dir(db);
-    let event_log = EventLog::open(EventLogConfig::new(&logs_dir)).map_err(|e| {
-        CliError::new(CMD, "store_error", format!("open event log: {e}"))
-    })?;
-
-    // Resolve slots root for write-output-slot (integrating apps' done/ files).
+    // Resolve the slot-record mapping up front so we can do the done/ overlay
+    // after the shared run_now call (which already wrote the fire payload).
     let slots_root = resolve_slots_root_optional(db);
     let slot_rec = store
         .latest_slot_request_for_timer(timer.id)
         .map_err(|e| e.with_command(CMD))?;
-    let write_slot_file = slot_rec
-        .as_ref()
-        .map(|r| format!("slot-{}.json", r.slot_id));
-    let write_slot_dir = slots_root.as_ref().map(|r| r.join("done"));
-
-    let mut action = ActionRunner::new(ActionRunnerConfig {
-        write_slot_dir: write_slot_dir.clone(),
-        write_slot_file: write_slot_file.clone(),
+    let opts = bellman_core::RunNowOptions {
+        write_slot_dir: slots_root.as_ref().map(|r| r.join("done")),
+        write_slot_file: slot_rec
+            .as_ref()
+            .map(|r| format!("slot-{}.json", r.slot_id)),
         ..Default::default()
-    })
-    .with_event_log(event_log);
-
-    let ctx = FireContext {
-        timer: &timer,
-        scheduled_for: claim.scheduled_for,
-        run_id: claim.run_id,
-        kind: FireKind::OnTime,
-        claimed_at: claim.claimed_at,
     };
-    let action_res = action.on_fire(&ctx);
-    let message = action
-        .last_message
-        .clone()
-        .unwrap_or_else(|| "action completed".into());
 
-    // Always complete so recovery does not loop (mirrors scheduler).
-    store
-        .complete_run(claim.run_id)
-        .map_err(|e| e.with_command(CMD))?;
+    let outcome = bellman_core::run_now(&mut store, db, timer.id, &opts).map_err(|e| {
+        use bellman_core::RunNowError::*;
+        let code = match e {
+            NotFound { .. } => "not_found",
+            Store(_) => "store_error",
+            Action(_) => "action_failed",
+            Other(_) => "store_error",
+        };
+        CliError::new(CMD, code, e.to_string())
+    })?;
 
-    if let Err(e) = action_res {
-        return Err(CliError::new(CMD, "action_failed", e));
-    }
-
-    // Advance last_fired + record_run so next_fire moves past this slot —
-    // same bookkeeping as the scheduler's mark_fired path.
-    let mut occ = timer.occurrence.clone();
-    occ.record_run();
-    let timer = store
-        .update_timer(TimerUpdate {
-            id: timer.id,
-            expected_revision: timer.revision,
-            patch: TimerPatch {
-                last_fired: Some(Some(scheduled_for)),
-                occurrence: Some(occ),
-                ..Default::default()
-            },
-        })
-        .map_err(|e| e.with_command(CMD))?;
-
-    // Rewrite integrator output slot with unacked run events (status + next_fire).
-    // The ActionRunner already wrote bellman-fire/1 payload into the same path
-    // when write_slot_file was set; overlay the full SlotResponse so consumers
-    // that parse done/ as bellman-slot/1 still see events + next_fire.
+    // Overlay the full SlotResponse so consumers that parse done/ as
+    // bellman-slot/1 still see events + next_fire.
     if let (Some(root), Some(rec)) = (slots_root.as_ref(), slot_rec.as_ref()) {
-        let _ = publish_fire_slot_response(&store, root, &timer, rec);
+        let _ = bellman_core::publish_fire_slot_response(&store, root, &outcome.timer, rec);
     }
 
     Ok(CommandPayload::RunNow {
         command: CMD,
-        id: timer.id,
-        name: timer.name.clone(),
-        run_id: claim.run_id,
-        scheduled_for,
-        message,
-        timer,
+        id: outcome.timer.id,
+        name: outcome.timer.name.clone(),
+        run_id: outcome.run_id,
+        scheduled_for: outcome.scheduled_for,
+        message: outcome.message,
+        timer: outcome.timer,
     })
-}
-
-/// Publish an updated `done/slot-<id>.json` with unacked run events after a fire.
-fn publish_fire_slot_response(
-    store: &Store,
-    slots_root: &Path,
-    timer: &Timer,
-    rec: &bellman_core::store::SlotRequestRecord,
-) -> Result<(), String> {
-    use bellman_core::slots::{atomic_write_json, SlotResponse, SlotRunEvent, SlotStatus, SCHEMA_V1};
-
-    let runs = store
-        .unacked_runs_for_timer(timer.id, 64)
-        .map_err(|e| e.to_string())?;
-    let events: Vec<SlotRunEvent> = runs
-        .into_iter()
-        .map(|run| SlotRunEvent {
-            event_sequence: run.event_sequence,
-            run_id: run.run_id,
-            timer_id: run.timer_id,
-            scheduled_for: run.scheduled_for,
-            status: run.status.as_str().to_string(),
-            claimed_at: run.claimed_at,
-            completed_at: run.completed_at,
-        })
-        .collect();
-
-    let response = SlotResponse {
-        schema: SCHEMA_V1.to_string(),
-        slot_id: rec.slot_id.clone(),
-        request_id: rec.request_id.clone(),
-        status: SlotStatus::Ok,
-        timer_id: Some(timer.id),
-        next_fire: timer.next_fire_utc,
-        error: None,
-        events,
-    };
-    let name = format!("slot-{}.json", rec.slot_id);
-    let done = slots_root.join("done");
-    atomic_write_json(&done, &name, &response).map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 /// Prefer `$BELLMAN_SLOTS`, else `<db parent>/slots` when that directory exists.

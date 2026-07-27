@@ -48,11 +48,35 @@ pub struct Scheduler<C: Clock, A: FireAction> {
     control_tx: Sender<ControlMsg>,
     control_rx: Receiver<ControlMsg>,
     booted: bool,
+    /// Global pause-all (distinct from per-timer `enabled`): when true the loop
+    /// keeps the heap warm but does not deliver fires. Toggle via
+    /// [`ControlHandle::set_pause_all`] or the env override at construction.
+    pause_all: bool,
 }
 
 impl<C: Clock, A: FireAction> Scheduler<C, A> {
     /// Build a scheduler. Call [`Self::boot`] before ticking.
     pub fn new(store: Store, clock: C, action: A, config: SchedulerConfig) -> Self {
+        Self::new_with_pause(store, clock, action, config, false)
+    }
+
+    /// Build a scheduler that starts with the global pause-all flag set.
+    pub fn new_paused(
+        store: Store,
+        clock: C,
+        action: A,
+        config: SchedulerConfig,
+    ) -> Self {
+        Self::new_with_pause(store, clock, action, config, true)
+    }
+
+    fn new_with_pause(
+        store: Store,
+        clock: C,
+        action: A,
+        config: SchedulerConfig,
+        pause_all: bool,
+    ) -> Self {
         let (control_tx, control_rx) = mpsc::channel();
         let wall = clock.wall_now();
         let mono = clock.mono_now();
@@ -67,6 +91,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             control_tx,
             control_rx,
             booted: false,
+            pause_all,
         }
     }
 
@@ -111,5 +136,16 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
     /// Consume the scheduler, returning the action sink (tests read recorded fires).
     pub fn into_action(self) -> A {
         self.action
+    }
+
+    /// Current value of the global pause-all flag (read-only).
+    pub fn pause_all(&self) -> bool {
+        self.pause_all
+    }
+
+    /// Set the global pause-all flag in place (does not require a control
+    /// message; the next `tick` observes it).
+    pub fn set_pause_all_now(&mut self, paused: bool) {
+        self.pause_all = paused;
     }
 }

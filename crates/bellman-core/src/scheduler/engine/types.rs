@@ -16,6 +16,8 @@ pub enum ControlMsg {
     Refill,
     /// Request a clean loop exit.
     Shutdown,
+    /// Flip the global pause-all flag (true = scheduler parks the heap).
+    SetPauseAll(bool),
 }
 
 /// Cloneable handle for waking the engine from another thread / caller.
@@ -31,6 +33,11 @@ impl ControlHandle {
 
     pub fn shutdown(&self) {
         let _ = self.tx.send(ControlMsg::Shutdown);
+    }
+
+    /// Toggle the global pause-all flag at runtime. The next tick observes it.
+    pub fn set_pause_all(&self, paused: bool) {
+        let _ = self.tx.send(ControlMsg::SetPauseAll(paused));
     }
 
     pub fn sender(&self) -> Sender<ControlMsg> {

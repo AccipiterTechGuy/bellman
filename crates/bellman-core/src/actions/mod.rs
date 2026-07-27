@@ -10,11 +10,13 @@
 
 mod launch;
 mod notify;
+mod notify_sink;
 mod runner;
 mod write_slot;
 
 pub use launch::{run_launch, LaunchConfig, LaunchError, LaunchOutcome, DEFAULT_OUTPUT_CAP_BYTES};
 pub use notify::{notify_stub, NotifyOutcome};
+pub use notify_sink::{NotifySink, StubNotifySink};
 pub use runner::{ActionRunner, ActionRunnerConfig, ActionRunnerError};
 pub use write_slot::{write_output_slot, WriteSlotPayload};
 
