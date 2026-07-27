@@ -13,7 +13,7 @@ export default defineConfig({
     sourcemap: true,
   },
   test: {
-    environment: 'node',
+    environment: 'happy-dom',
     include: ['src/**/*.test.{js,mjs}'],
   },
 });

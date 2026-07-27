@@ -2,25 +2,150 @@
 // `vite dev` (the page works without the backend — it just shows an empty
 // state with a "Tauri not available" hint).
 //
-// All IPC paths go through `window.__TAURI_INTERNALS__.invoke`. The global
-// `window.__TAURI__` (loaded by the runtime when `app.withGlobalTauri` is
-// `true`) is only consulted by `listen()` as a convenience — if it is not
-// present, `listen()` still works via the documented
-// `transformCallback` shim that talks directly to `plugin:event|listen`.
-// The shim does NOT depend on a JS package and works whether or not the
-// global Tauri IIFE was injected.
+// All IPC paths read `window.__TAURI_INTERNALS__` REACTIVELY (at call
+// time, not at module load) so tests that swap the runtime mid-flight
+// behave the same as a real Tauri window that boots a frame after the
+// bundle loaded.
 
-const hasTauri =
-  typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+function _hasTauri() {
+  // Tauri injects on `window`. happy-dom provides `window` in tests,
+  // and vite dev provides it in the browser. We tolerate `window`
+  // being absent in non-browser environments (node, future SSR) by
+  // reading the global directly as a fallback.
+  if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+    return true;
+  }
+  if (typeof globalThis !== 'undefined' && '__TAURI_INTERNALS__' in globalThis) {
+    return true;
+  }
+  return false;
+}
+function _internals() {
+  if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+    return window.__TAURI_INTERNALS__;
+  }
+  return globalThis.__TAURI_INTERNALS__;
+}
+
+// `isTauri` is exported for the UI hint. It's a getter so a runtime
+// injected AFTER api.js was loaded still shows up correctly.
+export function isTauri() {
+  return _hasTauri();
+}
 
 async function invoke(cmd, args) {
-  if (!hasTauri) {
+  if (!_hasTauri()) {
     throw new Error(`Tauri not available (cmd: ${cmd})`);
   }
   return await window.__TAURI_INTERNALS__.invoke(cmd, args);
 }
 
-export const isTauri = hasTauri;
+/* -------------------------------------------------------------------- *
+ * listen() — works whether the Tauri JS global is injected or not.
+ * -------------------------------------------------------------------- *
+ * Path A (preferred): `window.__TAURI__.event.listen` exists when the
+ *   app is configured with `app.withGlobalTauri: true`. We delegate to it.
+ *
+ * Path B (shim): even without the global, Tauri's IPC reuses the
+ *   `plugin:event|listen` command. The plugin expects a callback ID
+ *   number that the Rust side can invoke via
+ *   `__TAURI_INTERNALS__.runCallback(cb_id, payload)`. We allocate such
+ *   IDs from a local Map and register with the runtime's `transformCallback`
+ *   shim — the same path `@tauri-apps/api`'s `event.listen` takes.
+ *
+ * The runtime shim installed by the production `tauri` IIFE exposes
+ * `runCallback`, `unregisterCallback`, and `transformCallback` on
+ * `__TAURI_INTERNALS__`. For tests / non-Tauri browsers we install a
+ * tiny in-process shim that uses a `Map` to back the same contract.
+ *
+ * Returns an UNSUBSCRIBE function. Calling it removes the listener
+ * (`plugin:event|unlisten`) and prevents further delivery — even if the
+ * caller invokes it BEFORE the `plugin:event|listen` promise resolves.
+ */
+
+const _listenerCbs = new Map(); // cb_id -> { fn, once }
+let _nextCbId = 1;
+
+function _transformCallback(callback, _once = false) {
+  const id = _nextCbId++;
+  _listenerCbs.set(id, { fn: callback });
+  return id;
+}
+
+function _unregisterCallback(id) {
+  _listenerCbs.delete(id);
+}
+
+function _runCallback(id, payload) {
+  const slot = _listenerCbs.get(id);
+  if (!slot) return false;
+  try {
+    slot.fn(payload);
+  } catch (err) {
+    // Don't let a buggy handler drop the event loop. Surface to console.
+    console.error('[bellman] event handler threw:', err);
+  }
+  return true;
+}
+
+/** Make sure `__TAURI_INTERNALS__` exposes our shim or the runtime's. */
+function _ensureRuntimeCallbacks() {
+  if (!_hasTauri()) return;
+  const internals = window.__TAURI_INTERNALS__;
+  if (typeof internals.transformCallback !== 'function') {
+    internals.transformCallback = (cb) => _transformCallback(cb, false);
+  }
+  if (typeof internals.unregisterCallback !== 'function') {
+    internals.unregisterCallback = _unregisterCallback;
+  }
+  if (typeof internals.runCallback !== 'function') {
+    internals.runCallback = _runCallback;
+  }
+}
+
+export async function listen(event, handler) {
+  if (!_hasTauri()) {
+    // No-op in the browser so vite dev still works without a backend.
+    return () => {};
+  }
+  _ensureRuntimeCallbacks();
+
+  // Path A — preferred when the global IIFE was injected
+  // (app.withGlobalTauri: true).
+  const globalListen = typeof window.__TAURI__ !== 'undefined'
+    ? window.__TAURI__?.event?.listen
+    : undefined;
+  if (typeof globalListen === 'function') {
+    return await globalListen(event, handler);
+  }
+
+  // Path B — direct plugin:event|listen call. See the comment block at
+  // the top of the file; this is the documented fallback used by
+  // @tauri-apps/api when the global IIFE is absent.
+  const cbId = window.__TAURI_INTERNALS__.transformCallback((delivery) => {
+    handler({ event: delivery?.event ?? event, payload: delivery?.payload });
+  });
+
+  // Tell the runtime to invoke our callback on every event of this name.
+  const eventId = await window.__TAURI_INTERNALS__.invoke('plugin:event|listen', {
+    event,
+    target: { kind: 'Any' },
+    handler: cbId,
+  });
+
+  // Unsubscribe closure — captures `cbId` and `eventId`.
+  return async () => {
+    window.__TAURI_INTERNALS__.unregisterCallback(cbId);
+    try {
+      await window.__TAURI_INTERNALS__.invoke('plugin:event|unlisten', {
+        event,
+        eventId,
+      });
+    } catch {
+      // ignore — runtime may already be torn down.
+    }
+  };
+}
 
 export async function listTimers() {
   return await invoke('list_timers');
@@ -54,111 +179,4 @@ export async function wizardReRun() {
 }
 export async function appInfo() {
   return await invoke('app_info');
-}
-
-/* -------------------------------------------------------------------- *
- * listen() — works whether the Tauri JS global is injected or not.
- * -------------------------------------------------------------------- *
- * Path A (preferred): `window.__TAURI__.event.listen` exists when the
- *   app is configured with `withGlobalTauri: true`. We delegate to it.
- *
- * Path B (shim): even without the global, Tauri's IPC reuses the
- *   `plugin:event|listen` command. The plugin expects a callback ID
- *   number that the Rust side can invoke via
- *   `__TAURI_INTERNALS__.runCallback(cb_id, payload)`. We allocate such
- *   IDs from a local Map and register with `transformCallback`-shaped
- *   allocation. This is the same path `@tauri-apps/api`'s `event.listen`
- *   takes; doing it here avoids pulling in the package and proves the
- *   mechanic works regardless of the global.
- *
- * Returns an UNSUBSCRIBE function. Calling it removes the listener
- * (`plugin:event|unlisten`) and prevents further delivery — even if the
- * caller invokes it BEFORE the `plugin:event|listen` promise resolves.
- */
-
-const _listenerCbs = new Map(); // cb_id -> handler
-let _nextCbId = 1;
-
-function _transformCallback(callback, once = false) {
-  // Mirror Tauri's transformCallback contract. Each call gets a fresh id.
-  const id = _nextCbId++;
-  _listenerCbs.set(id, { fn: callback, once });
-  return id;
-}
-
-function _unregisterCallback(id) {
-  _listenerCbs.delete(id);
-}
-
-function _runCallback(id, payload) {
-  const slot = _listenerCbs.get(id);
-  if (!slot) return false;
-  let delivered = false;
-  try {
-    slot.fn(payload);
-    delivered = true;
-  } catch (err) {
-    // Don't let a buggy handler drop the event loop. Surface to console.
-    console.error('[bellman] event handler threw:', err);
-  }
-  if (slot.once) {
-    _listenerCbs.delete(id);
-  }
-  return delivered;
-}
-
-// Wire the runtime call surface (path B). The runtime exposes
-// `runCallback` and `unregisterCallback` even when the global
-// IIFE is absent — these are the IPC primitives every plugin uses.
-if (hasTauri) {
-  const internals = window.__TAURI_INTERNALS__;
-  if (typeof internals.runCallback !== 'function') {
-    internals.runCallback = _runCallback;
-  }
-  if (typeof internals.unregisterCallback !== 'function') {
-    internals.unregisterCallback = _unregisterCallback;
-  }
-  if (typeof internals.transformCallback !== 'function') {
-    internals.transformCallback = (cb) => _transformCallback(cb, false);
-  }
-}
-
-export async function listen(event, handler) {
-  if (!hasTauri) {
-    // No-op in the browser so vite dev still works without a backend.
-    return () => {};
-  }
-
-  // Path A — preferred when the global IIFE was injected
-  // (app.withGlobalTauri: true).
-  const globalListen = window.__TAURI__?.event?.listen;
-  if (typeof globalListen === 'function') {
-    return await globalListen(event, handler);
-  }
-
-  // Path B — direct plugin:event|listen call. As described in Tauri's
-  // runtime code: the `handler` field is a number (the callback ID).
-  // When Rust wants to deliver, it does
-  //   runCallback(handler, { event, payload, id })
-  // which dispatches to our _runCallback above.
-  const cbId = _transformCallback((delivery) => {
-    handler({ event: delivery?.event ?? event, payload: delivery?.payload });
-  });
-
-  // Tell the runtime to invoke our callback on every event of this name.
-  const eventId = await invoke('plugin:event|listen', {
-    event,
-    target: { kind: 'Any' },
-    handler: cbId,
-  });
-
-  // Unsubscribe closure — captures `cbId` and `eventId`.
-  return async () => {
-    _unregisterCallback(cbId);
-    try {
-      await invoke('plugin:event|unlisten', { event, eventId });
-    } catch {
-      // ignore — runtime may already be torn down.
-    }
-  };
 }

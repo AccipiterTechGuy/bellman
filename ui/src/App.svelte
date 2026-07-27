@@ -99,7 +99,7 @@
     <button class="tab" class:active={page==='history'} onclick={() => page = 'history'}>Run history</button>
   </div>
   <div class="topbar-right">
-    {#if !isTauri}
+    {#if !isTauri()}
       <span title="Tauri IPC not available">vite dev (no backend)</span>
     {/if}
     <button class="pause-toggle" class:paused={pauseAll} onclick={togglePause}>

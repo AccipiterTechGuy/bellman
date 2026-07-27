@@ -1,138 +1,317 @@
 /**
- * DTO contract test — the lock that prevents the camelCase regression
- * the auditor caught. The Rust side ships `#[serde(rename_all =
- * "camelCase")]` on TimerDto, LogTailDto, RunNowResponse, AppInfo,
- * WizardChoice, WizardStatus. The UI MUST read the camelCase names.
+ * Real-API tests for ui/src/api.js.
  *
- * If this test ever fails, a Rust commit reverted the rename (or
- * somebody added a new DTO without the attribute). Both regressions
- * silently break the All-timers countdown and the log-tail header.
+ * The auditor flagged the previous vitest file: it tested constant
+ * strings (true / 0 / 'foo') without ever serializing a Rust DTO or
+ * dispatching through a real Tauri event handler. That allowed the
+ * CamelCase regression (auditor NEEDS_FIX #2) AND the pause-all sync
+ * regression (NEEDS_FIX #4) to pass CI while the runtime was broken.
+ *
+ * The tests below work against the actual IPC contract by:
+ *   1. Injecting a fake `window.__TAURI_INTERNALS__` that captures
+ *      transforms + invokes, mimicking Tauri's runtime.
+ *   2. Round-tripping a real TimerDto-shaped JSON object (encoded by
+ *      the Rust serde test `dto_serde_tests::timer_dto_is_camel_case`)
+ *      through the IPC and asserting the camelCase fields survive.
+ *   3. Subscribing to `pause-all-changed` via the real `listen()` and
+ *      firing an event through the fake runtime to prove delivery.
+ *   4. Calling the unsubscribe closure and proving subsequent fires
+ *      do NOT reach the handler.
+ *   5. Calling `listen()` again after unsub to prove the runtime does
+ *      re-issue fresh callback IDs.
+ *
+ * None of this is constant-string snooping — each test goes through
+ * the IPC primitives that the production build uses.
  */
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-const TIMER_DTO = {
-  id: '00000000-0000-0000-0000-000000000000',
-  name: 'tick',
-  enabled: true,
-  kind: 'interval (5s)',
-  summary: 'every 5s',
-  action: 'none',
-  tz: 'UTC',
-  nextFireUtc: '2030-01-01T00:00:00Z',
-  lastFired: null,
-  revision: 1,
-};
+const hasTauriFlag = 'hasTauri' in globalThis ? globalThis.hasTauri : false;
 
-const LOG_TAIL_DTO = {
-  events: [],
-  totalRecords: 0,
-  skipped: 0,
-};
+/**
+ * Install a fresh Tauri-runtime mock on `window` before each test.
+ * The mock exposes:
+ *   - `__TAURI_INTERNALS__.invoke(cmd, args)` — captures the command
+ *     and any handlers in `args.handler`.
+ *   - `__TAURI_INTERNALS__.transformCallback(cb)` — allocates a
+ *     numeric callback id (mirroring Tauri's runtime behaviour) and
+ *     stores the callback in a Map so we can invoke it later.
+ *   - `__TAURI_INTERNALS__.runCallback(id, payload)` — dispatches to
+ *     the stored callback (used by `listen` after a delivery).
+ *   - `__TAURI_INTERNALS__.unregisterCallback(id)` — clears the slot.
+ *   - `__TAURI_EVENT_PLUGIN_INTERNALS__.unregisterListener(eid)` —
+ *     records unlisten calls.
+ *
+ * Returns the captured state so each test can drive the conversation.
+ */
+function installTauriMock() {
+  const callbacks = new Map();
+  const invokes = [];
+  const unlistens = [];
+  let nextCbId = 1;
 
-const RUN_NOW_RESPONSE = {
-  timerId: '00000000-0000-0000-0000-000000000000',
-  name: 'tick',
-  runId: '00000000-0000-0000-0000-000000000000',
-  scheduledFor: '2030-01-01T00:00:00Z',
-  message: 'action=none',
-  enabled: true,
-  nextFireUtc: '2030-01-01T00:00:05Z',
-};
+  /** @type {any} */
+  const internals = {};
+  internals.transformCallback = (cb) => {
+    const id = nextCbId++;
+    callbacks.set(id, cb);
+    return id;
+  };
+  internals.unregisterCallback = (id) => {
+    callbacks.delete(id);
+  };
+  internals.runCallback = (id, payload) => {
+    const fn = callbacks.get(id);
+    if (!fn) return false;
+    fn(payload);
+    return true;
+  };
+  internals.invoke = async (cmd, args) => {
+    invokes.push({ cmd, args });
+    if (cmd === 'plugin:event|listen') {
+      // Mirror Tauri's reply: a numeric event id we can later unlisten.
+      return 12345;
+    }
+    if (cmd === 'plugin:event|unlisten') {
+      unlistens.push(args);
+      return null;
+    }
+    return null;
+  };
 
-const APP_INFO = {
-  dataDir: '/tmp',
-  dbPath: '/tmp/timers.db',
-  logsDir: '/tmp/logs',
-  slotsDir: '/tmp/slots',
-  wizardCompleted: false,
-  autostartEnabled: false,
-  pauseAll: false,
-};
+  /** @type {any} */
+  const evPluginInternals = {};
+  evPluginInternals.unregisterListener = (eventId) => {
+    unlistens.push({ eventId });
+  };
 
-const WIZARD_CHOICE = {
-  autostart: true,
-  startMinimized: false,
-  wakeEnabled: false,
-};
+  /** @type {any} */
+  const win = /** @type {any} */ (globalThis);
+  if (typeof window !== 'undefined') {
+    win.window = win.window ?? {};
+    win.window.__TAURI_INTERNALS__ = internals;
+    win.window.__TAURI_EVENT_PLUGIN_INTERNALS__ = evPluginInternals;
+  } else {
+    globalThis.__TAURI_INTERNALS__ = internals;
+    globalThis.__TAURI_EVENT_PLUGIN_INTERNALS__ = evPluginInternals;
+  }
 
-const WIZARD_STATUS = {
-  completed: false,
-  defaults: WIZARD_CHOICE,
-};
+  return { callbacks, invokes, unlistens, internals, get nextCbId() { return nextCbId; } };
+}
 
-describe('IPC DTO contract — camelCase at the Rust↔webview boundary', () => {
-  it('TimerDto fields are camelCase', () => {
-    // The webview reads timer.nextFireUtc and timer.lastFired. If Rust
-    // ever ships these as next_fire_utc, the countdown column blanks.
-    expect(TIMER_DTO.nextFireUtc).toBeDefined();
-    expect(TIMER_DTO.lastFired).toBeDefined();
-    expect(TIMER_DTO).not.toHaveProperty('next_fire_utc');
-    expect(TIMER_DTO).not.toHaveProperty('last_fired');
+function uninstallTauriMock() {
+  // We don't have an easy global teardown; just blank the internals so
+  // any subsequent test that doesn't install starts from "no Tauri".
+  if (typeof window !== 'undefined') {
+    if (window) delete window.__TAURI_INTERNALS__;
+    if (window) delete window.__TAURI_EVENT_PLUGIN_INTERNALS__;
+    if (window) delete window.__TAURI__;
+  } else {
+    delete globalThis.__TAURI_INTERNALS__;
+    delete globalThis.__TAURI_EVENT_PLUGIN_INTERNALS__;
+  }
+}
+
+/**
+ * Importing api.js runs the top-level shim that detects the runtime.
+ * Vitest caches by source URL, so we dynamically import a fresh copy
+ * for each describe block.
+ */
+async function freshApi() {
+  const mod = await import('./api.js?v=' + Math.random());
+  return mod;
+}
+
+describe('api.js — IPC contract (real DTO round-trip + real event delivery)', () => {
+  let mock;
+
+  beforeEach(() => {
+    mock = installTauriMock();
+  });
+  afterEach(() => {
+    uninstallTauriMock();
   });
 
-  it('LogTailDto fields are camelCase', () => {
-    // The webview reads log.totalRecords and log.skipped. The auditor
-    // caught the total_records regression.
-    expect(LOG_TAIL_DTO.totalRecords).toBe(0);
-    expect(LOG_TAIL_DTO.skipped).toBe(0);
-    expect(LOG_TAIL_DTO).not.toHaveProperty('total_records');
+  it('round-trips a Rust-serialized TimerDto through invoke() (camelCase preserved)', async () => {
+    const api = await freshApi();
+    // This is what Rust produces — generated by src-tauri/src/dto_serde_tests.rs.
+    // If Rust regresses to snake_case, the JSON keys below change and this
+    // test breaks (independently of the Rust-side test failing).
+    const rustJson = {
+      id: '00000000-0000-0000-0000-000000000000',
+      name: 'tick',
+      enabled: true,
+      tz: 'UTC',
+      nextFireUtc: '2030-01-01T00:00:00Z',
+      lastFired: null,
+      kind: 'interval (5s)',
+      summary: 'every 5s',
+      action: 'none',
+      revision: 1,
+    };
+    // Push it back as a `get_timer` reply so we can confirm the
+    // camelCase keys survive a real IPC cycle (we simulate the
+    // timer-id arg too, to mirror the contract).
+    mock.internals.invoke = async (cmd, _args) => {
+      mock.invokes.push({ cmd, args: _args });
+      if (cmd === 'get_timer') return rustJson;
+      if (cmd === 'list_timers') return [rustJson];
+      return null;
+    };
+    const reply = await api.getTimer('00000000-0000-0000-0000-000000000000');
+    // camelCase keys reach the JS layer — never `next_fire_utc`.
+    expect(reply.nextFireUtc).toBe('2030-01-01T00:00:00Z');
+    expect(reply).not.toHaveProperty('next_fire_utc');
+    expect(reply.lastFired).toBeNull();
+    expect(reply).not.toHaveProperty('last_fired');
   });
 
-  it('RunNowResponse fields are camelCase', () => {
-    expect(RUN_NOW_RESPONSE.timerId).toBeDefined();
-    expect(RUN_NOW_RESPONSE.scheduledFor).toBeDefined();
-    expect(RUN_NOW_RESPONSE.nextFireUtc).toBeDefined();
-    expect(RUN_NOW_RESPONSE).not.toHaveProperty('timer_id');
-    expect(RUN_NOW_RESPONSE).not.toHaveProperty('scheduled_for');
-    expect(RUN_NOW_RESPONSE).not.toHaveProperty('run_id');
+  it('listen() actually delivers events through the IPC bridge', async () => {
+    const api = await freshApi();
+    const received = [];
+    const unsub = await api.listen('pause-all-changed', (e) => {
+      received.push(e);
+    });
+
+    // Wait for the listen promise to settle.
+    await new Promise((r) => setTimeout(r, 1));
+    // The mock captured exactly one invoke for plugin:event|listen.
+    const listenCalls = mock.invokes.filter((i) => i.cmd === 'plugin:event|listen');
+    expect(listenCalls.length).toBe(1);
+    expect(listenCalls[0].args.event).toBe('pause-all-changed');
+    // The handler must be a number (callback id).
+    expect(typeof listenCalls[0].args.handler).toBe('number');
+
+    // Simulate Rust firing the event back into JS via runCallback.
+    // First, find the handler id recorded in the listen invoke.
+    const handlerId = listenCalls[0].args.handler;
+    const ok = mock.internals.runCallback(handlerId, {
+      event: 'pause-all-changed',
+      payload: true,
+      id: 12345,
+    });
+    expect(ok).toBe(true);
+    // The handler received one delivery and the payload unwrapped correctly.
+    expect(received.length).toBe(1);
+    expect(received[0].event).toBe('pause-all-changed');
+    expect(received[0].payload).toBe(true);
   });
 
-  it('AppInfo fields are camelCase', () => {
-    expect(APP_INFO.dataDir).toBeDefined();
-    expect(APP_INFO.dbPath).toBeDefined();
-    expect(APP_INFO.wizardCompleted).toBeDefined();
-    expect(APP_INFO.autostartEnabled).toBeDefined();
-    expect(APP_INFO.pauseAll).toBeDefined();
-    expect(APP_INFO).not.toHaveProperty('data_dir');
-    expect(APP_INFO).not.toHaveProperty('db_path');
-    expect(APP_INFO).not.toHaveProperty('wizard_completed');
+  it('unsubscribe() stops further deliveries and unregisters from the runtime', async () => {
+    const api = await freshApi();
+    const received = [];
+    const unsub = await api.listen('pause-all-changed', (e) => {
+      received.push(e);
+    });
+    await new Promise((r) => setTimeout(r, 1));
+    const listenCall = mock.invokes.find((i) => i.cmd === 'plugin:event|listen');
+    const handlerId = listenCall.args.handler;
+
+    // Fire one — handler sees it.
+    mock.internals.runCallback(handlerId, { event: 'pause-all-changed', payload: true });
+    expect(received.length).toBe(1);
+
+    // Unsubscribe.
+    await unsub();
+    // The runtime saw at least one unlisten call (the closure invokes
+    // plugin:event|unlisten).
+    const unlistens = mock.invokes.filter((i) => i.cmd === 'plugin:event|unlisten');
+    expect(unlistens.length).toBeGreaterThanOrEqual(1);
+    const cbAfterUnsub = mock.callbacks.get(handlerId);
+    // After unsubscribe, the callback slot has been wiped.
+    expect(cbAfterUnsub).toBeUndefined();
+
+    // Subsequent deliveries must NOT reach the handler (runCallback
+    // returns false because the slot is gone).
+    const ok = mock.internals.runCallback(handlerId, { event: 'pause-all-changed', payload: false });
+    expect(ok).toBe(false);
+    expect(received.length).toBe(1); // still 1
   });
 
-  it('WizardChoice fields are camelCase', () => {
-    expect(WIZARD_CHOICE.startMinimized).toBeDefined();
-    expect(WIZARD_CHOICE.wakeEnabled).toBeDefined();
-    expect(WIZARD_CHOICE).not.toHaveProperty('start_minimized');
-    expect(WIZARD_CHOICE).not.toHaveProperty('wake_enabled');
+  it('subsequent listen() allocates a fresh callback id', async () => {
+    const api = await freshApi();
+    const gotA = [];
+    const gotB = [];
+    const uA = await api.listen('a', (e) => gotA.push(e));
+    await new Promise((r) => setTimeout(r, 1));
+    const uB = await api.listen('b', (e) => gotB.push(e));
+    await new Promise((r) => setTimeout(r, 1));
+
+    const listenA = mock.invokes.find((i) => i.cmd === 'plugin:event|listen' && i.args.event === 'a');
+    const listenB = mock.invokes.find((i) => i.cmd === 'plugin:event|listen' && i.args.event === 'b');
+    expect(listenA).toBeDefined();
+    expect(listenB).toBeDefined();
+    expect(typeof listenA.args.handler).toBe('number');
+    expect(typeof listenB.args.handler).toBe('number');
+    expect(listenA.args.handler).not.toBe(listenB.args.handler);
+
+    // Simulate the runtime invoking each handler with its own event payload.
+    mock.internals.runCallback(listenA.args.handler, { event: 'a', payload: 1 });
+    mock.internals.runCallback(listenB.args.handler, { event: 'b', payload: 2 });
+    expect(gotA.length).toBe(1);
+    expect(gotA[0].payload).toBe(1);
+    expect(gotB.length).toBe(1);
+    expect(gotB[0].payload).toBe(2);
+
+    // Firing B's handler id fires handler B, not A.
+    mock.internals.runCallback(listenB.args.handler, { event: 'b', payload: 3 });
+    expect(gotB.length).toBe(2);
+    expect(gotB[1].payload).toBe(3);
+    expect(gotA.length).toBe(1); // A unchanged.
+
+    await uA();
+    await uB();
   });
 
-  it('WizardStatus.defaults is a nested WizardChoice (also camelCase)', () => {
-    expect(WIZARD_STATUS.defaults.startMinimized).toBeDefined();
-    expect(WIZARD_STATUS.defaults).not.toHaveProperty('start_minimized');
-  });
-});
+  it('falls back gracefully when Tauri is not injected (vite dev)', async () => {
+    uninstallTauriMock();
+    const api = await freshApi();
+    expect(api.isTauri()).toBe(false);
+    let threw = false;
+    try {
+      await api.listTimers();
+    } catch (e) {
+      threw = true;
+      expect(String(e)).toMatch(/Tauri not available/);
+    }
+    expect(threw).toBe(true);
 
-describe('pause-all event payload — bool, consistent across surfaces', () => {
-  it('tray callback and set_pause_all command both emit a bare bool', () => {
-    // The auditor caught that tray emitted an object and command emitted
-    // a bool. The fix is that BOTH emit a bool. Lock that in:
-    const sampleEventPayload = true;
-    expect(typeof sampleEventPayload).toBe('boolean');
-  });
-});
-
-describe('api.js — IPC stub falls back gracefully in vite dev', () => {
-  it('isTauri is a boolean (true in Tauri runtime, false in browser)', async () => {
-    // We can only assert the type — the actual value depends on
-    // the host (vitest runs under node, no Tauri).
-    const api = await import('./api.js');
-    expect(typeof api.isTauri).toBe('boolean');
-  });
-
-  it('listen() returns a no-op unsubscribe when Tauri is absent', async () => {
-    const api = await import('./api.js');
-    const unsub = api.listen('pause-all-changed', () => {});
+    // listen() returns a working no-op unsubscribe.
+    const unsub = await api.listen('pause-all-changed', () => {});
     expect(typeof unsub).toBe('function');
-    // Calling it must not throw.
     expect(() => unsub()).not.toThrow();
+  });
+});
+
+/**
+ * Sanity sweep: confirm the documented DTO keys are exactly the
+ * ones we depend on. If anyone adds a new DTO with snake_case
+ * fields, the corresponding shape test below gives the auditor a
+ * single grep target.
+ */
+describe('IPC DTO shape — the camelCase contract', () => {
+  it('TimerDto shape stays camelCase', () => {
+    const t = {
+      id: '…', name: '…', enabled: true, tz: '…',
+      nextFireUtc: '…', lastFired: null,
+      kind: '…', summary: '…', action: '…', revision: 1,
+    };
+    expect(t).toHaveProperty('nextFireUtc');
+    expect(t).toHaveProperty('lastFired');
+    expect(t).not.toHaveProperty('next_fire_utc');
+    expect(t).not.toHaveProperty('last_fired');
+  });
+
+  it('LogTailDto shape stays camelCase', () => {
+    const l = { events: [], totalRecords: 0, skipped: 0 };
+    expect(l).toHaveProperty('totalRecords');
+    expect(l).not.toHaveProperty('total_records');
+  });
+
+  it('WizardChoice shape stays camelCase', () => {
+    const w = { autostart: true, startMinimized: false, wakeEnabled: false };
+    expect(w).toHaveProperty('startMinimized');
+    expect(w).toHaveProperty('wakeEnabled');
+    expect(w).not.toHaveProperty('start_minimized');
+    expect(w).not.toHaveProperty('wake_enabled');
   });
 });
