@@ -15,13 +15,16 @@
 // -----------------------------------------------------------
 
 use bellman_core::{
-    Action, EventRecord, MisfirePolicy, Occurrence, OccurrenceKind, OverlapPolicy,
-    RetryPolicy, Timer,
+    Action, EventRecord, MisfirePolicy, Occurrence, OccurrenceKind, OverlapPolicy, RetryPolicy,
+    Timer,
 };
 use chrono::{TimeZone, Utc};
 
-use crate::commands::{AppInfo, LogTailDto, TimerDto};
+use crate::commands::{
+    AppInfo, LogTailDto, PreviewFireDto, PreviewResponseDto, TimerDto, TimerPatchDto,
+};
 use crate::first_run::{WizardChoice, WizardStatus};
+use crate::occurrence_input::{CreateTimerInput, OccurrenceInput, PreviewFire};
 use crate::state::RunNowResponse;
 
 fn sample_timer() -> Timer {
@@ -310,11 +313,145 @@ fn visit_rs_files(dir: &std::path::Path, visit: &mut dyn FnMut(&std::path::Path)
             }
             visit_rs_files(&p, visit);
         } else if p.extension().map_or(false, |e| e == "rs")
-            // Skip the test file itself (it contains the bad-pattern
-            // strings as r#""# literals, which would self-match).
-            && p.file_name().map_or(true, |n| n != "dto_serde_tests.rs")
+                        // Skip the test file itself (it contains the bad-pattern
+                        // strings as r#"…"# literals, which would self-match).
+                        && p.file_name().map_or(true, |n| n != "dto_serde_tests.rs")
         {
             visit(&p);
         }
     }
+}
+
+// ── C8 calendar UI wire-shape guards ────────────────────────────────────
+//
+// Each of these tests fail if anyone breaks the camelCase contract for the
+// new dialog / Week / Month / Run history commands. The serde warnings would
+// reach webview inspect-tools, but a wire-shape regression stays invisible
+// until something else (a runtime type error, a JSON.stringify test) catches
+// it — so we pin the keys here.
+
+#[test]
+fn create_timer_input_is_camel_case() {
+    let input = CreateTimerInput {
+        name: "tick".into(),
+        occurrence: OccurrenceInput {
+            kind: "daily".into(),
+            tz: Some("UTC".into()),
+            time: Some("09:00:00".into()),
+            once_at: None,
+            every_secs: None,
+            interval_anchor: None,
+            days: None,
+            day: None,
+            month: None,
+            cron_expr: None,
+            dst_gap: None,
+            dst_fold: None,
+            invalid_monthday: None,
+        },
+        enabled: Some(true),
+        action: Some(Action::None),
+        misfire: None,
+        overlap: None,
+        retry: None,
+        tags: None,
+    };
+    let json = serde_json::to_string(&input).unwrap();
+    for needed in [
+        "\"name\":\"tick\"",
+        "\"occurrence\":{",
+        "\"kind\":\"daily\"",
+        "\"tz\":\"UTC\"",
+        "\"time\":\"09:00:00\"",
+        "\"enabled\":true",
+        "\"action\":{\"type\":\"none\"}",
+    ] {
+        assert!(
+            json.contains(needed),
+            "CreateTimerInput missing {needed}; full json: {json}"
+        );
+    }
+    // Negative: our helpers never emit placeholders like once_at / every_secs
+    // from the JSON.
+    assert!(!json.contains("once_at"));
+    assert!(!json.contains("every_secs"));
+    assert!(!json.contains("cron_expr"));
+}
+
+#[test]
+fn timer_patch_dto_is_camel_case() {
+    let patch = TimerPatchDto {
+        name: Some("renamed".into()),
+        enabled: Some(false),
+        occurrence: None,
+        action: Some(Action::None),
+    };
+    let s = serde_json::to_string(&patch).unwrap();
+    // camelCase keys wire to Tauri: `name`/`enabled` are the user-facing
+    // fields; `renamed` is the value. Negative: no snake_case leak.
+    assert!(s.contains("\"name\":\"renamed\""));
+    assert!(s.contains("\"enabled\":false"));
+    assert!(!s.contains("\"name_\""));
+    assert!(!s.contains("\"enable_d\""));
+}
+
+#[test]
+fn preview_fire_dto_is_camel_case() {
+    let f = PreviewFireDto {
+        utc: chrono::DateTime::parse_from_rfc3339("2030-01-01T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+        local_date: "2030-01-01".into(),
+        local_time: "12:00:00".into(),
+        offset: "+00:00".into(),
+        tz_name: "UTC".into(),
+    };
+    let keys = json_keys(&f);
+    for needed in ["utc", "localDate", "localTime", "tzName", "offset"] {
+        assert!(
+            keys.contains(&needed.to_string()),
+            "PreviewFireDto missing {needed}; got {keys:?}"
+        );
+    }
+    for forbidden in ["local_date", "local_time", "tz_name", "tz"] {
+        assert!(
+            !keys.contains(&forbidden.to_string()),
+            "PreviewFireDto leaked {forbidden}; got {keys:?}"
+        );
+    }
+}
+
+#[test]
+fn preview_response_dto_is_camel_case() {
+    let resp = PreviewResponseDto {
+        fires: vec![],
+        warnings: vec!["daily times in DST gap".into()],
+    };
+    let s = serde_json::to_string(&resp).unwrap();
+    assert!(s.contains("\"fires\":[]"));
+    assert!(s.contains("\"warnings\":[\"daily times in DST gap\"]"));
+    // Negative: no snake_case keys leaked.
+    assert!(!s.contains("\"warning\""));
+    assert!(!s.contains("\"fire_list\""));
+    let keys = json_keys(&resp);
+    assert!(keys.contains(&"warnings".to_string()));
+    assert!(keys.contains(&"fires".to_string()));
+    assert!(!keys.contains(&"warnings_count".to_string()));
+}
+
+#[test]
+fn preview_fire_from_helper_keeps_fields() {
+    let fire = PreviewFire {
+        utc: chrono::DateTime::parse_from_rfc3339("2030-01-01T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+        local_date: "2030-01-01".into(),
+        local_time: "12:00:00".into(),
+        offset: "UTC".into(),
+        tz_name: "UTC".into(),
+    };
+    let dto: PreviewFireDto = fire.into();
+    assert_eq!(dto.local_time, "12:00:00");
+    assert_eq!(dto.tz_name, "UTC");
+    assert_eq!(dto.offset, "UTC");
 }

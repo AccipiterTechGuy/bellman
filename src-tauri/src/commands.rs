@@ -7,7 +7,8 @@
 use std::str::FromStr;
 
 use bellman_core::events::EventRecord;
-use bellman_core::store::{Timer, TimerPatch, TimerUpdate};
+use bellman_core::store::{Action, Timer, TimerPatch, TimerUpdate};
+use bellman_core::Occurrence;
 use bellman_core::RunNowOptions;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,7 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::first_run::{WizardChoice, WizardStatus};
+use crate::occurrence_input::{self, CreateTimerInput, OccurrenceInput, PreviewFire};
 use crate::state::{AppState, RunNowResponse};
 
 /// `Timer` shape the webview consumes. Mirrors the core type but with a
@@ -174,8 +176,8 @@ pub fn run_now(
         ..Default::default()
     };
     let mut store = state.store.lock();
-    let outcome = bellman_core::run_now(&mut store, &db_path, id, &opts)
-        .map_err(|e| e.to_string())?;
+    let outcome =
+        bellman_core::run_now(&mut store, &db_path, id, &opts).map_err(|e| e.to_string())?;
     drop(store);
     if let Some(h) = state.control_handle.lock().as_ref() {
         h.refill();
@@ -209,10 +211,7 @@ pub fn list_log_tail(
     limit: Option<usize>,
 ) -> Result<LogTailDto, String> {
     use std::path::Path;
-    let path = state
-        .data_dir
-        .join("logs")
-        .join("events.current.jsonl");
+    let path = state.data_dir.join("logs").join("events.current.jsonl");
     if !Path::new(&path).exists() {
         return Ok(LogTailDto {
             events: vec![],
@@ -224,8 +223,8 @@ pub fn list_log_tail(
         None | Some("") => None,
         Some(s) => Some(Uuid::from_str(s).map_err(|e| format!("invalid timer_id: {e}"))?),
     };
-    let (events, stats) = bellman_core::read_log_tail(&path, tid, limit)
-        .map_err(|e| e.to_string())?;
+    let (events, stats) =
+        bellman_core::read_log_tail(&path, tid, limit).map_err(|e| e.to_string())?;
     Ok(LogTailDto {
         total_records: stats.records,
         skipped: stats.skipped,
@@ -299,7 +298,7 @@ pub fn wizard_re_run(state: State<'_, AppState>) -> WizardStatus {
             autostart: cfg.autostart_enabled,
             start_minimized: cfg.start_minimized,
             wake_enabled: cfg.wake_enabled,
-        }
+        },
     }
 }
 
@@ -328,6 +327,165 @@ pub fn app_info(state: State<'_, AppState>) -> AppInfo {
         wizard_completed: cfg.wizard_completed,
         autostart_enabled: cfg.autostart_enabled,
         pause_all: state.pause_all(),
+    }
+}
+
+// ── C8 calendar UI commands ──────────────────────────────────────────
+//
+// The dialog / Week / Month / Run history pages read and mutate timers
+// through these. They are intentionally thin wrappers around `Store`
+// (and `Occurrence::preview` for the live next-5 preview) so the same
+// validation surface backs both the GUI and the CLI (`bellman add|edit|rm|next`).
+
+/// `create_timer` — insert a fresh timer. Mirrors `bellman add`.
+#[tauri::command]
+pub fn create_timer(
+    state: State<'_, AppState>,
+    input: CreateTimerInput,
+) -> Result<TimerDto, String> {
+    let new = input.into_new_timer()?;
+    let mut store = state.store.lock();
+    let timer = store.create_timer(new).map_err(|e| e.to_string())?;
+    if let Some(h) = state.control_handle.lock().as_ref() {
+        h.refill();
+    }
+    Ok(TimerDto::from(timer))
+}
+
+/// `update_timer` — apply a partial patch. Mirrors `bellman edit`.
+/// The caller passes the current revision (from `listTimers`) so concurrent
+/// edits stay consistent with the store's optimistic-update contract.
+#[tauri::command]
+pub fn update_timer(
+    state: State<'_, AppState>,
+    id: String,
+    expected_revision: i64,
+    patch: TimerPatchDto,
+) -> Result<TimerDto, String> {
+    let id = Uuid::from_str(&id).map_err(|e| format!("invalid id: {e}"))?;
+    let core_patch = patch.into_core_patch()?;
+    let mut store = state.store.lock();
+    let updated = store
+        .update_timer(TimerUpdate {
+            id,
+            expected_revision,
+            patch: core_patch,
+        })
+        .map_err(|e| e.to_string())?;
+    if let Some(h) = state.control_handle.lock().as_ref() {
+        h.refill();
+    }
+    Ok(TimerDto::from(updated))
+}
+
+/// `delete_timer` — remove by id. Mirrors `bellman rm <name|id>`.
+#[tauri::command]
+pub fn delete_timer(state: State<'_, AppState>, id: String) -> Result<bool, String> {
+    let id = Uuid::from_str(&id).map_err(|e| format!("invalid id: {e}"))?;
+    let mut store = state.store.lock();
+    let n = store.delete_timer(id).map_err(|e| e.to_string())?;
+    if let Some(h) = state.control_handle.lock().as_ref() {
+        h.refill();
+    }
+    Ok(n)
+}
+
+/// `preview_fires` — return the next-N fires for a draft occurrence. Wired
+/// to the dialog's live preview pane; identical math to `bellman next`.
+#[derive(Debug, Deserialize)]
+pub struct PreviewArgs {
+    pub input: OccurrenceInput,
+    #[serde(default = "default_preview_n")]
+    pub n: usize,
+}
+
+fn default_preview_n() -> usize {
+    5
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewResponseDto {
+    pub fires: Vec<PreviewFireDto>,
+    /// DST / month-day-clamp warnings keyed off the user's current input.
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewFireDto {
+    pub utc: DateTime<Utc>,
+    pub local_date: String,
+    pub local_time: String,
+    pub offset: String,
+    pub tz_name: String,
+}
+
+impl From<PreviewFire> for PreviewFireDto {
+    fn from(p: PreviewFire) -> Self {
+        Self {
+            utc: p.utc,
+            local_date: p.local_date,
+            local_time: p.local_time,
+            offset: p.offset,
+            tz_name: p.tz_name,
+        }
+    }
+}
+
+#[tauri::command]
+pub fn preview_fires(
+    input: OccurrenceInput,
+    n: Option<usize>,
+) -> Result<PreviewResponseDto, String> {
+    let n = n.unwrap_or(5);
+    let occ = input.clone().build()?;
+    let fires = occurrence_input::preview_fires(&input, n)?;
+    let mut warnings: Vec<String> = Vec::new();
+    if let Some(w) = occurrence_input::dst_warning(occ.kind(), occ.tz_name()) {
+        warnings.push(w);
+    }
+    Ok(PreviewResponseDto {
+        fires: fires.into_iter().map(PreviewFireDto::from).collect(),
+        warnings,
+    })
+}
+
+/// Optional fields on the dialog's edit patch. Every field is optional;
+/// `None` means "leave unchanged" (matching `TimerPatch::None` semantics).
+///
+/// We accept the loose JSON shape and translate into the typed
+/// `TimerPatch` only after building an `Occurrence` (so all validation
+/// runs in one place). Only the fields the dialog exposes are
+/// serialized — adding more is a non-breaking wire change.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimerPatchDto {
+    pub name: Option<String>,
+    pub enabled: Option<bool>,
+    /// Replacement occurrence (must be a complete `OccurrenceInput`).
+    /// Sent as the full new shape rather than a delta so the GUI cannot
+    /// desync a partial edit.
+    pub occurrence: Option<OccurrenceInput>,
+    pub action: Option<Action>,
+}
+
+impl TimerPatchDto {
+    fn into_core_patch(self) -> Result<TimerPatch, String> {
+        let occurrence = match self.occurrence {
+            None => None,
+            Some(input) => {
+                let occ: Occurrence = input.build()?;
+                Some(occ)
+            }
+        };
+        Ok(TimerPatch {
+            name: self.name,
+            enabled: self.enabled,
+            occurrence,
+            action: self.action,
+            ..Default::default()
+        })
     }
 }
 
