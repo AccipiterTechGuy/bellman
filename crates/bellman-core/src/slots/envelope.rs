@@ -45,7 +45,8 @@ pub struct SlotRequest {
     /// Schema id; must start with `bellman-slot/` for major-version match.
     #[serde(default = "default_schema")]
     pub schema: String,
-    /// Reserved free-slot id (e.g. `"0007"`).
+    /// Reserved free-slot id (e.g. `"0007"`). Filled by publish from the free stub.
+    #[serde(default)]
     pub slot_id: String,
     /// Idempotency key (UUID string). `None` ⇒ empty free stub.
     #[serde(default)]

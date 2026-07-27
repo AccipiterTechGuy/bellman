@@ -150,7 +150,8 @@ enum Commands {
 
     /// Execute the timer action immediately through the core fire path.
     ///
-    /// C5/C6 actions are not merged yet: the stub action records a log line.
+    /// Runs the real wake action (launch / notify stub / write-slot) and
+    /// appends lifecycle events to the JSONL event log.
     #[command(name = "run-now")]
     RunNow {
         /// Timer name or id (UUID).
@@ -167,6 +168,22 @@ enum Commands {
     Resume {
         /// Timer name or id (UUID).
         name_or_id: String,
+    },
+
+    /// Publish a slot request JSON and process it against the local store.
+    ///
+    /// Integrators can also write free/ directly (see docs/INTEGRATION.md);
+    /// this helper is the one-shot CLI path used by agents and scripts.
+    #[command(name = "slot-submit")]
+    SlotSubmit {
+        /// Path to a complete `bellman-slot/1` request JSON file.
+        request: PathBuf,
+
+        /// Slots root directory (`free/`, `work/`, `done/`, `bad/`).
+        ///
+        /// Defaults to `$BELLMAN_SLOTS` or `~/.bellman/slots`.
+        #[arg(long, env = "BELLMAN_SLOTS", value_name = "DIR")]
+        slots: Option<PathBuf>,
     },
 }
 
@@ -235,6 +252,10 @@ fn main() -> ExitCode {
         Commands::RunNow { name_or_id } => commands::run_now(&db_path, &name_or_id),
         Commands::Pause { name_or_id } => commands::pause(&db_path, &name_or_id),
         Commands::Resume { name_or_id } => commands::resume(&db_path, &name_or_id),
+        Commands::SlotSubmit { request, slots } => {
+            let slots_dir = resolve_slots_dir(slots.as_ref());
+            commands::slot_submit(&db_path, &request, &slots_dir)
+        }
     };
 
     match result {
@@ -268,6 +289,21 @@ fn default_db_path() -> PathBuf {
     home.join(".bellman").join("timers.db")
 }
 
+fn resolve_slots_dir(cli_slots: Option<&PathBuf>) -> PathBuf {
+    if let Some(p) = cli_slots {
+        return p.clone();
+    }
+    if let Ok(p) = std::env::var("BELLMAN_SLOTS") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map_or_else(|| PathBuf::from("."), PathBuf::from);
+    home.join(".bellman").join("slots")
+}
+
 /// Whether the raw argv asked for machine-readable JSON (parse may have failed).
 fn argv_wants_json() -> bool {
     std::env::args().any(|a| a == "--json")
@@ -288,7 +324,15 @@ where
     S: AsRef<str>,
 {
     const SUBS: &[&str] = &[
-        "add", "list", "edit", "rm", "next", "run-now", "pause", "resume",
+        "add",
+        "list",
+        "edit",
+        "rm",
+        "next",
+        "run-now",
+        "pause",
+        "resume",
+        "slot-submit",
     ];
     // Options that consume the next argv token as a value (global + common).
     const VALUE_OPTS: &[&str] = &[
@@ -304,6 +348,7 @@ where
         "--cron",
         "--tag",
         "--enabled",
+        "--slots",
     ];
     // Boolean / count flags that do not take a value.
     const FLAG_OPTS: &[&str] = &["--json", "-h", "--help", "-V", "--version"];

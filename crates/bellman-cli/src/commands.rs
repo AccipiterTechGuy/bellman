@@ -1,15 +1,21 @@
-//! Command handlers: store CRUD + run-now fire path.
+//! Command handlers: store CRUD + run-now fire path + slot-submit.
 
 use crate::output;
 use crate::parse;
 use crate::resolve::{resolve_timer, ResolveError};
+use bellman_core::actions::{ActionRunner, ActionRunnerConfig};
+use bellman_core::events::{EventLog, EventLogConfig, EventRecord, EventKind};
 use bellman_core::scheduler::{FireAction, FireContext, FireKind};
+use bellman_core::slots::{
+    SlotConfig, SlotRequest, SlotService, SlotStatus, SCHEMA_V1,
+};
 use bellman_core::store::{
     NewTimer, OpenOptions, Store, StoreError, Timer, TimerPatch, TimerUpdate,
 };
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 // ── Result types ────────────────────────────────────────────────────────
@@ -93,6 +99,17 @@ pub enum CommandPayload {
         message: String,
         timer: Timer,
     },
+    SlotSubmit {
+        command: &'static str,
+        request_id: String,
+        slot_id: String,
+        status: String,
+        timer_id: Option<Uuid>,
+        next_fire: Option<DateTime<Utc>>,
+        error: Option<String>,
+        processed: usize,
+        response: Value,
+    },
 }
 
 impl CommandPayload {
@@ -142,6 +159,27 @@ impl CommandPayload {
                 "scheduled_for": scheduled_for.to_rfc3339(),
                 "message": message,
                 "timer": output::timer_json(timer),
+            }),
+            Self::SlotSubmit {
+                command,
+                request_id,
+                slot_id,
+                status,
+                timer_id,
+                next_fire,
+                error,
+                processed,
+                response,
+            } => json!({
+                "command": command,
+                "request_id": request_id,
+                "slot_id": slot_id,
+                "status": status,
+                "timer_id": timer_id,
+                "next_fire": next_fire.map(|t| t.to_rfc3339()),
+                "error": error,
+                "processed": processed,
+                "response": response,
             }),
         }
     }
@@ -199,6 +237,30 @@ impl CommandPayload {
                 "run-now name={name:?} id={id} run_id={run_id} scheduled_for={}\n{message}",
                 scheduled_for.to_rfc3339()
             ),
+            Self::SlotSubmit {
+                request_id,
+                slot_id,
+                status,
+                timer_id,
+                next_fire,
+                error,
+                processed,
+                ..
+            } => {
+                let mut s = format!(
+                    "slot-submit status={status} request_id={request_id} slot_id={slot_id} processed={processed}"
+                );
+                if let Some(id) = timer_id {
+                    s.push_str(&format!(" timer_id={id}"));
+                }
+                if let Some(nf) = next_fire {
+                    s.push_str(&format!(" next_fire={}", nf.to_rfc3339()));
+                }
+                if let Some(e) = error {
+                    s.push_str(&format!(" error={e}"));
+                }
+                s
+            }
         }
     }
 }
@@ -418,10 +480,10 @@ fn set_enabled(
     Ok(CommandPayload::Timer { command, timer })
 }
 
-/// Execute the timer action immediately via claim → [`FireAction`] → complete.
+/// Execute the timer action immediately via claim → [`ActionRunner`] → complete.
 ///
-/// Real launch/notify actions land in C6. Until then the stub
-/// [`LogLineAction`] writes one log line (also returned in JSON).
+/// Uses the real launch / notify / write-slot path with event-log recording
+/// under `<db parent>/logs/` (or `$BELLMAN_LOGS` when set).
 pub fn run_now(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> {
     const CMD: &str = "run-now";
     let mut store = open_store(db).map_err(|mut e| {
@@ -435,7 +497,11 @@ pub fn run_now(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> 
         .claim_run(timer.id, scheduled_for)
         .map_err(|e| e.with_command(CMD))?;
 
-    let mut action = LogLineAction::default();
+    let logs_dir = resolve_logs_dir(db);
+    let event_log = EventLog::open(EventLogConfig::new(&logs_dir)).map_err(|e| {
+        CliError::new(CMD, "store_error", format!("open event log: {e}"))
+    })?;
+    let mut action = ActionRunner::new(ActionRunnerConfig::default()).with_event_log(event_log);
     let ctx = FireContext {
         timer: &timer,
         scheduled_for: claim.scheduled_for,
@@ -443,15 +509,20 @@ pub fn run_now(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> 
         kind: FireKind::OnTime,
         claimed_at: claim.claimed_at,
     };
-    if let Err(e) = action.on_fire(&ctx) {
-        // Still complete so recovery does not loop (mirrors scheduler).
-        let _ = store.complete_run(claim.run_id);
-        return Err(CliError::new(CMD, "action_failed", e));
-    }
+    let action_res = action.on_fire(&ctx);
+    let message = action
+        .last_message
+        .clone()
+        .unwrap_or_else(|| "action completed".into());
 
+    // Always complete so recovery does not loop (mirrors scheduler).
     store
         .complete_run(claim.run_id)
         .map_err(|e| e.with_command(CMD))?;
+
+    if let Err(e) = action_res {
+        return Err(CliError::new(CMD, "action_failed", e));
+    }
 
     // Advance last_fired + record_run so next_fire moves past this slot —
     // same bookkeeping as the scheduler's mark_fired path.
@@ -475,31 +546,147 @@ pub fn run_now(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> 
         name: timer.name.clone(),
         run_id: claim.run_id,
         scheduled_for,
-        message: action
-            .message
-            .unwrap_or_else(|| "stub action completed".into()),
+        message,
         timer,
     })
 }
 
-/// Stub wake action used until C6 real actions land.
-#[derive(Debug, Default)]
-struct LogLineAction {
-    message: Option<String>,
+/// Publish a slot request JSON file and process it against the local store.
+///
+/// Reads `request_path` (a complete `bellman-slot/1` envelope or a minimal
+/// payload that is wrapped), publishes into `slots_dir/free/`, then runs one
+/// [`SlotService::poll`] so the timer lands without a long-running daemon.
+pub fn slot_submit(
+    db: &Path,
+    request_path: &Path,
+    slots_dir: &Path,
+) -> Result<CommandPayload, CliError> {
+    const CMD: &str = "slot-submit";
+    let mut store = open_store(db).map_err(|mut e| {
+        e.command = CMD;
+        e
+    })?;
+
+    let raw = fs::read_to_string(request_path).map_err(|e| {
+        CliError::new(
+            CMD,
+            "invalid_args",
+            format!("read {}: {e}", request_path.display()),
+        )
+    })?;
+    let mut request: SlotRequest = serde_json::from_str(&raw).map_err(|e| {
+        CliError::new(
+            CMD,
+            "invalid_args",
+            format!("parse slot request JSON: {e}"),
+        )
+    })?;
+    if request.schema.is_empty() {
+        request.schema = SCHEMA_V1.to_string();
+    }
+    if request.operation.is_none() {
+        return Err(CliError::new(
+            CMD,
+            "invalid_args",
+            "request.operation is required (add|modify|delete)",
+        ));
+    }
+    if request
+        .request_id
+        .as_ref()
+        .map(|s| s.is_empty())
+        .unwrap_or(true)
+    {
+        request.request_id = Some(Uuid::new_v4().to_string());
+    }
+    if request.ts.is_none() {
+        request.ts = Some(Utc::now());
+    }
+
+    let service = SlotService::open(slots_dir, SlotConfig::default()).map_err(|e| {
+        CliError::new(CMD, "store_error", format!("open slots: {e}"))
+    })?;
+
+    let request_id = request
+        .request_id
+        .clone()
+        .expect("request_id filled above");
+
+    service.publish(request).map_err(|e| {
+        CliError::new(CMD, "store_error", format!("publish: {e}"))
+    })?;
+
+    let processed = service.poll(&mut store).map_err(|e| {
+        CliError::new(CMD, "store_error", format!("poll slots: {e}"))
+    })?;
+
+    let rec = store
+        .get_slot_request(&request_id)
+        .map_err(|e| e.with_command(CMD))?
+        .ok_or_else(|| {
+            CliError::new(
+                CMD,
+                "store_error",
+                format!("no ledger row for request_id={request_id}"),
+            )
+        })?;
+
+    let response: bellman_core::slots::SlotResponse =
+        serde_json::from_str(&rec.response_json).map_err(|e| {
+            CliError::new(
+                CMD,
+                "store_error",
+                format!("parse response JSON: {e}"),
+            )
+        })?;
+    let response_val =
+        serde_json::to_value(&response).unwrap_or(json!(null));
+    let status = response.status.as_str().to_string();
+    let slot_id = response.slot_id.clone();
+    let timer_id = response.timer_id;
+    let next_fire = response.next_fire;
+    let error = response.error.clone();
+
+    // Log registration when a timer was created/updated successfully.
+    if response.status == SlotStatus::Ok {
+        if let Some(tid) = timer_id {
+            let logs_dir = resolve_logs_dir(db);
+            if let Ok(mut log) = EventLog::open(EventLogConfig::new(&logs_dir)) {
+                let name = store
+                    .get_timer(tid)
+                    .ok()
+                    .flatten()
+                    .map(|t| t.name)
+                    .unwrap_or_default();
+                let _ = log.emit(
+                    EventRecord::new(EventKind::Registered)
+                        .with_timer(tid, name)
+                        .with_message(format!("slot-submit {request_id}")),
+                );
+            }
+        }
+    }
+
+    Ok(CommandPayload::SlotSubmit {
+        command: CMD,
+        request_id,
+        slot_id,
+        status,
+        timer_id,
+        next_fire,
+        error,
+        processed,
+        response: response_val,
+    })
 }
 
-impl FireAction for LogLineAction {
-    fn on_fire(&mut self, ctx: &FireContext<'_>) -> Result<(), String> {
-        let msg = format!(
-            "bellman: run-now stub action timer_name={:?} timer_id={} run_id={} scheduled_for={}",
-            ctx.timer.name,
-            ctx.timer.id,
-            ctx.run_id,
-            ctx.scheduled_for.to_rfc3339()
-        );
-        // Human-visible log line on stderr so JSON stdout stays clean.
-        eprintln!("{msg}");
-        self.message = Some(msg);
-        Ok(())
+fn resolve_logs_dir(db: &Path) -> PathBuf {
+    if let Ok(p) = std::env::var("BELLMAN_LOGS") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
     }
+    db.parent()
+        .map(|p| p.join("logs"))
+        .unwrap_or_else(|| PathBuf::from("logs"))
 }
