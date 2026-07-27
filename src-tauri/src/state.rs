@@ -9,9 +9,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use bellman_core::scheduler::{
-    ControlHandle, Scheduler, SchedulerConfig, SystemClock,
-};
+use bellman_core::scheduler::{ControlHandle, Scheduler, SchedulerConfig, SystemClock};
 use bellman_core::store::Store;
 use bellman_core::{ActionRunner, ActionRunnerConfig, NotifySink, RunNowOptions};
 use chrono::{DateTime, Utc};
@@ -20,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::first_run::WizardChoice;
 
 /// State owned by the running app. Stored under a Tauri `State<>` handle.
 pub struct AppState {

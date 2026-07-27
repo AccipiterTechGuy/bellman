@@ -7,7 +7,7 @@
 use std::str::FromStr;
 
 use bellman_core::events::EventRecord;
-use bellman_core::store::{Timer, TimerId, TimerPatch, TimerUpdate};
+use bellman_core::store::{Timer, TimerPatch, TimerUpdate};
 use bellman_core::RunNowOptions;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
