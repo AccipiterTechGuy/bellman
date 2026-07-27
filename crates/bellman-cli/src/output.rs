@@ -21,18 +21,25 @@ pub fn emit_success(as_json: bool, payload: &CommandPayload) {
 /// Print an error (JSON envelope or plain text on stderr).
 pub fn emit_error(as_json: bool, command: &'static str, err: &CliError) {
     if as_json {
-        let body = json!({
-            "ok": false,
-            "command": command,
-            "error": {
-                "code": err.code,
-                "message": err.message,
-            }
-        });
-        println!("{}", pretty(&body));
+        emit_parse_error(command, err.code, &err.message);
     } else {
         eprintln!("error: {}", err.message);
     }
+}
+
+/// Emit the stable JSON error envelope on stdout (AI-primary parse failures).
+///
+/// Schema: `{ "ok": false, "command": …, "error": { "code", "message" } }`.
+pub fn emit_parse_error(command: &str, code: &str, message: &str) {
+    let body = json!({
+        "ok": false,
+        "command": command,
+        "error": {
+            "code": code,
+            "message": message,
+        }
+    });
+    println!("{}", pretty(&body));
 }
 
 fn pretty(v: &Value) -> String {

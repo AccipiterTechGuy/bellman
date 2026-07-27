@@ -9,6 +9,7 @@ mod output;
 mod parse;
 mod resolve;
 
+use clap::error::ErrorKind;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -170,7 +171,12 @@ enum Commands {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    // try_parse so --json parse failures still emit the documented JSON error
+    // envelope (Cli::parse would print human help to stderr and exit 2).
+    let cli = match Cli::try_parse() {
+        Ok(c) => c,
+        Err(err) => return handle_clap_error(err),
+    };
     let db_path = resolve_db_path(cli.db.as_ref());
     let result = match cli.command {
         Commands::Add {
@@ -261,4 +267,80 @@ fn default_db_path() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
     home.join(".bellman").join("timers.db")
+}
+
+/// Whether the raw argv asked for machine-readable JSON (parse may have failed).
+fn argv_wants_json() -> bool {
+    std::env::args().any(|a| a == "--json")
+}
+
+/// Best-effort subcommand name from argv for the error envelope.
+///
+/// Scans the whole argv for a known subcommand token so global flags that take
+/// values (`--db PATH`) do not steal the name (e.g. path segment before `add`).
+fn argv_command_name() -> &'static str {
+    const SUBS: &[&str] = &[
+        "add", "list", "edit", "rm", "next", "run-now", "pause", "resume",
+    ];
+    for arg in std::env::args().skip(1) {
+        for s in SUBS {
+            if arg == *s {
+                return s;
+            }
+        }
+    }
+    "unknown"
+}
+
+/// Map clap parse / help errors into the stable CLI contract.
+///
+/// With `--json`, argument/parse failures print
+/// `{ok:false,command,error:{code,message}}` on **stdout** and exit 1.
+/// Help/version keep clap's normal human output (even if `--json` is present).
+fn handle_clap_error(err: clap::Error) -> ExitCode {
+    match err.kind() {
+        ErrorKind::DisplayHelp
+        | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        | ErrorKind::DisplayVersion => {
+            // clap already chose stdout vs stderr; preserve that UX.
+            let _ = err.print();
+            if err.use_stderr() {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        _ if argv_wants_json() => {
+            let message = clap_error_message(&err);
+            output::emit_parse_error(argv_command_name(), "invalid_args", &message);
+            ExitCode::FAILURE
+        }
+        _ => {
+            let _ = err.print();
+            // clap defaults to exit 2; our documented contract is 1 on error.
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn clap_error_message(err: &clap::Error) -> String {
+    // Prefer a plain single-line-ish message for agents (no ANSI, no trailing
+    // "For more information, try '--help'." noise when possible).
+    let rendered = err.render().to_string();
+    let mut lines: Vec<&str> = rendered
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    // Drop the usage trailer; keep the error + missing-args body.
+    if let Some(pos) = lines.iter().position(|l| l.starts_with("Usage:")) {
+        lines.truncate(pos);
+    }
+    lines.retain(|l| !l.starts_with("For more information"));
+    let msg = lines.join(" ");
+    if msg.is_empty() {
+        err.to_string()
+    } else {
+        msg
+    }
 }

@@ -14,7 +14,11 @@ stable envelope described below.
 | `--db <PATH>` | `BELLMAN_DB` | Path to the timers SQLite database. Default: `~/.bellman/timers.db`. |
 
 Exit status: `0` on success, `1` on error. With `--json`, errors still print a
-JSON object on **stdout** (`ok: false`) so agents can parse a single stream.
+JSON object on **stdout** (`ok: false`) so agents can parse a single stream —
+including **clap parse-time failures** (missing required flags, unknown
+subcommands, bad value types). Those use `error.code = "invalid_args"` and a
+best-effort `command` field from argv. Help/version output stays human-readable
+even when `--json` is present.
 
 ## JSON envelope (stable)
 

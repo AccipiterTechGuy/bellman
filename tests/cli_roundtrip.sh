@@ -89,6 +89,40 @@ assert_cmd() {
   fi
 }
 
+echo "==> parse-time error honors --json (invalid_args envelope)"
+# Auditor REPRO: missing required --occurrence must not leave stdout empty.
+set +e
+PARSE_OUT="$("${BELLMAN[@]}" add --name broken 2>"$TMP/parse.err")"
+PARSE_RC=$?
+set -e
+if [[ "$PARSE_RC" -eq 0 ]]; then
+  die "parse error exit" "expected non-zero rc for missing --occurrence, got 0"
+fi
+if [[ -z "$PARSE_OUT" ]]; then
+  die "parse error stdout" "expected JSON error on stdout, got empty (stderr=$(cat "$TMP/parse.err"))"
+fi
+assert_ok_false() {
+  local label="$1"
+  local json="$2"
+  local ok_flag
+  ok_flag="$(jget "$json" 'obj.get("ok")')"
+  if [[ "$ok_flag" != "False" ]]; then
+    die "$label" "expected ok=false, got: $json"
+  fi
+}
+assert_ok_false "parse error ok" "$PARSE_OUT"
+assert_cmd "parse error command" "$PARSE_OUT" "add"
+CODE="$(jget "$PARSE_OUT" 'obj.get("error",{}).get("code")')"
+if [[ "$CODE" != "invalid_args" ]]; then
+  die "parse error code" "expected invalid_args, got $CODE: $PARSE_OUT"
+fi
+MSG="$(jget "$PARSE_OUT" 'obj.get("error",{}).get("message") or ""')"
+if [[ -z "$MSG" || "$MSG" == "None" ]]; then
+  die "parse error message" "expected non-empty message: $PARSE_OUT"
+fi
+# stderr must not be the only signal when --json is set (may be empty or unused)
+ok "parse-time --json error envelope (rc=$PARSE_RC code=$CODE)"
+
 echo "==> add all 7 occurrence kinds"
 
 JSON="$(run_json add --name once-job --occurrence once --time 2030-06-15T12:00:00 --tz UTC)" \
