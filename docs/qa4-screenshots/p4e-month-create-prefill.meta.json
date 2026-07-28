@@ -4,17 +4,16 @@
     960,
     640
   ],
-  "bytes": 60136,
-  "mean_luma": 31.61,
-  "stdev": 10.08,
-  "unique_colors_cap200k": 5479,
+  "bytes": 63239,
+  "mean_luma": 35.45,
+  "stdev": 10.79,
+  "unique_colors_cap200k": 2172,
   "window_id": "0x4800003",
   "wmctrl_geom": [
-    60,
-    122,
+    50,
+    112,
     960,
     640
   ],
-  "from": "Create timer on 2026-08-15",
-  "future": true
+  "from": "Create timer on 2026-08-10"
 }

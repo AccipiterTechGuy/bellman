@@ -4,16 +4,16 @@
     960,
     640
   ],
-  "bytes": 111831,
-  "mean_luma": 40.11,
-  "stdev": 11.23,
-  "unique_colors_cap200k": 3818,
+  "bytes": 99236,
+  "mean_luma": 41.7,
+  "stdev": 13.85,
+  "unique_colors_cap200k": 1738,
   "window_id": "0x4800003",
   "wmctrl_geom": [
-    60,
-    122,
+    50,
+    112,
     960,
     640
   ],
-  "expect": "counts + Add buttons"
+  "expect": "day cells show fire counts"
 }

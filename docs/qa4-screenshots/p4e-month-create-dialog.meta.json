@@ -4,16 +4,16 @@
     960,
     640
   ],
-  "bytes": 62938,
-  "mean_luma": 31.8,
-  "stdev": 10.24,
-  "unique_colors_cap200k": 5387,
+  "bytes": 65660,
+  "mean_luma": 35.46,
+  "stdev": 11.62,
+  "unique_colors_cap200k": 2152,
   "window_id": "0x4800003",
   "wmctrl_geom": [
-    60,
-    122,
+    50,
+    112,
     960,
     640
   ],
-  "name": "qa-from-month-cell-aug"
+  "name": "qa-from-month-cell"
 }

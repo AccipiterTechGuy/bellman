@@ -4,15 +4,16 @@
     960,
     640
   ],
-  "bytes": 40945,
-  "mean_luma": 29.99,
-  "stdev": 10.88,
-  "unique_colors_cap200k": 4573,
+  "bytes": 40673,
+  "mean_luma": 30.27,
+  "stdev": 15.0,
+  "unique_colors_cap200k": 1888,
   "window_id": "0x4800003",
   "wmctrl_geom": [
-    60,
-    122,
+    50,
+    112,
     960,
     640
-  ]
+  ],
+  "expect": "qa-from-month-cell row"
 }

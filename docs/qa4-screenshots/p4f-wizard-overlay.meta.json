@@ -1,0 +1,19 @@
+{
+  "file": "p4f-wizard-overlay.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 62794,
+  "mean_luma": 16.79,
+  "stdev": 17.46,
+  "unique_colors_cap200k": 1182,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "expect": "Wizard first-run overlay"
+}

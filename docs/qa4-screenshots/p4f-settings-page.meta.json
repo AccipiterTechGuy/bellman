@@ -1,0 +1,19 @@
+{
+  "file": "p4f-settings-page.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 82836,
+  "mean_luma": 31.89,
+  "stdev": 13.86,
+  "unique_colors_cap200k": 1694,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "expect": "Settings page with Wake, Autostart, Misfire defaults, Engine"
+}
