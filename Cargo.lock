@@ -305,6 +305,7 @@ dependencies = [
  "anyhow",
  "bellman-core",
  "chrono",
+ "chrono-tz",
  "log",
  "parking_lot",
  "serde",
@@ -314,6 +315,7 @@ dependencies = [
  "tauri-plugin-autostart",
  "tauri-plugin-notification",
  "tauri-plugin-single-instance",
+ "tempfile",
  "thiserror 1.0.69",
  "uuid",
 ]
