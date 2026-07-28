@@ -8,3 +8,19 @@ src-tauri/target/
 ui/node_modules/
 ui/dist/
 ui/.svelte-kit/
+
+# ---------------------------------------------------------------- local / private
+# Bellman's RUNTIME data never lives here — timers.db, logs/, slots/ and config.json
+# live in the per-OS data dir (~/.bellman on Linux). Nothing you schedule, and no
+# command a timer runs, is ever in this repo. See docs/LOCAL.md.
+#
+# These patterns are for LOCAL CODE you don't want published: private integrations,
+# machine-specific scripts, experiments. Anything matching stays on your disk.
+/local/
+*.local
+*.local.*
+.env
+.env.*
+!.env.example
+secrets.*
+!secrets.example.*

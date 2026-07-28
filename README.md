@@ -15,9 +15,17 @@ people before alarm clocks existed: Bellman's job is waking *applications*.
 - JSONL event log with weekly pruning; memory-smart core — only near-horizon
   timers stay resident (min-heap window).
 
+## Your data stays yours
+
+Bellman keeps every timer, log and slot in a per-OS data directory (`~/.bellman/` on
+Linux) — **never in this repository**. Cloning the code tells nobody what you schedule.
+See [docs/LOCAL.md](docs/LOCAL.md) for the data-dir layout and the ignored patterns for
+keeping private integrations out of git.
+
 ## Status
 
-Planning / pre-build. See [docs/PLAN.md](docs/PLAN.md) for the full
-specification and decided logic, and
+Under active construction. See [docs/PLAN.md](docs/PLAN.md) for the full
+specification and decided logic, [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md) for the
+phased build, and
 [docs/research/synthesis.md](docs/research/synthesis.md) for the four-way
 independent research synthesis behind the stack choice (Tauri v2 + Rust core).
