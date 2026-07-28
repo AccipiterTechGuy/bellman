@@ -77,11 +77,11 @@ All PNG evidence is **real WebKitGTK** via `scripts/capture_qa_p4d.py` (AT-SPI +
 | `p4d-widget-wall-time.png` | Daily/weekly wall-clock free-text + native time picker. |
 | `p4d-once-echo-24-12-2026.png` | Typed `24.12.2026` + `09:00`, echo **“Thursday 24 December 2026, 09:00 Europe/Helsinki”**, preview row 2026-12-24 09:00 local / 07:00Z. |
 | `p4d-field-error-invalid-date.png` | Inline field errors: empty name (“Name is required”), invalid `99.99.2026` (day-first calendar error), Create disabled with reason in footer. Red left-border field errors — not the DST advisory. |
-| `p4d-preview-error-invalid-cron.png` | Cron kind with `not a cron` (preview empty; client allows Create because expression is non-empty — syntax is server-side). |
+| `p4d-preview-error-invalid-cron.png` | Cron kind with `not a cron`: red field border, inline “Cron expression looks invalid (need 5 or 6 fields)”, footer reason, **Create disabled**. |
 | `p4d-dst-advisory.png` | Once at Helsinki spring-forward gap 2027-03-28 03:30: amber **ADVISORY** badge + DST gap text; schedule resolves to 04:00. Distinct shape/label from ERROR. |
-| `p4d-layout-960x640.png` | Weekly dialog at **960×640**: chips, tz list, time controls fully visible; no label cut-off. |
-| `p4d-layout-1280x800.png` | Same dialog at **1280×800** (wmctrl geom confirmed 1280×800); more vertical air, no clipping. |
-| `p4d-keyboard-create-result.png` | After keyboard-driven create: list shows `qa-p4d-keyboard`. |
+| `p4d-layout-960x640.png` | Weekly dialog at **960×640** with **unfiltered multi-entry tz list** (not single filtered entry). Chips + times fully visible. |
+| `p4d-layout-1280x800.png` | Same unfiltered state at **1280×800** (PNG size 1280×800; log records matching wmctrl geom). |
+| `p4d-keyboard-create-result.png` | After Tab-only path (name → kind → tz → wall-clock → Tab×8 → Space on Create): `qa-p4d-keyboard` in list. |
 | `p4d-all-after-create.png` | All-timers after 7-kind GUI create (plus session leftovers). |
 | `p4d-all-after-edit.png` | After edit of each of the seven. |
 | `p4d-all-after-delete.png` | After delete of the seven; session leftovers remain. |
@@ -108,7 +108,17 @@ Evidence files:
 
 ### Keyboard-only creation
 
-One pointer click opens the dialog (Name autofocused). Then: type name → Tab → Tab → type `UTC` → a11y `grabFocus` on wall-clock → type `07:30` → a11y Activate on **Create**. Result: `qa-p4d-keyboard` in store (`p4d-keyboard-create-result.png`).
+One pointer click opens the dialog (Name autofocused). Then **only key events**:
+
+1. Type name `qa-p4d-keyboard`
+2. Tab → occurrence kind (leave daily)
+3. Tab → timezone → type `UTC`
+4. Tab → wall-clock (tz suggestion buttons are `tabindex="-1"` so Tab skips them)
+5. Type `07:30`
+6. Tab until Create reports `STATE_FOCUSED` (log: “Create focused after 8 tabs from wall-clock”)
+7. Space (then Return fallback if dialog still open)
+
+Result: `qa-p4d-keyboard` in store (`p4d-keyboard-create-result.png`). No `grabFocus` / `doAction` for field reach or Create.
 
 ### 7-kind create + edit + delete
 
@@ -116,7 +126,18 @@ One pointer click opens the dialog (Name autofocused). Then: type name → Tab �
 
 `once`, `interval`, `daily`, `weekly`, `monthly`, `yearly`, `cron`
 
-through the real GUI. Log lines: `DELETE OK` ×7. Screenshots: `p4d-all-after-create.png`, `p4d-all-after-edit.png`, `p4d-all-after-delete.png`.
+through the real GUI. **`docs/qa4-evidence/p4d-capture-run.log` contains `DELETE OK` ×7** (full end-to-end log from this rework). Screenshots: `p4d-all-after-create.png`, `p4d-all-after-edit.png`, `p4d-all-after-delete.png`.
+
+## Rework #1 (supervisor NEEDS_FIX)
+
+| ID | Fix |
+|---|---|
+| F1 | `.tz-option { flex: 0 0 auto; min-height: 1.5rem }` — WebKitGTK row height 9px → 23px; names legible |
+| F2 | Layout shots recaptured with unfiltered multi-entry tz list at 960×640 and 1280×800 |
+| F3 | Full capture log rewritten end-to-end (includes keyboard + CRUD + DELETE OK ×7) |
+| F4 | `isPlausibleCron` blocks Create on garbage like `not a cron`; also gate Create on `previewError` / `previewBusy` |
+| F5 | Keyboard path uses real Tab + Space; tz buttons `tabindex="-1"` |
+| F6 | `**/__pycache__/` in `.gitignore`; removed untracked pycache |
 
 ### ERROR vs ADVISORY (non-colour-only)
 
