@@ -453,19 +453,19 @@
             <thead>
               <tr>
                 <th>#</th>
-                <th>Local time</th>
-                <th>Date</th>
+                <th>Local</th>
                 <th>UTC</th>
-                <th>Offset</th>
+                <th>Offset / tz</th>
               </tr>
             </thead>
             <tbody>
               {#each preview.fires as f, i}
                 <tr>
                   <td>{i + 1}</td>
-                  <td>{f.localTime}</td>
-                  <td>{f.localDate}</td>
-                  <td class="mono">{f.utc ? new Date(f.utc).toISOString().replace('T', ' ').replace(/\.\d+Z$/, 'Z') : ''}</td>
+                  <!-- Date+time in one cell so the preview needs only 3 value
+                       columns and full UTC/offset stay readable (P4b R1). -->
+                  <td class="mono">{f.localDate} {f.localTime}</td>
+                  <td class="mono">{f.utc ? new Date(f.utc).toISOString().replace(/\.\d+Z$/, 'Z') : ''}</td>
                   <td class="mono">{f.offset} {f.tzName}</td>
                 </tr>
               {/each}

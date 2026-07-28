@@ -956,8 +956,6 @@ def main() -> int:
     open_edit_for(app, d, "qa-weekly")
     time.sleep(1.4)
     capture(d, "p4b-dialog-preview-weekly", {"phase": "preview-vs-cli"})
-    # In-session layout-fixed proof (same dialog, full preview visible)
-    capture(d, "p4b-dialog-layout-fixed", {"phase": "in-session-layout-proof"})
     timers = list_timers_db()
     weekly = next((t for t in timers if t.get("name") == "qa-weekly"), None)
     if weekly:
@@ -1044,10 +1042,10 @@ def main() -> int:
     capture(d, "p4b-month-1280x800", {"phase": "layout-large"})
     tab(app, "Run history")
     capture(d, "p4b-history-1280x800", {"phase": "layout-large"})
-    # Dialog at larger size (the control the width fix targets)
+    # Dialog at larger size (distinct from the 960 preview-vs-CLI shot — R2).
     open_edit_for(app, d, "qa-weekly")
     time.sleep(1.2)
-    capture(d, "p4b-dialog-1280x800", {"phase": "layout-large-dialog"})
+    capture(d, "p4b-dialog-1280x800", {"phase": "layout-large-dialog-full-utc"})
     close_dialog_if_open(app)
 
     subprocess.run(
@@ -1070,7 +1068,8 @@ def main() -> int:
         json.dumps(webkit_pids(), indent=2) + "\n"
     )
 
-    # Copy live app log if the launcher teed it (F7)
+    # Copy live app logs exactly as teed (R3): 0-byte files stay 0-byte.
+    # Do NOT write commentary into the evidence files.
     for src_name, dst_name in (
         ("/tmp/qa-p4b.out", "app-stdout.log"),
         ("/tmp/qa-p4b.err", "app-stderr.log"),
@@ -1078,7 +1077,9 @@ def main() -> int:
     ):
         sp = Path(src_name)
         if sp.exists():
-            (EVIDENCE / dst_name).write_text(sp.read_text(errors="replace"))
+            (EVIDENCE / dst_name).write_bytes(sp.read_bytes())
+        else:
+            (EVIDENCE / dst_name).write_bytes(b"")
 
     summary = {
         "display": DISPLAY_NAME,

@@ -1,6 +1,6 @@
 [
   {
-    "id": "9d20f246-c6d7-4d37-9274-f06dd0cf53eb",
+    "id": "dee01dcc-4839-4cbd-a0f7-8fbdaa5538bb",
     "name": "qa-daily",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"daily\",\"at\":\"08:15:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -18,7 +18,7 @@
     "revision": 1
   },
   {
-    "id": "597041a2-d967-42de-9ff8-a966ba753b10",
+    "id": "f77fddd0-c0be-4571-a586-4a0ffff33230",
     "name": "qa-weekly",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"weekly\",\"days\":21,\"at\":\"08:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
