@@ -39,7 +39,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage", "msi", "nsis", "app", "dmg"],
+    "targets": ["deb"],
     "publisher": "Bellman",
     "category": "Utility",
     "shortDescription": "Cross-platform task scheduler — desktop cousin of cron",
