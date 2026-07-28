@@ -264,14 +264,69 @@ export function systemTimeZone() {
 }
 
 /**
- * Structural cron check (5 or 6 fields, croner charset). Not a full parser —
- * catches free-text garbage like "not a cron" before Create is enabled.
+ * Structural cron check aligned with croner 2 (the engine in
+ * `bellman-core::occurrence::schedule::next_cron`):
+ *   - 5- or 6-field expressions, OR a single @macro croner accepts
+ *   - numeric / *,/, -,?,#,L,W tokens in all positions
+ *   - month names (JAN–DEC) only in the month field
+ *   - weekday names (SUN–SAT) only in the day-of-week field
+ *   - lists/ranges of names: MON-FRI, mon,wed,fri
+ *
+ * Deliberately accepts @yearly/@annually/@monthly/@weekly/@daily/@hourly
+ * (croner 2 parses them) and rejects @reboot (croner rejects it).
+ * Rejects free-text like "not a cron" (wrong field count) without
+ * blocking legitimate named-field power-user expressions.
+ *
  * @param {string} expr
  * @returns {boolean}
  */
+const CRON_MACROS = new Set([
+  '@yearly',
+  '@annually',
+  '@monthly',
+  '@weekly',
+  '@daily',
+  '@hourly',
+]);
+const CRON_MONTHS = 'JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC';
+const CRON_DOWS = 'SUN|MON|TUE|WED|THU|FRI|SAT';
+
+function isNumericCronField(field) {
+  return /^[\d*,/\-?#LW]+$/i.test(field);
+}
+
+/** Name atom with optional range, or comma-list of those (MON-FRI / mon,wed). */
+function isCronNameField(field, names) {
+  const atom = `(?:${names})(?:-(?:${names}))?`;
+  return new RegExp(`^${atom}(?:,${atom})*$`, 'i').test(field);
+}
+
 export function isPlausibleCron(expr) {
   if (expr == null || typeof expr !== 'string') return false;
-  const parts = expr.trim().split(/\s+/).filter(Boolean);
-  if (parts.length < 5 || parts.length > 6) return false;
-  return parts.every((p) => /^[\d*,/\-?#LW]+$/i.test(p));
+  const s = expr.trim();
+  if (!s) return false;
+
+  if (s.startsWith('@')) {
+    return CRON_MACROS.has(s.toLowerCase());
+  }
+
+  const parts = s.split(/\s+/).filter(Boolean);
+  // 5-field: min hour dom month dow
+  // 6-field: sec min hour dom month dow
+  if (parts.length !== 5 && parts.length !== 6) return false;
+
+  const monthIdx = parts.length === 5 ? 3 : 4;
+  const dowIdx = parts.length === 5 ? 4 : 5;
+
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (i === monthIdx) {
+      if (!(isNumericCronField(p) || isCronNameField(p, CRON_MONTHS))) return false;
+    } else if (i === dowIdx) {
+      if (!(isNumericCronField(p) || isCronNameField(p, CRON_DOWS))) return false;
+    } else if (!isNumericCronField(p)) {
+      return false;
+    }
+  }
+  return true;
 }

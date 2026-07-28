@@ -4,10 +4,10 @@
     960,
     640
   ],
-  "bytes": 59425,
-  "mean_luma": 29.82,
-  "stdev": 11.54,
-  "unique_colors_cap200k": 5409,
+  "bytes": 60702,
+  "mean_luma": 29.91,
+  "stdev": 11.45,
+  "unique_colors_cap200k": 5511,
   "window_id": "0x4800003",
   "wmctrl_geom": [
     50,
@@ -16,5 +16,5 @@
     640
   ],
   "phase": "field-error-cron",
-  "expect": "inline cron error + Create disabled (not only toast)"
+  "expr": "not a cron"
 }

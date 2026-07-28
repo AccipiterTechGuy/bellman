@@ -294,6 +294,24 @@ def shot_errors_vs_dst(app, d):
     })
     p4b.close_dialog_if_open(app)
 
+    # Named-field cron the engine accepts must keep Create ENABLED (F7)
+    open_new(app, d)
+    select_kind_click(app, "cron", d)
+    time.sleep(0.3)
+    p4b.focus_entry(app, "Name", d)
+    p4b.clear_and_type(d, "qa-named-cron")
+    p4b.focus_entry(app, "Timezone", d)
+    p4b.clear_and_type(d, "Europe/Helsinki")
+    p4b.focus_entry(app, "Cron", d)
+    p4b.clear_and_type(d, "0 9 * * MON-FRI")
+    time.sleep(1.2)
+    p4b.capture(d, "p4d-cron-named-fields-create-enabled", {
+        "phase": "named-cron-ok",
+        "expr": "0 9 * * MON-FRI",
+        "expect": "Create enabled; no field error",
+    })
+    p4b.close_dialog_if_open(app)
+
     # Field error: empty name / incomplete once
     open_new(app, d)
     select_kind_click(app, "once", d)

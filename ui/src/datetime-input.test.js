@@ -80,15 +80,37 @@ describe('parseOnceFields', () => {
 });
 
 describe('isPlausibleCron', () => {
-  it('accepts 5- and 6-field expressions', () => {
+  it('accepts 5- and 6-field numeric expressions', () => {
     expect(isPlausibleCron('0 9 * * 1-5')).toBe(true);
     expect(isPlausibleCron('*/5 * * * *')).toBe(true);
     expect(isPlausibleCron('0 0 9 * * 1-5')).toBe(true);
+  });
+  it('accepts named weekday/month fields the engine (croner 2) accepts', () => {
+    expect(isPlausibleCron('0 9 * * MON-FRI')).toBe(true);
+    expect(isPlausibleCron('0 0 1 JAN *')).toBe(true);
+    expect(isPlausibleCron('0 9 * * mon,wed,fri')).toBe(true);
+    expect(isPlausibleCron('30 14 1 JAN-MAR *')).toBe(true);
+  });
+  it('accepts croner @macros deliberately (not @reboot)', () => {
+    expect(isPlausibleCron('@daily')).toBe(true);
+    expect(isPlausibleCron('@hourly')).toBe(true);
+    expect(isPlausibleCron('@weekly')).toBe(true);
+    expect(isPlausibleCron('@monthly')).toBe(true);
+    expect(isPlausibleCron('@yearly')).toBe(true);
+    expect(isPlausibleCron('@annually')).toBe(true);
+    expect(isPlausibleCron('@reboot')).toBe(false);
   });
   it('rejects free-text garbage (Create must stay disabled)', () => {
     expect(isPlausibleCron('not a cron')).toBe(false);
     expect(isPlausibleCron('')).toBe(false);
     expect(isPlausibleCron('only four * * *')).toBe(false);
+    expect(isPlausibleCron('a b c d e')).toBe(false);
+  });
+  it('rejects names in the wrong field position', () => {
+    // MON in minute field
+    expect(isPlausibleCron('MON 9 * * 1-5')).toBe(false);
+    // JAN in hour field
+    expect(isPlausibleCron('0 JAN 1 * *')).toBe(false);
   });
 });
 

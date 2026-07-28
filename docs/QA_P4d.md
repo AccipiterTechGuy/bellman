@@ -78,6 +78,7 @@ All PNG evidence is **real WebKitGTK** via `scripts/capture_qa_p4d.py` (AT-SPI +
 | `p4d-once-echo-24-12-2026.png` | Typed `24.12.2026` + `09:00`, echo **“Thursday 24 December 2026, 09:00 Europe/Helsinki”**, preview row 2026-12-24 09:00 local / 07:00Z. |
 | `p4d-field-error-invalid-date.png` | Inline field errors: empty name (“Name is required”), invalid `99.99.2026` (day-first calendar error), Create disabled with reason in footer. Red left-border field errors — not the DST advisory. |
 | `p4d-preview-error-invalid-cron.png` | Cron kind with `not a cron`: red field border, inline “Cron expression looks invalid (need 5 or 6 fields)”, footer reason, **Create disabled**. |
+| `p4d-cron-named-fields-create-enabled.png` | Cron `0 9 * * MON-FRI` (named weekday fields): **Create enabled**, no field error. Rework #2 / F7. |
 | `p4d-dst-advisory.png` | Once at Helsinki spring-forward gap 2027-03-28 03:30: amber **ADVISORY** badge + DST gap text; schedule resolves to 04:00. Distinct shape/label from ERROR. |
 | `p4d-layout-960x640.png` | Weekly dialog at **960×640** with **unfiltered multi-entry tz list** (not single filtered entry). Chips + times fully visible. |
 | `p4d-layout-1280x800.png` | Same unfiltered state at **1280×800** (PNG size 1280×800; log records matching wmctrl geom). |
@@ -138,6 +139,14 @@ through the real GUI. **`docs/qa4-evidence/p4d-capture-run.log` contains `DELETE
 | F4 | `isPlausibleCron` blocks Create on garbage like `not a cron`; also gate Create on `previewError` / `previewBusy` |
 | F5 | Keyboard path uses real Tab + Space; tz buttons `tabindex="-1"` |
 | F6 | `**/__pycache__/` in `.gitignore`; removed untracked pycache |
+
+## Rework #2 (supervisor NEEDS_FIX F7)
+
+| ID | Fix |
+|---|---|
+| F7 | `isPlausibleCron` now accepts month/weekday **names** in the correct positions (`MON-FRI`, `JAN`, `mon,wed,fri`) and croner `@daily`/`@hourly`/… macros; still rejects `not a cron` and `@reboot`. Live GUI: Create sensitive=False for garbage, True for `0 9 * * MON-FRI` and `0 0 1 JAN *`. |
+
+Deliberate `@macro` policy: accept the set croner 2 parses (`@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@hourly`); reject `@reboot` (croner rejects it).
 
 ### ERROR vs ADVISORY (non-colour-only)
 
