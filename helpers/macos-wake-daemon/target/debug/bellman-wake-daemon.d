@@ -1,0 +1,1 @@
+/home/sami/bellman/.train-worktrees/2026-07-28_0010/helpers/macos-wake-daemon/target/debug/bellman-wake-daemon: /home/sami/bellman/.train-worktrees/2026-07-28_0010/helpers/macos-wake-daemon/src/main.rs

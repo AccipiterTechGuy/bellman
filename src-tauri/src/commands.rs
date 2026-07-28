@@ -245,6 +245,8 @@ pub struct AppInfo {
     pub wake_enabled: bool,
     pub wake_status_line: String,
     pub max_concurrent_actions: usize,
+    pub default_misfire_policy: String,
+    pub default_misfire_grace_secs: u64,
 }
 
 #[tauri::command]
@@ -261,6 +263,8 @@ pub fn app_info(state: State<'_, AppState>) -> AppInfo {
         wake_enabled: cfg.wake_enabled,
         wake_status_line: state.wake_status_line(),
         max_concurrent_actions: cfg.max_concurrent_actions,
+        default_misfire_policy: cfg.default_misfire_policy.clone(),
+        default_misfire_grace_secs: cfg.default_misfire_grace_secs,
     }
 }
 
@@ -271,11 +275,19 @@ pub fn app_info(state: State<'_, AppState>) -> AppInfo {
 #[serde(rename_all = "camelCase")]
 pub struct WakeStatusDto {
     pub status_line: String,
+    /// Effective capability (platform AND master toggle).
     pub enabled: bool,
+    /// Master config toggle (`wake.enabled`).
     pub master_enabled: bool,
+    /// Platform probe only (ignores master) — drives greying of the master toggle.
+    pub platform_enabled: bool,
     pub platform: String,
     pub fix_hint: Option<String>,
+    /// `linux_udev` | `windows_powercfg` | `macos_enroll` | `macos_login_items`
+    pub fix_action: Option<String>,
     pub udev_snippet: Option<String>,
+    pub powercfg_command: Option<String>,
+    pub login_items_url: Option<String>,
     pub capability: serde_json::Value,
 }
 
@@ -346,6 +358,76 @@ pub struct DepItemDto {
     pub name: String,
     pub ok: bool,
     pub hint: Option<String>,
+}
+
+/// User-initiated Windows powercfg fix-it (UAC). Rail: `"ac"` | `"dc"`.
+#[tauri::command]
+pub fn wake_fix_powercfg(
+    state: State<'_, AppState>,
+    rail: Option<String>,
+) -> Result<crate::commands::WakeStatusDto, String> {
+    let rail = match rail.as_deref() {
+        Some("dc") | Some("battery") => bellman_core::PowerRail::Dc,
+        _ => bellman_core::PowerRail::Ac,
+    };
+    crate::wake_fixit::run_windows_powercfg_fix(rail)?;
+    let _ = state.wake_reprobe();
+    state.emit_wake_capability_if_changed();
+    Ok(state.wake_status_dto())
+}
+
+/// User-initiated macOS SMAppService enroll + Login Items deep-link.
+#[tauri::command]
+pub fn wake_enroll_macos(state: State<'_, AppState>) -> Result<WakeStatusDto, String> {
+    let msg = crate::wake_fixit::enroll_macos_wake_daemon()?;
+    log::info!("bellman: {msg}");
+    let _ = state.wake_reprobe();
+    state.emit_wake_capability_if_changed();
+    Ok(state.wake_status_dto())
+}
+
+/// Open macOS Login Items (helper awaiting approval).
+#[tauri::command]
+pub fn wake_open_login_items(state: State<'_, AppState>) -> Result<WakeStatusDto, String> {
+    let msg = crate::wake_fixit::open_macos_login_items()?;
+    log::info!("bellman: {msg}");
+    let _ = state.wake_reprobe();
+    Ok(state.wake_status_dto())
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MisfireDefaultsDto {
+    pub policy: String,
+    pub grace_secs: u64,
+}
+
+#[tauri::command]
+pub fn get_misfire_defaults(state: State<'_, AppState>) -> MisfireDefaultsDto {
+    let cfg = state.config.lock().clone();
+    MisfireDefaultsDto {
+        policy: cfg.default_misfire_policy,
+        grace_secs: cfg.default_misfire_grace_secs,
+    }
+}
+
+#[tauri::command]
+pub fn set_misfire_defaults(
+    state: State<'_, AppState>,
+    policy: String,
+    grace_secs: u64,
+) -> Result<MisfireDefaultsDto, String> {
+    let mut cfg = state.config.lock().clone();
+    cfg.default_misfire_policy = policy;
+    cfg.default_misfire_grace_secs = grace_secs;
+    cfg = cfg.sanitized();
+    cfg.save(&state.data_dir).map_err(|e| e.to_string())?;
+    let out = MisfireDefaultsDto {
+        policy: cfg.default_misfire_policy.clone(),
+        grace_secs: cfg.default_misfire_grace_secs,
+    };
+    *state.config.lock() = cfg;
+    Ok(out)
 }
 
 #[tauri::command]

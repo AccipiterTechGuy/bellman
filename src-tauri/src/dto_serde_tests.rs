@@ -265,6 +265,8 @@ fn app_info_is_camel_case() {
         wake_enabled: false,
         wake_status_line: "Wake from sleep: OFF — test".into(),
         max_concurrent_actions: 16,
+        default_misfire_policy: "coalesce".into(),
+        default_misfire_grace_secs: 3600,
     };
     let keys = json_keys(&info);
     for needed in [

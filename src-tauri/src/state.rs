@@ -133,10 +133,21 @@ impl AppState {
     pub fn wake_status_dto(&self) -> crate::commands::WakeStatusDto {
         let cap = self.wake.capability();
         let master = self.wake.master_enabled();
-        let fix_hint = match &cap {
-            WakeCapability::Disabled { reason } => reason.fix_hint().map(|s| s.to_string()),
-            _ => None,
+        let platform_cap = self.wake.platform_capability();
+        let platform_enabled = platform_cap.is_enabled();
+
+        let (fix_hint, fix_action) = match &platform_cap {
+            WakeCapability::Disabled { reason } => (
+                reason.fix_hint().map(|s| s.to_string()),
+                reason.fix_action().map(|s| s.to_string()),
+            ),
+            _ if !master => (
+                Some("Enable “Allow Bellman to wake this machine” in Settings.".into()),
+                None,
+            ),
+            _ => (None, None),
         };
+
         #[cfg(target_os = "linux")]
         let udev_snippet = Some(
             bellman_core::platform::wake::linux::udev_rule_snippet().to_string(),
@@ -144,14 +155,48 @@ impl AppState {
         #[cfg(not(target_os = "linux"))]
         let udev_snippet = None;
 
+        let powercfg_command = match &platform_cap {
+            WakeCapability::Disabled {
+                reason: bellman_core::DisabledReason::WakeTimersDisabledByPolicy { rail, .. },
+            } => Some(crate::wake_fixit::powercfg_command_for_rail(*rail)),
+            _ => {
+                #[cfg(target_os = "windows")]
+                {
+                    Some(crate::wake_fixit::powercfg_command_for_rail(
+                        bellman_core::PowerRail::Ac,
+                    ))
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    None
+                }
+            }
+        };
+
+        #[cfg(target_os = "macos")]
+        let login_items_url = Some(crate::wake_fixit::login_items_deeplink().to_string());
+        #[cfg(not(target_os = "macos"))]
+        let login_items_url = if matches!(
+            fix_action.as_deref(),
+            Some("macos_enroll") | Some("macos_login_items")
+        ) {
+            Some(crate::wake_fixit::login_items_deeplink().to_string())
+        } else {
+            None
+        };
+
         let platform = std::env::consts::OS.to_string();
         crate::commands::WakeStatusDto {
             status_line: cap.status_line(),
             enabled: cap.is_enabled(),
             master_enabled: master,
+            platform_enabled,
             platform,
             fix_hint,
+            fix_action,
             udev_snippet,
+            powercfg_command,
+            login_items_url,
             capability: serde_json::to_value(&cap).unwrap_or(serde_json::Value::Null),
         }
     }

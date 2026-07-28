@@ -237,18 +237,11 @@ impl MachineWake for LinuxWake {
 
     fn on_resumed(&self) {
         let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(foreign) = st.displaced_foreign.take() {
-            // Restore displaced foreign alarm after our wake window.
-            if st.sysfs_owned {
-                let _ = write_wakealarm_clear_set(Some(foreign));
-                st.sysfs_owned = false;
-            } else {
-                let _ = write_wakealarm_clear_set(Some(foreign));
-            }
-            st.armed_epoch = None;
-        } else if st.sysfs_owned {
-            // Clear our one-shot if still present.
-            let _ = write_wakealarm_clear_set(None);
+        let restore = plan_sysfs_restore(st.sysfs_owned, st.displaced_foreign);
+        if st.sysfs_owned || st.displaced_foreign.is_some() {
+            // Some(epoch) → restore foreign; None while owned → clear our one-shot.
+            let _ = write_wakealarm_clear_set(restore);
+            st.displaced_foreign = None;
             st.sysfs_owned = false;
             st.armed_epoch = None;
         }
@@ -292,35 +285,70 @@ fn disarm_timerfd(fd: &OwnedFd) -> io::Result<()> {
     Ok(())
 }
 
+/// Pure cooperative-sysfs decision (testable without /sys).
+///
+/// Returns `(write_epoch, displace_foreign, own_slot)`:
+/// - `write_epoch`: value to program (None = leave foreign alone)
+/// - `displace_foreign`: foreign alarm we must restore later
+/// - `own_slot`: whether we now own the register
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SysfsProgramPlan {
+    pub write_epoch: Option<i64>,
+    pub displace_foreign: Option<i64>,
+    pub own_slot: bool,
+}
+
+/// Synthesis §1 #3: displace only later foreign alarms; keep earlier ones.
+pub fn plan_sysfs_program(current: Option<i64>, ours: i64) -> SysfsProgramPlan {
+    match current {
+        Some(foreign) if foreign > 0 && foreign <= ours => SysfsProgramPlan {
+            write_epoch: None,
+            displace_foreign: None,
+            own_slot: false,
+        },
+        Some(foreign) if foreign > 0 && foreign > ours => SysfsProgramPlan {
+            write_epoch: Some(ours),
+            displace_foreign: Some(foreign),
+            own_slot: true,
+        },
+        _ => SysfsProgramPlan {
+            write_epoch: Some(ours),
+            displace_foreign: None,
+            own_slot: true,
+        },
+    }
+}
+
+/// On resume: restore displaced foreign alarm, or clear our one-shot.
+pub fn plan_sysfs_restore(
+    sysfs_owned: bool,
+    displaced_foreign: Option<i64>,
+) -> Option<i64> {
+    if !sysfs_owned && displaced_foreign.is_none() {
+        return None;
+    }
+    // Some(epoch) = write that epoch; Some(0) sentinel handled by caller as clear.
+    // We return the epoch to write, or None meaning clear (0).
+    match displaced_foreign {
+        Some(f) => Some(f),
+        None if sysfs_owned => None, // clear
+        None => None,
+    }
+}
+
 /// Cooperative sysfs protocol (synthesis §1 #3):
 /// read current → displace only if ours is earlier → restore displaced on resume.
 fn program_sysfs(st: &mut LinuxState, at: DateTime<Utc>) -> io::Result<()> {
     let ours = epoch_secs(at);
     let current = read_wakealarm_epoch()?;
-    match current {
-        Some(foreign) if foreign > 0 && foreign <= ours => {
-            // Foreign is earlier or equal — keep it; do not clobber.
-            st.armed_epoch = None;
-            st.sysfs_owned = false;
-            // Not an error: polite skip.
-            Ok(())
-        }
-        Some(foreign) if foreign > 0 && foreign > ours => {
-            st.displaced_foreign = Some(foreign);
-            write_wakealarm_clear_set(Some(ours))?;
-            st.armed_epoch = Some(ours);
-            st.sysfs_owned = true;
-            Ok(())
-        }
-        _ => {
-            // Empty or zero — take the slot.
-            write_wakealarm_clear_set(Some(ours))?;
-            st.armed_epoch = Some(ours);
-            st.sysfs_owned = true;
-            st.displaced_foreign = None;
-            Ok(())
-        }
+    let plan = plan_sysfs_program(current, ours);
+    if let Some(e) = plan.write_epoch {
+        write_wakealarm_clear_set(Some(e))?;
     }
+    st.armed_epoch = plan.write_epoch;
+    st.sysfs_owned = plan.own_slot;
+    st.displaced_foreign = plan.displace_foreign;
+    Ok(())
 }
 
 fn cancel_sysfs(st: &mut LinuxState) -> io::Result<()> {
@@ -566,5 +594,69 @@ mod tests {
         {
             assert!(hint.contains("CAP_WAKE_ALARM") || hint.contains("udev"));
         }
+    }
+
+    #[test]
+    fn sysfs_displaces_only_later_foreign() {
+        let plan = plan_sysfs_program(Some(2_000_000_100), 2_000_000_000);
+        assert_eq!(
+            plan,
+            SysfsProgramPlan {
+                write_epoch: Some(2_000_000_000),
+                displace_foreign: Some(2_000_000_100),
+                own_slot: true,
+            }
+        );
+    }
+
+    #[test]
+    fn sysfs_keeps_earlier_foreign() {
+        let plan = plan_sysfs_program(Some(2_000_000_000), 2_000_000_100);
+        assert_eq!(
+            plan,
+            SysfsProgramPlan {
+                write_epoch: None,
+                displace_foreign: None,
+                own_slot: false,
+            }
+        );
+    }
+
+    #[test]
+    fn sysfs_empty_slot_taken() {
+        let plan = plan_sysfs_program(None, 2_000_000_000);
+        assert!(plan.own_slot);
+        assert_eq!(plan.write_epoch, Some(2_000_000_000));
+        assert!(plan.displace_foreign.is_none());
+    }
+
+    #[test]
+    fn sysfs_restore_displaced_foreign_on_resume() {
+        // After we displaced foreign=100, resume restores 100.
+        assert_eq!(
+            plan_sysfs_restore(true, Some(2_000_000_100)),
+            Some(2_000_000_100)
+        );
+        // Owned with no foreign → clear (None means write 0).
+        assert_eq!(plan_sysfs_restore(true, None), None);
+        // Not owned → nothing to do.
+        assert_eq!(plan_sysfs_restore(false, None), None);
+    }
+
+    #[test]
+    fn no_permission_fix_hint_is_honest_about_xdg() {
+        let hint = DisabledReason::NoPermission {
+            hint: "test".into(),
+        }
+        .fix_hint()
+        .unwrap();
+        assert!(
+            hint.contains("setcap") || hint.contains("AmbientCapabilities"),
+            "hint must name actionable paths: {hint}"
+        );
+        assert!(
+            hint.to_lowercase().contains("does not") || hint.contains("not grant"),
+            "hint must not claim plain XDG autostart always works: {hint}"
+        );
     }
 }

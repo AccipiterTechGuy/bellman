@@ -21,6 +21,7 @@ pub mod notify_sink;
 pub mod occurrence_input;
 pub mod state;
 pub mod tray;
+pub mod wake_fixit;
 pub mod web;
 
 #[cfg(test)]
@@ -221,6 +222,11 @@ fn register_commands(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<taur
         commands::set_autostart_enabled,
         commands::set_max_concurrent_actions,
         commands::dependency_check,
+        commands::wake_fix_powercfg,
+        commands::wake_enroll_macos,
+        commands::wake_open_login_items,
+        commands::get_misfire_defaults,
+        commands::set_misfire_defaults,
     ])
 }
 
@@ -252,21 +258,27 @@ fn linux_power_watch_loop(app: &tauri::AppHandle) -> Result<(), String> {
     )
     .map_err(|e| format!("login1 proxy: {e}"))?;
 
-    // Delay inhibitor so we get PrepareForSleep before suspend completes.
-    let _inhibit: OwnedFd = proxy
-        .call_method(
-            "Inhibit",
-            &(
-                "sleep",
-                "Bellman",
-                "Rearm RTC wake before suspend",
-                "delay",
-            ),
-        )
-        .and_then(|m| m.body().deserialize())
-        .map_err(|e| format!("Inhibit: {e}"))?;
+    // Delay inhibitor is held only across the PrepareForSleep(true) handler
+    // (synthesis §2-Linux: ≤5 s budget, then release). Re-take after resume so
+    // the next suspend is also delayed. Holding it for the process lifetime
+    // stalls every suspend for the full InhibitDelayMaxUSec.
+    let take_inhibit = || -> Result<OwnedFd, String> {
+        proxy
+            .call_method(
+                "Inhibit",
+                &(
+                    "sleep",
+                    "Bellman",
+                    "Rearm RTC wake before suspend",
+                    "delay",
+                ),
+            )
+            .and_then(|m| m.body().deserialize())
+            .map_err(|e| format!("Inhibit: {e}"))
+    };
 
-    // Signal match: PrepareForSleep(bool)
+    let mut inhibit: Option<OwnedFd> = take_inhibit().ok();
+
     let mut msgs = proxy
         .receive_signal("PrepareForSleep")
         .map_err(|e| format!("PrepareForSleep match: {e}"))?;
@@ -282,14 +294,18 @@ fn linux_power_watch_loop(app: &tauri::AppHandle) -> Result<(), String> {
         let cands = state.wake_candidates();
         let now = chrono::Utc::now();
         if preparing {
+            // Work inside the delay budget, then release so suspend proceeds.
             state
                 .wake
                 .on_power_event(bellman_core::PowerEvent::Suspending, &cands, now);
+            drop(inhibit.take());
         } else {
             state
                 .wake
                 .on_power_event(bellman_core::PowerEvent::Resumed, &cands, now);
             state.emit_wake_capability_if_changed();
+            // Re-arm the delay inhibitor for the next suspend.
+            inhibit = take_inhibit().ok();
         }
     }
     Ok(())

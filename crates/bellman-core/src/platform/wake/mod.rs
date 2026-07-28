@@ -154,18 +154,35 @@ impl DisabledReason {
     }
 
     /// Optional fix-it hint for the UI (copy-paste / elevated button).
+    ///
+    /// Honest about real-world ambient-cap behaviour: plain XDG autostart does
+    /// **not** reliably inherit CAP_WAKE_ALARM on all desktops (verified on
+    /// Linux Mint / Cinnamon — only lightdm session-child holds CapAmb). The
+    /// actionable paths are setcap, a user unit with AmbientCapabilities, or
+    /// a udev rule for the sysfs fallback.
     pub fn fix_hint(&self) -> Option<&'static str> {
         match self {
             Self::NoPermission { .. } => Some(
-                "Launch Bellman from a desktop session (XDG autostart preserves CAP_WAKE_ALARM on systemd ≥254), or install a udev rule granting write access to /sys/class/rtc/rtc0/wakealarm.",
+                "timerfd needs CAP_WAKE_ALARM in this process. Options: (1) setcap 'cap_wake_alarm+eip' on the bellman-app binary, (2) run under a systemd user unit with AmbientCapabilities=CAP_WAKE_ALARM, or (3) install the udev rule below so the sysfs wakealarm fallback is group-writable. Plain XDG desktop autostart does not grant this capability on many desktops.",
             ),
             Self::WakeTimersDisabledByPolicy { .. } => Some(
-                "powercfg /setacvalueindex SCHEME_CURRENT SUB_SLEEP RTCWAKE 1  (and setdcvalueindex for battery)",
+                "powercfg /setacvalueindex SCHEME_CURRENT SUB_SLEEP RTCWAKE 1  (and setdcvalueindex for battery), then powercfg /setactive SCHEME_CURRENT",
             ),
             Self::HelperNotInstalled | Self::HelperAwaitingApproval => {
                 Some("Enroll the Bellman wake daemon and approve it under System Settings → Login Items.")
             }
             Self::MasterDisabled => Some("Enable “Allow Bellman to wake this machine” in Settings."),
+            _ => None,
+        }
+    }
+
+    /// Which fix-it action the Settings UI should expose (if any).
+    pub fn fix_action(&self) -> Option<&'static str> {
+        match self {
+            Self::NoPermission { .. } => Some("linux_udev"),
+            Self::WakeTimersDisabledByPolicy { .. } => Some("windows_powercfg"),
+            Self::HelperNotInstalled => Some("macos_enroll"),
+            Self::HelperAwaitingApproval => Some("macos_login_items"),
             _ => None,
         }
     }

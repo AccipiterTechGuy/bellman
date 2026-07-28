@@ -5,6 +5,8 @@ members = [
     "crates/bellman-cli",
     "src-tauri",
 ]
+# Standalone macOS helper — built with its own [workspace] under helpers/.
+exclude = ["helpers/macos-wake-daemon"]
 
 [workspace.package]
 version = "0.1.0"

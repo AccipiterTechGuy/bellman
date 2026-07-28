@@ -6,6 +6,7 @@
     wakeStatus,
     wakeReprobe,
     dependencyCheck,
+    wakeEnrollMacos,
   } from './api.js';
 
   let { onDone } = $props();
@@ -35,12 +36,18 @@
       wakeEnabled = !!withWake;
       await wizardSetChoice({ autostart, startMinimized, wakeEnabled });
       if (withWake) {
+        // Per-OS setup: macOS enrolls the helper; others just probe.
+        try {
+          if (typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || '')) {
+            try { await wakeEnrollMacos(); } catch { /* optional */ }
+          }
+        } catch { /* ignore */ }
         try {
           const w = await wakeReprobe();
           statusLine = w?.statusLine || '';
           probeNote = w?.enabled
             ? 'Wake capability is available on this machine.'
-            : 'Wake is optional — timers still fire after resume via the misfire pass.';
+            : 'Wake is optional — timers still fire after resume via the misfire pass. Use Settings fix-it if you want to enable it later.';
         } catch {
           statusLine = '';
         }

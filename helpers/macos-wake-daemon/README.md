@@ -21,13 +21,17 @@ wizard/Settings-driven via SMAppService — never installer-forced.
 Declining Login Items approval leaves the feature as
 `Disabled(HelperAwaitingApproval)` (optional enhancement, never broken).
 
-## Build (on macOS)
+## Build
+
+Standalone package (excluded from the root workspace; has its own `[workspace]`):
 
 ```sh
 cd helpers/macos-wake-daemon
+cargo test          # pure dispatch + foreign-tag refusal (any OS)
 cargo build --release
-# codesign + install into app bundle Frameworks / LaunchDaemons
+# On macOS packaging: codesign + install into app bundle / LaunchDaemons
 ```
 
-This helper is a separate binary from the Tauri app. On non-macOS hosts the
-crate is not built; unit tests for the decision tree live in `bellman-core`.
+On non-macOS, `schedule` still updates the in-process ledger so protocol tests
+pass; IOPMSchedulePowerEvent is cfg-gated to macOS. Client code-sig validation
+rejects non-Bellman peers on macOS (test mode: `BELLMAN_WAKE_REJECT_CLIENTS=1`).

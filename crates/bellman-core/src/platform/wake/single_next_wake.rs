@@ -77,6 +77,15 @@ impl SingleNextWake {
         effective_cap(&st.wake.capability(), st.master_enabled)
     }
 
+    /// Platform probe only (ignores master toggle) — for Settings greying / fix-it.
+    pub fn platform_capability(&self) -> WakeCapability {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .wake
+            .capability()
+    }
+
     pub fn re_probe(&self) -> WakeCapability {
         let mut st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let cap = st.wake.re_probe();
