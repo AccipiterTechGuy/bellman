@@ -1,0 +1,209 @@
+engine pids: {
+  "WebKitWebProcess": [
+    "699929  699902 191236 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 50"
+  ],
+  "WebKitNetworkProcess": [
+    "699920  699902 49640 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 22"
+  ],
+  "bellman": [
+    "699902       1 188836 /home/sami/bellman/.train-worktrees/2026-07-27_0012/target/release/bellman"
+  ]
+}
+  captured p4b-all-empty.png (960, 640) bytes=20139 mean=25.85 stdev=5.65 colors~2018
+
+== DST gap warning dialog ==
+    field 'Name' -> 'qa-dst-gap' (want 'qa-dst-gap')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'When' -> '2027-03-28T03:30:00' (want '2027-03-28T03:30:00')
+  captured p4b-dialog-dst-gap.png (960, 640) bytes=56827 mean=24.75 stdev=14.72 colors~5617
+
+== CREATE qa-once (once) ==
+    field 'Name' -> 'qa-once' (want 'qa-once')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'When' -> '2027-03-28T03:30:00' (want '2027-03-28T03:30:00')
+  captured p4b-dialog-once-dialog.png (960, 640) bytes=62382 mean=25.09 stdev=14.49 colors~6263
+  store names after create: ['qa-dst-gap', 'qa-once']
+
+== CREATE qa-interval (interval) ==
+    field 'Name' -> 'qa-interval' (want 'qa-interval')
+    field 'Every' -> '120' (want '120')
+  store names after create: ['qa-dst-gap', 'qa-interval', 'qa-once']
+
+== CREATE qa-daily (daily) ==
+    field 'Name' -> 'qa-daily' (want 'qa-daily')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Wall-clock' -> '08:15:00' (want '08:15:00')
+  store names after create: ['qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-once']
+
+== CREATE qa-weekly (weekly) ==
+    field 'Name' -> 'qa-weekly' (want 'qa-weekly')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Wall-clock' -> '08:00:00' (want '08:00:00')
+    field 'Weekdays' -> 'mon,wed,fri' (want 'mon,wed,fri')
+  captured p4b-dialog-weekly-dialog.png (960, 640) bytes=86431 mean=27.59 stdev=14.68 colors~6052
+  store names after create: ['qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-once', 'qa-weekly']
+
+== CREATE qa-monthly (monthly) ==
+    field 'Name' -> 'qa-monthly' (want 'qa-monthly')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Wall-clock' -> '10:00:00' (want '10:00:00')
+    field 'Day of month' -> '15' (want '15')
+  store names after create: ['qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once', 'qa-weekly']
+
+== CREATE qa-yearly (yearly) ==
+    field 'Name' -> 'qa-yearly' (want 'qa-yearly')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Wall-clock' -> '12:00:00' (want '12:00:00')
+    field 'Month (1' -> '7' (want '7')
+    field 'Day of month' -> '28' (want '28')
+  store names after create: ['qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once', 'qa-weekly', 'qa-yearly']
+
+== CREATE qa-cron (cron) ==
+    field 'Name' -> 'qa-cron' (want 'qa-cron')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Cron' -> '0 9 * * 1-5' (want '0 9 * * 1-5')
+  store names after create: ['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once', 'qa-weekly', 'qa-yearly']
+  captured p4b-all.png (960, 640) bytes=90328 mean=36.65 stdev=15.96 colors~6627
+  captured p4b-week.png (960, 640) bytes=37531 mean=31.25 stdev=8.52 colors~2837
+  captured p4b-month.png (960, 640) bytes=67078 mean=35.93 stdev=9.66 colors~3515
+  captured p4b-history.png (960, 640) bytes=21681 mean=26.24 stdev=6.29 colors~2034
+
+== PREVIEW vs CLI (qa-weekly) ==
+  Edit index 6 for 'qa-weekly' (ui order=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once', 'qa-weekly', 'qa-yearly'])
+  captured p4b-dialog-preview-weekly.png (960, 640) bytes=96523 mean=28.18 stdev=14.41 colors~6415
+cli next:
+ next fires for "qa-weekly" (cdd99edf-1a9b-469f-95fe-d7a8acdcf9dd):
+  1: 2026-07-29T05:00:00+00:00
+  2: 2026-07-31T05:00:00+00:00
+  3: 2026-08-03T05:00:00+00:00
+  4: 2026-08-05T05:00:00+00:00
+  5: 2026-08-07T05:00:00+00:00
+
+
+== EDIT qa-once ==
+  Edit index 5 for 'qa-once' (ui order=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once', 'qa-weekly', 'qa-yearly'])
+    field 'Name' -> 'qa-once-edited' (want 'qa-once-edited')
+  clicked Save
+
+== EDIT qa-interval ==
+  Edit index 3 for 'qa-interval' (ui order=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly'])
+    field 'Every' -> '180' (want '180')
+  clicked Save
+
+== EDIT qa-daily ==
+  Edit index 1 for 'qa-daily' (ui order=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly'])
+    field 'Wall-clock' -> '09:15:00' (want '09:15:00')
+  clicked Save
+
+== EDIT qa-weekly ==
+  Edit index 6 for 'qa-weekly' (ui order=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly'])
+    field 'Weekdays' -> 'tue,thu' (want 'tue,thu')
+  clicked Save
+
+== EDIT qa-monthly ==
+  Edit index 4 for 'qa-monthly' (ui order=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly'])
+    field 'Day of month' -> '20' (want '20')
+  clicked Save
+
+== EDIT qa-yearly ==
+  Edit index 7 for 'qa-yearly' (ui order=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly'])
+    field 'Month (1' -> '12' (want '12')
+  clicked Save
+
+== EDIT qa-cron ==
+  Edit index 0 for 'qa-cron' (ui order=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly'])
+    field 'Cron' -> '30 9 * * 1-5' (want '30 9 * * 1-5')
+  clicked Save
+  captured p4b-all-after-edit.png (960, 640) bytes=100798 mean=38.19 stdev=16.4 colors~6788
+deleting ['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+
+== DELETE qa-cron ==
+  Edit index 0 for 'qa-cron' (ui order=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly'])
+  confirmed delete
+  store after delete: ['qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+
+== DELETE qa-daily ==
+  Edit index 0 for 'qa-daily' (ui order=['qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly'])
+  confirmed delete
+  store after delete: ['qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+
+== DELETE qa-dst-gap ==
+  Edit index 0 for 'qa-dst-gap' (ui order=['qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly'])
+  confirmed delete
+  store after delete: ['qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+
+== DELETE qa-interval ==
+  Edit index 1 for 'qa-interval' (ui order=['qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly'])
+  confirmed delete
+  store after delete: ['qa-dst-gap', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+
+== DELETE qa-monthly ==
+  Edit index 1 for 'qa-monthly' (ui order=['qa-dst-gap', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly'])
+  confirmed delete
+  store after delete: ['qa-dst-gap', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+
+== DELETE qa-once-edited ==
+  Edit index 1 for 'qa-once-edited' (ui order=['qa-dst-gap', 'qa-once-edited', 'qa-weekly', 'qa-yearly'])
+  confirmed delete
+  store after delete: ['qa-dst-gap', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+
+== DELETE qa-weekly ==
+  Edit index 2 for 'qa-weekly' (ui order=['qa-dst-gap', 'qa-once-edited', 'qa-weekly', 'qa-yearly'])
+  confirmed delete
+  store after delete: ['qa-dst-gap', 'qa-once-edited', 'qa-yearly']
+
+== DELETE qa-yearly ==
+  Edit index 2 for 'qa-yearly' (ui order=['qa-dst-gap', 'qa-once-edited', 'qa-yearly'])
+  confirmed delete
+  store after delete: ['qa-dst-gap', 'qa-once-edited', 'qa-yearly']
+  captured p4b-all-after-delete.png (960, 640) bytes=51935 mean=30.7 stdev=12.38 colors~4958
+
+== layout at 1280x800 ==
+
+== CREATE qa-daily (daily) ==
+    field 'Name' -> 'qa-daily' (want 'qa-daily')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Wall-clock' -> '08:15:00' (want '08:15:00')
+  store names after create: ['qa-daily', 'qa-dst-gap', 'qa-once-edited', 'qa-yearly']
+  captured p4b-all-1280x800.png (1280, 800) bytes=63618 mean=29.38 stdev=10.45 colors~5193
+  captured p4b-week-1280x800.png (1280, 800) bytes=33543 mean=28.63 stdev=6.31 colors~3080
+
+DONE {
+  "display": ":0",
+  "data_dir": "/tmp/qa-p4b-session/share/io.bellman.desktop",
+  "cli_bin": "/tmp/bellman-cli-schema3",
+  "screenshots": [
+    "p4b-all-1280x800.png",
+    "p4b-all-after-delete.png",
+    "p4b-all-after-edit.png",
+    "p4b-all-empty.png",
+    "p4b-all.png",
+    "p4b-dialog-dst-gap.png",
+    "p4b-dialog-layout-fixed.png",
+    "p4b-dialog-once-dialog.png",
+    "p4b-dialog-preview-weekly.png",
+    "p4b-dialog-weekly-dialog.png",
+    "p4b-history.png",
+    "p4b-month.png",
+    "p4b-week-1280x800.png",
+    "p4b-week.png"
+  ],
+  "timers_final": [
+    "qa-daily",
+    "qa-dst-gap",
+    "qa-once-edited",
+    "qa-yearly"
+  ],
+  "webkit": {
+    "WebKitWebProcess": [
+      "699929  699902 240780 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 50"
+    ],
+    "WebKitNetworkProcess": [
+      "699920  699902 49640 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 22"
+    ],
+    "bellman": [
+      "699902       1 195676 /home/sami/bellman/.train-worktrees/2026-07-27_0012/target/release/bellman"
+    ]
+  },
+  "event_log_lines": 0
+}

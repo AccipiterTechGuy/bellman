@@ -1,0 +1,16 @@
+binary=/home/sami/bellman/.train-worktrees/2026-07-27_0012/target/release/bellman
+build_id=/home/sami/bellman/.train-worktrees/2026-07-27_0012/target/release/bellman: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=e6d6f53c5e13105de99788f2dbef2618d51c4d78, not stripped
+cli=/tmp/bellman-cli-schema3
+display=:0
+webkit_pids:
+{
+  "WebKitWebProcess": [
+    "699929  699902 240780 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 50"
+  ],
+  "WebKitNetworkProcess": [
+    "699920  699902 49640 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 22"
+  ],
+  "bellman": [
+    "699902       1 195676 /home/sami/bellman/.train-worktrees/2026-07-27_0012/target/release/bellman"
+  ]
+}

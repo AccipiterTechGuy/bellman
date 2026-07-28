@@ -1,0 +1,39 @@
+{
+  "display": ":0",
+  "data_dir": "/tmp/qa-p4b-session/share/io.bellman.desktop",
+  "cli_bin": "/tmp/bellman-cli-schema3",
+  "screenshots": [
+    "p4b-all-1280x800.png",
+    "p4b-all-after-delete.png",
+    "p4b-all-after-edit.png",
+    "p4b-all-empty.png",
+    "p4b-all.png",
+    "p4b-dialog-dst-gap.png",
+    "p4b-dialog-layout-fixed.png",
+    "p4b-dialog-once-dialog.png",
+    "p4b-dialog-preview-weekly.png",
+    "p4b-dialog-weekly-dialog.png",
+    "p4b-history.png",
+    "p4b-month.png",
+    "p4b-week-1280x800.png",
+    "p4b-week.png"
+  ],
+  "timers_final": [
+    "qa-daily",
+    "qa-dst-gap",
+    "qa-once-edited",
+    "qa-yearly"
+  ],
+  "webkit": {
+    "WebKitWebProcess": [
+      "699929  699902 240780 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 50"
+    ],
+    "WebKitNetworkProcess": [
+      "699920  699902 49640 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 22"
+    ],
+    "bellman": [
+      "699902       1 195676 /home/sami/bellman/.train-worktrees/2026-07-27_0012/target/release/bellman"
+    ]
+  },
+  "event_log_lines": 0
+}
