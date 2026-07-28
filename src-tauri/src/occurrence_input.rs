@@ -414,6 +414,15 @@ fn describe_local_diff(
     resolved: LocalResult<DateTime<Tz>>,
     kind_label: &str,
 ) -> Option<String> {
+    // `kind_label` is singular for a one-shot ("this once-at time") and plural for every
+    // repeating kind ("daily times", "weekly times", …). The warning sentences below agree
+    // with it, so a once timer reads "…time does not exist" instead of "…time do not exist".
+    let plural = kind_label.ends_with('s');
+    let (verb_fall, verb_exist) = if plural {
+        ("fall", "do not exist")
+    } else {
+        ("falls", "does not exist")
+    };
     match resolved {
         LocalResult::Single(dt) => {
             // The instant resolved cleanly. Compare its local clock-face to
@@ -425,7 +434,7 @@ fn describe_local_diff(
             if resolved_local.time() != requested_clock {
                 // First-valid-after-gap: clock face moved forward.
                 Some(format!(
-                    "{kind_label} in this timezone fall in a DST gap; the next valid \
+                    "{kind_label} in this timezone {verb_fall} in a DST gap; the next valid \
                      local time is {} (your requested time {} skipped to the next real instant).",
                     resolved_local.format("%H:%M:%S"),
                     naive.format("%H:%M:%S"),
@@ -436,12 +445,12 @@ fn describe_local_diff(
         }
         LocalResult::Ambiguous(_first, _second) => {
             Some(format!(
-                "{kind_label} in this timezone fall in a DST fold; bellman schedules \
+                "{kind_label} in this timezone {verb_fall} in a DST fold; bellman schedules \
                  the earliest of the two instants (the DST policy can be changed in the advanced section)."
             ))
         }
         LocalResult::None => Some(format!(
-            "{kind_label} in this timezone do not exist; the schedule will resolve to the \
+            "{kind_label} in this timezone {verb_exist}; the schedule will resolve to the \
              first valid instant after the requested time."
         )),
     }
@@ -754,7 +763,7 @@ mod tests {
         );
         let msg = w.unwrap();
         assert!(
-            msg.contains("gap") || msg.contains("DST") || msg.contains("do not exist") || msg.contains("skipped"),
+            msg.contains("gap") || msg.contains("DST") || msg.contains("not exist") || msg.contains("skipped"),
             "warning should mention DST / gap / non-existence / skipped; got: {msg}"
         );
         // Cross-check that the schedule actually resolves to a valid
