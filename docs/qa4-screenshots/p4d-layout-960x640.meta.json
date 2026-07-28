@@ -1,0 +1,22 @@
+{
+  "file": "p4d-layout-960x640.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 76911,
+  "mean_luma": 31.37,
+  "stdev": 12.83,
+  "unique_colors_cap200k": 5143,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "viewport": [
+    960,
+    640
+  ]
+}

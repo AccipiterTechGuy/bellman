@@ -1,0 +1,19 @@
+{
+  "file": "p4d-all-after-create.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 111042,
+  "mean_luma": 39.33,
+  "stdev": 16.91,
+  "unique_colors_cap200k": 7033,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "phase": "after-7-create"
+}

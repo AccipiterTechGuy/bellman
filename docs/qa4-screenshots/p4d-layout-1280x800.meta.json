@@ -1,0 +1,22 @@
+{
+  "file": "p4d-layout-1280x800.png",
+  "size": [
+    1280,
+    800
+  ],
+  "bytes": 93507,
+  "mean_luma": 25.33,
+  "stdev": 13.15,
+  "unique_colors_cap200k": 6566,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    50,
+    112,
+    1280,
+    800
+  ],
+  "viewport": [
+    1280,
+    800
+  ]
+}

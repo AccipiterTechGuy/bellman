@@ -1,80 +1,14 @@
 // Exhaustive vitest coverage of the `TimerDialog.buildInput` wire contract.
-// Re-implements the function inline so the .svelte runtime dependency
-// (which vitest cannot import directly) is avoided — and so future
-// refactors of the dialog form don't accidentally regress the
-// auditor-flagged fields (interval anchor, once.onceAt, Launch.workdir,
-// system-local tz, the `isEdit` guard).
+// Imports the shared builder so refactors of the dialog form cannot
+// accidentally regress the auditor-flagged fields (interval anchor,
+// once.onceAt, Launch.workdir, system-local tz, the `isEdit` guard).
 //
 // The expected fields mirror `src-tauri/src/web.rs::WebOccurrenceDto` and
 // `CreateTimerInput` exactly; a drift here surfaces a drift there.
 
 import { describe, expect, it } from 'vitest';
-
-function buildInput(form, isEdit) {
-  const occ = form.occurrence;
-  const tzName =
-    occ.tz && occ.tz.trim().length > 0
-      ? occ.tz.trim()
-      : (() => {
-          try {
-            return Intl.DateTimeFormat().resolvedOptions().timeZone;
-          } catch {
-            return 'UTC';
-          }
-        })();
-  const days = occ.kind === 'weekly' ? weekdaysCsvToMap(occ.days) : null;
-  const isDailyEtc =
-    occ.kind === 'daily' ||
-    occ.kind === 'weekly' ||
-    occ.kind === 'monthly' ||
-    occ.kind === 'yearly';
-  const o = {
-    occ: occ.kind,
-    tz: tzName,
-    days,
-    at: isDailyEtc ? occ.time || '09:00:00' : null,
-    onceAt: occ.kind === 'once' ? occ.onceAt || null : null,
-    everySecs: occ.kind === 'interval' ? occ.everySecs ?? 60 : null,
-    anchor:
-      occ.kind === 'interval' && isEdit && occ.intervalAnchor
-        ? occ.intervalAnchor
-        : null,
-    day: occ.kind === 'monthly' || occ.kind === 'yearly' ? occ.day ?? 1 : null,
-    month: occ.kind === 'yearly' ? occ.month ?? 1 : null,
-    expr: occ.kind === 'cron' ? occ.cronExpr || null : null,
-  };
-  let action = { type: 'none' };
-  if (form.actionType === 'launch') {
-    action = {
-      type: 'launch',
-      command: form.launchCommand,
-      args: form.launchArgs ? form.launchArgs.split(/\s+/).filter(Boolean) : [],
-      workdir: form.launchWorkdir || null,
-    };
-  } else if (form.actionType === 'notify') {
-    action = {
-      type: 'notify',
-      title: form.notifyTitle,
-      body: form.notifyBody,
-    };
-  }
-  return {
-    name: form.name.trim(),
-    enabled: form.enabled,
-    occurrence: o,
-    action,
-  };
-}
-
-function weekdaysCsvToMap(csv) {
-  const map = { mon: false, tue: false, wed: false, thu: false, fri: false, sat: false, sun: false };
-  if (typeof csv !== 'string') return map;
-  for (const tok of csv.split(/[,\s]+/)) {
-    const k = tok.trim().toLowerCase();
-    if (k in map) map[k] = true;
-  }
-  return map;
-}
+import { buildInput } from './dialog-build.js';
+import { parseOnceFields } from './datetime-input.js';
 
 const emptyForm = {
   name: 'tick',
@@ -84,6 +18,8 @@ const emptyForm = {
     tz: '',
     time: '09:00:00',
     onceAt: '',
+    onceDate: '',
+    onceTime: '',
     everySecs: 60,
     intervalAnchor: null,
     days: 'mon,wed,fri',
@@ -131,10 +67,27 @@ describe('TimerDialog buildInput — flat WebOccurrenceDto wire contract', () =>
     expect(out.occurrence.onceAt).toBe('2099-12-31T23:59:00');
     expect(out.occurrence.at).toBeNull();
     expect(out.occurrence.everySecs).toBeNull();
-    // The auditor specifically called: edit on a "once" timer must not
-    // blank onceAt. (On re-open-and-save, the field is read back from
-    // occ.onceAt by loadFromTimer; buildInput must re-emit it.)
     expect(out.occurrence.onceAt).not.toBeNull();
+  });
+
+  it('once: human date 24.12.2026 via overrides becomes wire ISO', () => {
+    const parsed = parseOnceFields('24.12.2026', '09:00', 'Europe/Helsinki');
+    expect(parsed.ok).toBe(true);
+    const out = buildInput(
+      {
+        ...emptyForm,
+        occurrence: {
+          ...emptyForm.occurrence,
+          kind: 'once',
+          onceDate: '24.12.2026',
+          onceTime: '09:00',
+          tz: 'Europe/Helsinki',
+        },
+      },
+      false,
+      { onceAt: parsed.onceAt },
+    );
+    expect(out.occurrence.onceAt).toBe('2026-12-24T09:00:00');
   });
 
   it('weekly: CSV converts to a 7-key {mon..sun} map, days preserved', () => {
@@ -156,12 +109,6 @@ describe('TimerDialog buildInput — flat WebOccurrenceDto wire contract', () =>
   });
 
   it('interval edit+save: anchor preserved verbatim (rework #3 + #4)', () => {
-    // The auditor-caught bug: the previous buildInput checked
-    // `form.isEdit` (always false → anchor dropped to null → Rust
-    // defaulted to now()). After the fix it checks the top-level
-    // `isEdit` derived variable. This test exercises both branches:
-    //   isEdit=false (new timer) → anchor null
-    //   isEdit=true (Edit+Save)  → anchor echoed verbatim
     const editForm = {
       ...emptyForm,
       occurrence: {
@@ -276,5 +223,14 @@ describe('TimerDialog buildInput — flat WebOccurrenceDto wire contract', () =>
     const out = buildInput({ ...emptyForm, name: '  trim-me  ', enabled: false }, false);
     expect(out.name).toBe('trim-me');
     expect(out.enabled).toBe(false);
+  });
+
+  it('daily time override pads HH:MM via overrides', () => {
+    const out = buildInput(
+      { ...emptyForm, occurrence: { ...emptyForm.occurrence, time: '09:00' } },
+      false,
+      { time: '09:00:00' },
+    );
+    expect(out.occurrence.at).toBe('09:00:00');
   });
 });

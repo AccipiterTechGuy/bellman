@@ -1,0 +1,20 @@
+{
+  "file": "p4d-field-error-invalid-date.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 51726,
+  "mean_luma": 29.62,
+  "stdev": 11.11,
+  "unique_colors_cap200k": 5291,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    60,
+    122,
+    960,
+    640
+  ],
+  "phase": "field-error",
+  "expect": "inline field error + Create disabled"
+}

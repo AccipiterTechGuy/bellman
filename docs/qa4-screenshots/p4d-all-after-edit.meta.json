@@ -1,0 +1,19 @@
+{
+  "file": "p4d-all-after-edit.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 120551,
+  "mean_luma": 40.58,
+  "stdev": 16.94,
+  "unique_colors_cap200k": 7201,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "phase": "after-7-edit"
+}

@@ -1,0 +1,44 @@
+engine pids: {
+  "WebKitWebProcess": [
+    "1108128 1108101 206228 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 49"
+  ],
+  "WebKitNetworkProcess": [
+    "1108119 1108101 49380 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 23"
+  ],
+  "bellman": [
+    "1108101       1 190008 /home/sami/bellman/.train-worktrees/2026-07-28_0008/target/release/bellman-app"
+  ]
+}
+userAgent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15
+native date/time probe exists: True /home/sami/bellman/.train-worktrees/2026-07-28_0008/docs/qa4-screenshots/p4d-webkit-native-date-time-probe.png
+
+== WIDGET SHOTS ==
+  select_kind_click 'once'
+  captured p4d-widget-date-time.png (960, 640) bytes=53400 mean=29.55 stdev=11.59 colors~4933
+  select_kind_click 'daily'
+  captured p4d-widget-timezone.png (960, 640) bytes=50981 mean=29.6 stdev=11.21 colors~4556
+  select_kind_click 'weekly'
+  captured p4d-widget-weekday-chips.png (960, 640) bytes=53116 mean=29.73 stdev=11.71 colors~5060
+  captured p4d-widget-wall-time.png (960, 640) bytes=53480 mean=29.63 stdev=11.41 colors~5092
+
+== CREATE once with 24.12.2026 ==
+  select_kind_click 'once'
+  captured p4d-once-echo-24-12-2026.png (960, 640) bytes=62655 mean=30.24 stdev=12.25 colors~5180
+  store: ['qa-p4d-once-eu', 'system.prune']
+  cli list head: {"command":"list","count":0,"ok":true,"timers":[]}
+
+
+== ERROR vs DST ADVISORY ==
+  select_kind_click 'cron'
+  captured p4d-preview-error-invalid-cron.png (960, 640) bytes=53611 mean=29.49 stdev=11.18 colors~4164
+  select_kind_click 'once'
+  captured p4d-field-error-invalid-date.png (960, 640) bytes=51726 mean=29.62 stdev=11.11 colors~5291
+  select_kind_click 'once'
+  captured p4d-dst-advisory.png (960, 640) bytes=71484 mean=31.02 stdev=12.39 colors~5831
+
+== LAYOUT 960 + 1280 ==
+  select_kind_click 'weekly'
+  captured p4d-layout-960x640.png (960, 640) bytes=76875 mean=31.36 stdev=12.83 colors~5149
+  captured p4d-layout-1280x800.png (960, 640) bytes=76859 mean=31.32 stdev=12.84 colors~5149
+
+== KEYBOARD-ONLY CREATE ==

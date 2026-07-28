@@ -1,0 +1,11 @@
+{
+  "WebKitWebProcess": [
+    "1108128 1108101 206228 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 49"
+  ],
+  "WebKitNetworkProcess": [
+    "1108119 1108101 49380 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 23"
+  ],
+  "bellman": [
+    "1108101       1 190008 /home/sami/bellman/.train-worktrees/2026-07-28_0008/target/release/bellman-app"
+  ]
+}

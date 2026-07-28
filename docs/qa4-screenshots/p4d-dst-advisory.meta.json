@@ -1,0 +1,20 @@
+{
+  "file": "p4d-dst-advisory.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 71484,
+  "mean_luma": 31.02,
+  "stdev": 12.39,
+  "unique_colors_cap200k": 5831,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    60,
+    122,
+    960,
+    640
+  ],
+  "phase": "dst-advisory",
+  "expect": "Advisory banner (amber), not Error"
+}

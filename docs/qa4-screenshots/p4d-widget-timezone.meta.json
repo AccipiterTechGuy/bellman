@@ -1,0 +1,21 @@
+{
+  "file": "p4d-widget-timezone.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 50981,
+  "mean_luma": 29.6,
+  "stdev": 11.21,
+  "unique_colors_cap200k": 4556,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    60,
+    122,
+    960,
+    640
+  ],
+  "widgets": [
+    "timezone-list"
+  ]
+}
