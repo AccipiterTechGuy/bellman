@@ -34,9 +34,11 @@ After install of the deb:
 | `/usr/share/icons/hicolor/*/apps/…` | Freedesktop icons |
 
 Dual binary names resolve the pre-existing cargo clash (both the Tauri package
-and `bellman-cli` wanted the binary name `bellman`). Packaging renames the GUI
-via `mainBinaryName: "bellman-app"` and stages the CLI as a Tauri
-`externalBin` sidecar (`scripts/stage_cli_sidecar.sh`).
+and `bellman-cli` wanted the binary name `bellman`). The GUI binary is
+`bellman-app` because `src-tauri/Cargo.toml` renames the package to
+`bellman-app` and declares `[[bin]] name = "bellman-app"` (there is no
+`mainBinaryName` key in `tauri.conf.json`). The CLI is staged as a Tauri
+`externalBin` sidecar named `bellman` (`scripts/stage_cli_sidecar.sh`).
 
 ## Fresh-install smoke
 
@@ -100,7 +102,7 @@ Three workflow files under `.github/workflows/`:
 
 | File | Runner | What it does |
 |---|---|---|
-| `linux.yml` | `ubuntu-24.04` | `fmt` + `clippy` + full `cargo test --workspace` + UI vitest + `cargo tauri build --bundles deb,appimage` + artefact upload |
+| `linux.yml` | `ubuntu-24.04` | stage CLI sidecar + `clippy -D warnings` + full `cargo test --workspace` + UI vitest + `cargo tauri build --bundles deb,appimage` + artefact upload (no `cargo fmt` step — pre-existing sources are not rustfmt-clean; packaging does not reformat C1–C9) |
 | `windows.yml` | `windows-latest` | workspace tests + `cargo tauri build --bundles nsis,msi --no-sign` (WebView2 evergreen bootstrapper from conf) |
 | `macos.yml` | `macos-latest` | workspace tests + `cargo tauri build --bundles app,dmg --no-sign`; signing/notarization **stubbed** with named secrets |
 
@@ -142,7 +144,7 @@ change that touches release profile flags.
 | Deb install → Bellman in launcher | desktop file under `/usr/share/applications/` + smoke script |
 | `bellman` CLI on PATH | sidecar binary; `command -v bellman` after install |
 | Three workflow files lint | `actionlint .github/workflows/*.yml` |
-| Linux workflow end-to-end on GitHub | push/PR runs `linux.yml` (fmt, clippy, tests, package) |
+| Linux workflow end-to-end on GitHub | push/PR runs `linux.yml` (clippy, tests, package) |
 | `docs/QA_P6.md` complete | this file |
 | Autostart QA documented | §Fresh-install smoke + manual VM table |
 | Idle footprint recorded | `docs/PERF.md` |

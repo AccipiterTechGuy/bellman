@@ -74,46 +74,49 @@ First fire ~`2026-07-28T13:00:30Z`, last fire ~`2026-07-28T13:10:29Z` — a full
 ## Resident shell (GUI closed) — packaging measurement (P6)
 
 P6 ships the tray binary as **`bellman-app`** (CLI sidecar is `bellman`).
-Measure after a release package build:
+BUILD_PLAN gate: *GUI closed ⇒ webview destroyed, measured RSS of the resident
+process recorded.* Method below matches that gate.
 
 ```bash
-# Build (or install the deb):
-cargo tauri build --bundles deb --ci --no-sign
-# Run under an isolated data dir so we don't touch the user store:
-env XDG_DATA_HOME=$PWD/target/perf-tray/data \
-    XDG_CONFIG_HOME=$PWD/target/perf-tray/config \
-    HOME=$PWD/target/perf-tray/home \
-    target/release/bellman-app &
+# After a release build:
+cargo tauri build --bundles deb --ci --no-sign   # or reuse target/release/bellman-app
+rm -rf target/perf-tray-closed && mkdir -p target/perf-tray-closed/{data,config,home}
+env XDG_DATA_HOME=$PWD/target/perf-tray-closed/data \
+    XDG_CONFIG_HOME=$PWD/target/perf-tray-closed/config \
+    HOME=$PWD/target/perf-tray-closed/home \
+    ./target/release/bellman-app &
+pid=$!
 sleep 8
-# Close the main window from the UI (or send a hide via the tray) so only
-# the tray + engine remain; then:
-pid=$(pgrep -n -f 'bellman-app' || true)
-if [[ -n "$pid" ]]; then
-  grep VmRSS /proc/$pid/status
-  # Optional: sample for 60 s
-  for i in $(seq 1 6); do sleep 10; awk '/VmRSS/{print}' /proc/$pid/status; done
-fi
-kill "$pid" 2>/dev/null || true
+grep VmRSS /proc/$pid/status          # window-open baseline
+wmctrl -c Bellman                     # destroy main window (title match)
+# confirm gone:  wmctrl -l | grep -i bellman  → empty
+for i in 1 2 3 4 5; do sleep 5; awk '/VmRSS/{print}' /proc/$pid/status; done
+kill $pid
 ```
 
 | Metric | Value | Notes |
 |---|---|---|
 | Engine RSS (P5 gate, above) | **7092 KiB median** | engine-only harness |
-| Tray shell RSS (window open, P6) | **~192 MiB (192100–192536 KiB)** | `target/release/bellman-app`, DISPLAY=:0, 2026-07-28 |
-| Tray shell RSS (GUI closed) | **not isolated this run** | window was left open for the sample; re-measure after hide in C11 |
+| Tray shell RSS (window open) | **187024 KiB (~183 MiB)** | `target/release/bellman-app`, DISPLAY=:0, isolated HOME/XDG |
+| Tray shell RSS (**GUI closed**, BUILD_PLAN gate) | **184544–184600 KiB (~180 MiB)** | after `wmctrl -c Bellman`; five samples over ~25 s |
 
-### P6 headed sample (2026-07-28)
+### P6 headed sample (2026-07-28) — GUI closed
 
 ```
-pid=983737  binary=target/release/bellman-app
-VmRSS samples (≈2 s apart, window open): 192536 → 192536 → 192100 KiB
-stderr showed scheduler boot: system.prune ready, year_recalibrate checked=1
+binary = target/release/bellman-app
+env    = isolated HOME + XDG_* under target/perf-tray-closed/, DISPLAY=:0
+close  = wmctrl -c Bellman  (window no longer listed by wmctrl -l)
+
+window open:            VmRSS 187024 kB
+after window destroyed: 184596 / 184596 / 184596 / 184600 / 184544 kB
+delta open → closed:    ~2.4 MiB only
 ```
 
-WebKitGTK + tray dominates RSS versus the ~7 MiB engine-only harness — expected.
-The **engine RSS row remains the numeric idle gate** for the core scheduler;
-tray RSS is informational packaging evidence for C11 to refine (hide window,
-sample over 10 min).
+**Finding:** closing the main window (hide-on-close / destroy path) frees only
+about **2.4 MiB**. WebKitGTK stays resident in the process; the tray + engine
+idle footprint is essentially the full shell RSS, not the ~7 MiB engine-only
+number. The engine row above remains the core-scheduler gate; the GUI-closed
+row is the BUILD_PLAN **resident shell** gate for packaging.
 
 ## Notes
 
