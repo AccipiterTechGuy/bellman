@@ -22,12 +22,21 @@
   let previewToken = 0;
 
   function emptyForm() {
+    // Plan v1: tz defaults to system local (matches the CLI default).
+    // We resolve Intl.DateTimeFormat once per form rather than on every
+    // keystroke so the user can freely edit without it bouncing.
+    let sysTz = '';
+    try {
+      sysTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {
+      sysTz = '';
+    }
     return {
       name: '',
       enabled: true,
       occurrence: {
         kind: 'daily',
-        tz: '',
+        tz: sysTz,
         time: '09:00:00',
         onceAt: '',
         everySecs: 300,
@@ -128,9 +137,26 @@
   // Mirrors `src-tauri/src/web.rs::WebOccurrenceDto` field-by-field.
   function buildInput() {
     const occ = form.occurrence;
+    // Plan v1: tz is system-local. The dialog form starts with an empty
+    // string (placeholder placeholder). To match the CLI default
+    // (resolves to system local at persistence time) and to keep the
+    // IPC payload concrete, fill in Intl.DateTimeFormat().resolvedOptions
+    // .timeZone when blank. On this box that is "Europe/Helsinki"; on
+    // the auditor's machine "America/Los_Angeles". The user can still
+    // override by typing an IANA name explicitly.
+    const tzName =
+      occ.tz && occ.tz.trim().length > 0
+        ? occ.tz.trim()
+        : (() => {
+            try {
+              return Intl.DateTimeFormat().resolvedOptions().timeZone;
+            } catch {
+              return 'UTC';
+            }
+          })();
     const o = {
       occ: occ.kind,
-      tz: occ.tz || 'UTC',
+      tz: tzName,
       // Encode weekly days as a `{mon:true, wed:false,...}` record so
       // the chrono core can round-trip. Other kinds null.
       days: occ.kind === 'weekly' ? weekdaysCsvToMap(occ.days) : null,
@@ -146,8 +172,12 @@
       everySecs: occ.kind === 'interval' ? occ.everySecs ?? 60 : null,
       // Preserve a stable-anchor interval verbatim. Null for new timers
       // (Rust falls back to `Utc::now()` inside `Interval` build).
+      // `isEdit` is a top-level $derived(!!timer) — `form` has no such
+      // property, so referencing `form.isEdit` here would always be
+      // falsy and silently null out every Save, regressing the
+      // stable anchor the auditor flagged in rework #3.
       anchor:
-        occ.kind === 'interval' && form.isEdit && occ.intervalAnchor
+        occ.kind === 'interval' && isEdit && occ.intervalAnchor
           ? occ.intervalAnchor
           : null,
       day: occ.kind === 'monthly' || occ.kind === 'yearly' ? occ.day ?? 1 : null,
