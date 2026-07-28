@@ -1,0 +1,9 @@
+{
+  "name": "bellman-workspace",
+  "private": true,
+  "scripts": {
+    "test": "npm test --prefix ui",
+    "build": "npm run build --prefix ui",
+    "dev": "npm run dev --prefix ui"
+  }
+}
