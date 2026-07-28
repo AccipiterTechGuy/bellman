@@ -11,7 +11,10 @@ use std::time::Duration;
 
 use bellman_core::scheduler::{ControlHandle, Scheduler, SchedulerConfig, SystemClock};
 use bellman_core::store::Store;
-use bellman_core::{ActionRunner, ActionRunnerConfig, NotifySink, RunNowOptions};
+use bellman_core::{
+    ActionRunner, ActionRunnerConfig, NotifySink, RunNowOptions, SingleNextWake, WakeCandidate,
+    WakeCapability,
+};
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -41,6 +44,8 @@ pub struct AppState {
     /// runtime is the default Tauri runtime. `CheckMenuItem: Clone`,
     /// so the inner `Mutex` is not needed.
     pub tray_pause_check: parking_lot::Mutex<Option<tauri::menu::CheckMenuItem<tauri::Wry>>>,
+    /// Single-next-wake bridge (RTC arm / capability probe).
+    pub wake: SingleNextWake,
 }
 
 impl AppState {
@@ -51,6 +56,7 @@ impl AppState {
         pause_all: bool,
         notify_sink: Arc<dyn NotifySink>,
     ) -> Self {
+        let wake = SingleNextWake::with_platform_default(config.wake_enabled);
         Self {
             store: Arc::new(Mutex::new(store)),
             data_dir,
@@ -59,6 +65,94 @@ impl AppState {
             notify_sink,
             control_handle: Mutex::new(None),
             tray_pause_check: parking_lot::Mutex::new(None),
+            wake,
+        }
+    }
+
+    pub fn set_wake_master(&self, enabled: bool) {
+        self.wake.set_master_enabled(enabled);
+    }
+
+    pub fn wake_status_line(&self) -> String {
+        self.wake.status_line()
+    }
+
+    pub fn wake_reprobe(&self) -> WakeCapability {
+        self.wake.re_probe()
+    }
+
+    /// Collect wake candidates from the store and rearm the single next wake.
+    pub fn rearm_wake(&self) {
+        let cands = self.wake_candidates();
+        let now = Utc::now();
+        if let Err(e) = self.wake.rearm_from_candidates(&cands, now) {
+            log::warn!("bellman: wake rearm failed: {e}");
+        }
+    }
+
+    pub fn wake_candidates(&self) -> Vec<WakeCandidate> {
+        let store = self.store.lock();
+        match store.list_timers() {
+            Ok(timers) => timers
+                .into_iter()
+                .map(|t| WakeCandidate {
+                    enabled: t.enabled,
+                    wake_machine: t.wake_machine,
+                    next_fire_utc: t.next_fire_utc,
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Emit a `wake_capability` JSONL event when the status line changes.
+    pub fn emit_wake_capability_if_changed(&self) {
+        if let Some((line, _cap)) = self.wake.take_status_transition() {
+            self.emit_wake_capability_line(&line);
+        }
+    }
+
+    pub fn emit_wake_capability_startup(&self) {
+        let line = self.wake.status_line();
+        self.emit_wake_capability_line(&line);
+        self.wake.mark_status_emitted();
+    }
+
+    fn emit_wake_capability_line(&self, line: &str) {
+        if let Ok(mut log) = bellman_core::EventLog::open_under(&self.data_dir) {
+            let _ = log.emit(
+                bellman_core::events::EventRecord::new(
+                    bellman_core::events::EventKind::WakeCapability,
+                )
+                .with_message(line),
+            );
+        }
+        log::info!("bellman: {line}");
+    }
+
+    pub fn wake_status_dto(&self) -> crate::commands::WakeStatusDto {
+        let cap = self.wake.capability();
+        let master = self.wake.master_enabled();
+        let fix_hint = match &cap {
+            WakeCapability::Disabled { reason } => reason.fix_hint().map(|s| s.to_string()),
+            _ => None,
+        };
+        #[cfg(target_os = "linux")]
+        let udev_snippet = Some(
+            bellman_core::platform::wake::linux::udev_rule_snippet().to_string(),
+        );
+        #[cfg(not(target_os = "linux"))]
+        let udev_snippet = None;
+
+        let platform = std::env::consts::OS.to_string();
+        crate::commands::WakeStatusDto {
+            status_line: cap.status_line(),
+            enabled: cap.is_enabled(),
+            master_enabled: master,
+            platform,
+            fix_hint,
+            udev_snippet,
+            capability: serde_json::to_value(&cap).unwrap_or(serde_json::Value::Null),
         }
     }
 

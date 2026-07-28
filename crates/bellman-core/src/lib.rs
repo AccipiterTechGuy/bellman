@@ -9,6 +9,7 @@ pub mod actions;
 pub mod app_config;
 pub mod events;
 pub mod occurrence;
+pub mod platform;
 pub mod pruner;
 pub mod scheduler;
 pub mod service;
@@ -51,6 +52,11 @@ pub use slots::{
     atomic_write_json, make_add_request, poll_once, SlotConfig, SlotError, SlotLayout,
     SlotOperation, SlotRequest, SlotResponse, SlotResult, SlotService, SlotStatus, MIN_FREE_SLOTS,
     SCHEMA_V1,
+};
+pub use platform::{
+    create_wake, elect_next_wake, status_line, Caveat, DisabledReason, MachineWake, PowerEvent,
+    PowerRail, SingleNextWake, WakeCandidate, WakeCapability, WakeError, WakeMechanism,
+    ARM_SLACK_SECS,
 };
 pub use store::{
     Action, ClaimStatus, Meta, MisfirePolicy, NewTimer, OpenOptions, OverlapPolicy, RetryPolicy,

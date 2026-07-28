@@ -107,11 +107,22 @@ pub fn run() {
             // `Refill` control messages).
             state.start_scheduler();
 
+            // P7: wake capability JSONL at startup + single-next-wake rearm.
+            state.emit_wake_capability_startup();
+            state.rearm_wake();
+
             // Stash the AppState under a managed handle BEFORE the tray
             // is installed — the tray's pause-toggle calls into
             // AppState, and the set_pause_all command needs to push
             // updates back into the tray's CheckMenuItem.
             app.manage(state);
+
+            // Linux: login1 delay inhibitor + PrepareForSleep → rearm bridge.
+            #[cfg(target_os = "linux")]
+            {
+                let handle = app.handle().clone();
+                start_linux_power_watch(handle);
+            }
 
             // Tray icon + menu (Open / Pause all / Quit).
             tray::install(app.handle())?;
@@ -204,7 +215,84 @@ fn register_commands(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<taur
         commands::wizard_set_choice,
         commands::wizard_re_run,
         commands::app_info,
+        commands::wake_status,
+        commands::wake_reprobe,
+        commands::set_wake_enabled,
+        commands::set_autostart_enabled,
+        commands::set_max_concurrent_actions,
+        commands::dependency_check,
     ])
+}
+
+/// Background thread: login1 `PrepareForSleep` + delay inhibitor (synthesis §2).
+/// Budget ≤5 s on the suspending path — only rearm, no heavy work.
+#[cfg(target_os = "linux")]
+fn start_linux_power_watch(app: tauri::AppHandle) {
+    std::thread::Builder::new()
+        .name("bellman-login1".into())
+        .spawn(move || {
+            if let Err(e) = linux_power_watch_loop(&app) {
+                log::warn!("bellman: login1 power watch exited: {e}");
+            }
+        })
+        .ok();
+}
+
+#[cfg(target_os = "linux")]
+fn linux_power_watch_loop(app: &tauri::AppHandle) -> Result<(), String> {
+    use zbus::blocking::{Connection, Proxy};
+    use zbus::zvariant::OwnedFd;
+
+    let conn = Connection::system().map_err(|e| format!("system bus: {e}"))?;
+    let proxy = Proxy::new(
+        &conn,
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+    )
+    .map_err(|e| format!("login1 proxy: {e}"))?;
+
+    // Delay inhibitor so we get PrepareForSleep before suspend completes.
+    let _inhibit: OwnedFd = proxy
+        .call_method(
+            "Inhibit",
+            &(
+                "sleep",
+                "Bellman",
+                "Rearm RTC wake before suspend",
+                "delay",
+            ),
+        )
+        .and_then(|m| m.body().deserialize())
+        .map_err(|e| format!("Inhibit: {e}"))?;
+
+    // Signal match: PrepareForSleep(bool)
+    let mut msgs = proxy
+        .receive_signal("PrepareForSleep")
+        .map_err(|e| format!("PrepareForSleep match: {e}"))?;
+
+    for msg in &mut msgs {
+        let preparing: bool = match msg.body().deserialize() {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let Some(state) = app.try_state::<AppState>() else {
+            continue;
+        };
+        let cands = state.wake_candidates();
+        let now = chrono::Utc::now();
+        if preparing {
+            state
+                .wake
+                .on_power_event(bellman_core::PowerEvent::Suspending, &cands, now);
+        } else {
+            state
+                .wake
+                .on_power_event(bellman_core::PowerEvent::Resumed, &cands, now);
+            state.emit_wake_capability_if_changed();
+        }
+    }
+    Ok(())
 }
 
 fn resolve_data_dir<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<PathBuf> {

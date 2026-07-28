@@ -161,6 +161,10 @@ pub struct Timer {
     /// `None` → use the global config default for high-freq timers.
     #[serde(default)]
     pub accuracy_slack_secs: Option<u32>,
+    /// Participate in the single-next-wake election (RTC resume). Default false.
+    /// Greyed in the GUI when platform capability is Disabled.
+    #[serde(default)]
+    pub wake_machine: bool,
 }
 
 /// Input for [`super::Store::create_timer`].
@@ -182,6 +186,8 @@ pub struct NewTimer {
     pub jitter_secs: u32,
     /// Optional per-timer accuracy slack override.
     pub accuracy_slack_secs: Option<u32>,
+    /// Participate in single-next-wake election (default false).
+    pub wake_machine: bool,
 }
 
 impl NewTimer {
@@ -202,6 +208,7 @@ impl NewTimer {
             last_fired: None,
             jitter_secs: 0,
             accuracy_slack_secs: None,
+            wake_machine: false,
         }
     }
 
@@ -225,6 +232,7 @@ pub struct TimerPatch {
     pub last_fired: Option<Option<DateTime<Utc>>>,
     pub jitter_secs: Option<u32>,
     pub accuracy_slack_secs: Option<Option<u32>>,
+    pub wake_machine: Option<bool>,
 }
 
 /// Optimistic update envelope.

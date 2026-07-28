@@ -62,6 +62,9 @@ pub struct WebTimerDto {
     pub revision: i64,
     pub occurrence: WebOccurrenceDto,
     pub action_kind: WebActionDto,
+    /// Participate in RTC single-next-wake election (default false).
+    #[serde(default)]
+    pub wake_machine: bool,
 }
 
 /// Web-side occurrence DTO. All kind-specific fields are nullable; only
@@ -126,6 +129,7 @@ pub struct WebTimerPatchDto {
     pub enabled: Option<bool>,
     pub occurrence: Option<WebOccurrenceDto>,
     pub action_kind: Option<WebActionDto>,
+    pub wake_machine: Option<bool>,
 }
 
 impl WebTimerPatchDto {
@@ -142,6 +146,7 @@ impl WebTimerPatchDto {
             enabled: self.enabled,
             occurrence,
             action,
+            wake_machine: self.wake_machine,
             ..Default::default()
         })
     }
@@ -467,6 +472,7 @@ impl From<Timer> for WebTimerDto {
             revision: t.revision,
             occurrence,
             action_kind,
+            wake_machine: t.wake_machine,
         }
     }
 }
@@ -566,6 +572,7 @@ mod tests {
             revision: 1,
             jitter_secs: 0,
             accuracy_slack_secs: None,
+            wake_machine: false,
         };
         let dto: WebTimerDto = timer.into();
         let json = serde_json::to_string_pretty(&dto).unwrap();

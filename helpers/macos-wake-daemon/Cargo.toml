@@ -1,0 +1,17 @@
+[package]
+name = "bellman-macos-wake-daemon"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Bellman SMAppService root daemon — IOPMSchedulePowerEvent one-shots"
+publish = false
+
+# Built only on macOS CI / packaging machines. Not a workspace member on Linux
+# so `cargo test --workspace` stays green everywhere.
+[[bin]]
+name = "bellman-wake-daemon"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

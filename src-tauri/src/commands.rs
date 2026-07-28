@@ -80,6 +80,8 @@ pub fn set_enabled(
     if let Some(h) = state.control_handle.lock().as_ref() {
         h.refill();
     }
+    drop(store);
+    state.rearm_wake();
     Ok(TimerDto::from(updated))
 }
 
@@ -201,6 +203,9 @@ pub fn wizard_set_choice(
     *state.config.lock() = cfg.clone();
     // Apply the autostart bit immediately.
     let _ = apply_autostart(&app, cfg.autostart_enabled);
+    // Master wake toggle from wizard answer.
+    state.set_wake_master(cfg.wake_enabled);
+    state.rearm_wake();
     Ok(WizardStatus {
         completed: cfg.wizard_completed,
         defaults: WizardChoice {
@@ -237,6 +242,9 @@ pub struct AppInfo {
     pub wizard_completed: bool,
     pub autostart_enabled: bool,
     pub pause_all: bool,
+    pub wake_enabled: bool,
+    pub wake_status_line: String,
+    pub max_concurrent_actions: usize,
 }
 
 #[tauri::command]
@@ -250,6 +258,142 @@ pub fn app_info(state: State<'_, AppState>) -> AppInfo {
         wizard_completed: cfg.wizard_completed,
         autostart_enabled: cfg.autostart_enabled,
         pause_all: state.pause_all(),
+        wake_enabled: cfg.wake_enabled,
+        wake_status_line: state.wake_status_line(),
+        max_concurrent_actions: cfg.max_concurrent_actions,
+    }
+}
+
+// ── P7 wake / Settings commands ──────────────────────────────────────
+
+/// Snapshot returned by `wake_status` / `wake_reprobe`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WakeStatusDto {
+    pub status_line: String,
+    pub enabled: bool,
+    pub master_enabled: bool,
+    pub platform: String,
+    pub fix_hint: Option<String>,
+    pub udev_snippet: Option<String>,
+    pub capability: serde_json::Value,
+}
+
+#[tauri::command]
+pub fn wake_status(state: State<'_, AppState>) -> WakeStatusDto {
+    state.wake_status_dto()
+}
+
+#[tauri::command]
+pub fn wake_reprobe(state: State<'_, AppState>) -> WakeStatusDto {
+    let _ = state.wake_reprobe();
+    state.emit_wake_capability_if_changed();
+    state.wake_status_dto()
+}
+
+#[tauri::command]
+pub fn set_wake_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<WakeStatusDto, String> {
+    let mut cfg = state.config.lock().clone();
+    cfg.wake_enabled = enabled;
+    cfg.save(&state.data_dir).map_err(|e| e.to_string())?;
+    *state.config.lock() = cfg;
+    state.set_wake_master(enabled);
+    state.rearm_wake();
+    state.emit_wake_capability_if_changed();
+    Ok(state.wake_status_dto())
+}
+
+#[tauri::command]
+pub fn set_autostart_enabled(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    let mut cfg = state.config.lock().clone();
+    cfg.autostart_enabled = enabled;
+    cfg.save(&state.data_dir).map_err(|e| e.to_string())?;
+    *state.config.lock() = cfg;
+    apply_autostart(&app, enabled).map_err(|e| e.to_string())?;
+    Ok(enabled)
+}
+
+#[tauri::command]
+pub fn set_max_concurrent_actions(
+    state: State<'_, AppState>,
+    value: usize,
+) -> Result<usize, String> {
+    let mut cfg = state.config.lock().clone();
+    cfg.max_concurrent_actions = value.clamp(1, 256);
+    let saved = cfg.max_concurrent_actions;
+    cfg.save(&state.data_dir).map_err(|e| e.to_string())?;
+    *state.config.lock() = cfg;
+    Ok(saved)
+}
+
+/// Dependency check for the first-run wizard (informational only).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyCheckDto {
+    pub items: Vec<DepItemDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DepItemDto {
+    pub name: String,
+    pub ok: bool,
+    pub hint: Option<String>,
+}
+
+#[tauri::command]
+pub fn dependency_check() -> DependencyCheckDto {
+    #[cfg(target_os = "linux")]
+    {
+        let mut items = Vec::new();
+        // webkit2gtk is a link-time dep of the app — if we're running, it's present.
+        items.push(DepItemDto {
+            name: "webkit2gtk".into(),
+            ok: true,
+            hint: None,
+        });
+        // AppIndicator: best-effort via presence of the shared lib.
+        let indicator = std::path::Path::new("/usr/lib/x86_64-linux-gnu/libayatana-appindicator3.so.1")
+            .exists()
+            || std::path::Path::new("/usr/lib/libayatana-appindicator3.so.1").exists();
+        items.push(DepItemDto {
+            name: "tray AppIndicator".into(),
+            ok: indicator,
+            hint: if indicator {
+                None
+            } else {
+                Some(
+                    "GNOME: install the AppIndicator extension, or use KDE/others with tray support."
+                        .into(),
+                )
+            },
+        });
+        DependencyCheckDto { items }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        DependencyCheckDto {
+            items: vec![DepItemDto {
+                name: "WebView2 runtime".into(),
+                ok: true, // evergreen bootstrapper in installer
+                hint: None,
+            }],
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        DependencyCheckDto { items: vec![] }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        DependencyCheckDto { items: vec![] }
     }
 }
 
@@ -274,6 +418,8 @@ pub struct CreateTimerInput {
     pub action: crate::web::WebActionDto,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    #[serde(default)]
+    pub wake_machine: bool,
 }
 
 fn default_enabled() -> bool {
@@ -287,6 +433,7 @@ impl CreateTimerInput {
         let mut new = NewTimer::new(self.name, occurrence);
         new.action = action;
         new.enabled = self.enabled;
+        new.wake_machine = self.wake_machine;
         Ok(new)
     }
 }
@@ -302,8 +449,10 @@ pub fn create_timer(
 
 pub(crate) fn do_create_timer(state: &AppState, input: CreateTimerInput) -> Result<TimerDto, String> {
     let new = input.into_new_timer()?;
-    let mut store = state.store.lock();
-    let timer = store.create_timer(new).map_err(|e| e.to_string())?;
+    let timer = {
+        let mut store = state.store.lock();
+        store.create_timer(new).map_err(|e| e.to_string())?
+    };
     
     // Lifecycle: emit Registered event (analogous to the CLI)
     if let Ok(mut log) = bellman_core::EventLog::open_under(&state.data_dir) {
@@ -317,6 +466,7 @@ pub(crate) fn do_create_timer(state: &AppState, input: CreateTimerInput) -> Resu
     if let Some(h) = state.control_handle.lock().as_ref() {
         h.refill();
     }
+    state.rearm_wake();
     Ok(TimerDto::from(timer))
 }
 
@@ -344,6 +494,8 @@ pub fn update_timer(
     if let Some(h) = state.control_handle.lock().as_ref() {
         h.refill();
     }
+    drop(store);
+    state.rearm_wake();
     Ok(TimerDto::from(updated))
 }
 
@@ -356,6 +508,8 @@ pub fn delete_timer(state: State<'_, AppState>, id: String) -> Result<bool, Stri
     if let Some(h) = state.control_handle.lock().as_ref() {
         h.refill();
     }
+    drop(store);
+    state.rearm_wake();
     Ok(n)
 }
 
@@ -549,6 +703,7 @@ mod tests {
 
     fn dummy_input() -> CreateTimerInput {
         CreateTimerInput {
+            wake_machine: false,
             name: "test timer".into(),
             occurrence: crate::web::WebOccurrenceDto {
                 occ: "once".into(),

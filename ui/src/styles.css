@@ -1293,3 +1293,72 @@ main {
   text-overflow: unset;
   word-break: break-word;
 }
+
+/* ── Settings page (P7) ─────────────────────────────────────────── */
+.settings-page {
+  max-width: 42rem;
+  padding: 1rem 1.25rem 2rem;
+}
+.settings-page h2 {
+  margin: 0 0 1rem;
+  font-size: 1.25rem;
+}
+.settings-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.85rem 1rem 1rem;
+  margin-bottom: 1rem;
+  background: var(--panel, var(--bg));
+}
+.settings-section h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.5rem 0;
+  flex-wrap: wrap;
+}
+.settings-row label {
+  flex: 1;
+  min-width: 12rem;
+}
+.status-line {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 6px;
+  background: var(--accent-soft, rgba(80, 140, 255, 0.12));
+  border: 1px solid var(--border);
+  margin: 0.35rem 0 0.75rem;
+}
+.fix-it .snippet {
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  background: var(--bg-dim, #111);
+  padding: 0.5rem;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+.settings-actions {
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 0.5rem;
+}
+.hint-inline {
+  color: var(--fg-dim);
+  font-size: 0.85em;
+  font-weight: normal;
+}
+.disabled-opt {
+  opacity: 0.65;
+}
+.dep-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+}
+.dep-list li.ok { color: var(--ok, #3a8); }
+.dep-list li.miss { color: var(--fg-dim); }

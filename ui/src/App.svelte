@@ -6,9 +6,10 @@
   import WeekPage from './WeekPage.svelte';
   import MonthPage from './MonthPage.svelte';
   import HistoryPage from './HistoryPage.svelte';
+  import SettingsPage from './SettingsPage.svelte';
   import TimerDialog from './TimerDialog.svelte';
 
-  let page = $state('all');          // 'all' | 'week' | 'month' | 'history'
+  let page = $state('all');          // 'all' | 'week' | 'month' | 'history' | 'settings'
   let pauseAll = $state(false);
   let info = $state(null);
   let wizardOpen = $state(false);
@@ -145,6 +146,7 @@
     <button class="tab" class:active={page==='week'} onclick={() => page = 'week'}>Week</button>
     <button class="tab" class:active={page==='month'} onclick={() => page = 'month'}>Month</button>
     <button class="tab" class:active={page==='history'} onclick={() => page = 'history'}>Run history</button>
+    <button class="tab" class:active={page==='settings'} onclick={() => page = 'settings'}>Settings</button>
   </div>
   <div class="topbar-right">
     {#if !isTauri()}
@@ -171,6 +173,11 @@
     <MonthPage onEdit={openEdit} onCreateDate={openCreateOnDate} onToast={pushToast} timers={timers} tick={refreshTick} />
   {:else if page === 'history'}
     <HistoryPage onToast={pushToast} />
+  {:else if page === 'settings'}
+    <SettingsPage
+      onToast={pushToast}
+      onRerunWizard={() => { wizardOpen = true; }}
+    />
   {/if}
 </main>
 

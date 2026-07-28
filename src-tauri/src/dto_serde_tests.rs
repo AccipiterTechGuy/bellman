@@ -57,6 +57,7 @@ fn sample_timer() -> Timer {
         revision: 1,
         jitter_secs: 0,
         accuracy_slack_secs: None,
+        wake_machine: false,
     }
 }
 
@@ -135,6 +136,7 @@ fn timer_dto_round_trips_occurrence_and_action() {
         revision: 7,
         jitter_secs: 0,
         accuracy_slack_secs: None,
+        wake_machine: false,
     };
     let dto = TimerDto::from(timer);
     assert_eq!(dto.name, "weekly-mwf");
@@ -260,6 +262,9 @@ fn app_info_is_camel_case() {
         wizard_completed: false,
         autostart_enabled: false,
         pause_all: false,
+        wake_enabled: false,
+        wake_status_line: "Wake from sleep: OFF — test".into(),
+        max_concurrent_actions: 16,
     };
     let keys = json_keys(&info);
     for needed in [
@@ -447,6 +452,7 @@ fn create_timer_input_is_camel_case() {
     // `WebOccurrenceDto` + `WebActionDto` shapes. Pin both camelCase keys
     // and the absence of snake_case leaks.
     let input = CreateTimerInput {
+        wake_machine: false,
         name: "tick".into(),
         occurrence: crate::web::WebOccurrenceDto {
             occ: "daily".into(),
@@ -485,6 +491,7 @@ fn create_timer_input_is_camel_case() {
 #[test]
 fn web_timer_patch_dto_is_camel_case() {
     let patch = WebTimerPatchDto {
+        wake_machine: None,
         name: Some("renamed".into()),
         enabled: Some(false),
         occurrence: Some(crate::web::WebOccurrenceDto {
@@ -585,6 +592,7 @@ fn seven_kinds_round_trip_through_store_crud() {
     // → TimerPatch path the command takes so we exercise the actual wire
     // contract, not a side door.
     let new_patch = WebTimerPatchDto {
+        wake_machine: None,
         name: Some("weekly-mwf-renamed".into()),
         enabled: None,
         occurrence: Some(weekly_occ.clone()),
@@ -777,6 +785,7 @@ fn seven_kinds_round_trip_through_store_crud() {
     // patch with no occurrence/action (just a no-op name change) — onceAt
     // must survive verbatim.
     let patch_noop = WebTimerPatchDto {
+        wake_machine: None,
         name: Some("once-renamed".into()),
         enabled: None,
         occurrence: None,
@@ -820,6 +829,7 @@ fn seven_kinds_round_trip_through_store_crud() {
         ))
         .expect("create interval");
     let patch_interval = WebTimerPatchDto {
+        wake_machine: None,
         name: None,
         enabled: Some(false),
         occurrence: Some(interval_inp.clone()),
@@ -847,6 +857,7 @@ fn seven_kinds_round_trip_through_store_crud() {
 
     // 3. Launch action → workdir preserved.
     let launch_inp = WebTimerPatchDto {
+        wake_machine: None,
         name: None,
         enabled: None,
         occurrence: Some(crate::web::WebOccurrenceDto {

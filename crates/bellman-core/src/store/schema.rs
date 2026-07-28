@@ -4,7 +4,7 @@ use super::error::{StoreError, StoreResult};
 use rusqlite::Connection;
 
 /// Current on-disk schema version (also stored in `PRAGMA user_version` and `meta`).
-pub const SCHEMA_VERSION: i32 = 4;
+pub const SCHEMA_VERSION: i32 = 5;
 
 /// Apply pending migrations. Safe to call on every open.
 pub fn migrate(conn: &Connection) -> StoreResult<()> {
@@ -29,6 +29,9 @@ pub fn migrate(conn: &Connection) -> StoreResult<()> {
     }
     if current < 4 {
         migrate_v4(conn)?;
+    }
+    if current < 5 {
+        migrate_v5(conn)?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
@@ -187,6 +190,18 @@ fn migrate_v4(conn: &Connection) -> StoreResult<()> {
             [],
         )
         .map_err(|e| StoreError::Sqlite(format!("migrate v4 add accuracy_slack_secs: {e}")))?;
+    }
+    Ok(())
+}
+
+/// P7: per-timer wake_machine flag for the single-next-wake election.
+fn migrate_v5(conn: &Connection) -> StoreResult<()> {
+    if !table_has_column(conn, "timers", "wake_machine")? {
+        conn.execute(
+            "ALTER TABLE timers ADD COLUMN wake_machine INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|e| StoreError::Sqlite(format!("migrate v5 add wake_machine: {e}")))?;
     }
     Ok(())
 }

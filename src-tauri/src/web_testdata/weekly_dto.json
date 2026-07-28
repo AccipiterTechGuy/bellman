@@ -27,5 +27,6 @@
     "type": "notify",
     "title": "hello",
     "body": "world"
-  }
+  },
+  "wakeMachine": false
 }

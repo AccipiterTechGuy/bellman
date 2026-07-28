@@ -162,6 +162,7 @@ pub fn ensure_system_prune_timer(store: &mut Store) -> PruneResult<Timer> {
         last_fired: None,
         jitter_secs: 0,
         accuracy_slack_secs: None,
+        wake_machine: false,
     })?;
     Ok(timer)
 }

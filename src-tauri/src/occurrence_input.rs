@@ -870,6 +870,7 @@ mod tests {
             revision: 1,
             jitter_secs: 0,
             accuracy_slack_secs: None,
+            wake_machine: false,
         };
         let dto = timer_to_input(&timer);
         assert_eq!(dto.name, "tick");

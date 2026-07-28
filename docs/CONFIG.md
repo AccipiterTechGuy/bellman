@@ -7,6 +7,10 @@ the defaults below.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `wizard_completed` | bool | `false` | First-run wizard dismissed |
+| `wake_enabled` | bool | `false` | Master toggle: allow RTC wake-from-sleep (P7) |
+| `autostart_enabled` | bool | `false` | Launch on login |
+| `start_minimized` | bool | `false` | Start tray-only |
+| `max_concurrent_actions` | usize | `16` | Global concurrent wake-action cap |
 | `autostart_enabled` | bool | `false` | Launch on login |
 | `start_minimized` | bool | `false` | Start tray-only |
 | `wake_enabled` | bool | `false` | User opted into OS wake-from-sleep setup |

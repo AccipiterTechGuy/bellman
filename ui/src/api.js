@@ -220,6 +220,24 @@ export async function wizardReRun() {
 export async function appInfo() {
   return await invoke('app_info');
 }
+export async function wakeStatus() {
+  return await invoke('wake_status');
+}
+export async function wakeReprobe() {
+  return await invoke('wake_reprobe');
+}
+export async function setWakeEnabled(enabled) {
+  return await invoke('set_wake_enabled', { enabled });
+}
+export async function setAutostartEnabled(enabled) {
+  return await invoke('set_autostart_enabled', { enabled });
+}
+export async function setMaxConcurrentActions(value) {
+  return await invoke('set_max_concurrent_actions', { value });
+}
+export async function dependencyCheck() {
+  return await invoke('dependency_check');
+}
 
 // ── UI-side helpers (calendar / dialog math). Keep these pure so unit tests
 // ── can import them and run without a webview. See api.test.js for the
