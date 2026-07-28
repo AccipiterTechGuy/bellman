@@ -84,12 +84,33 @@ describe('isPlausibleCron', () => {
     expect(isPlausibleCron('0 9 * * 1-5')).toBe(true);
     expect(isPlausibleCron('*/5 * * * *')).toBe(true);
     expect(isPlausibleCron('0 0 9 * * 1-5')).toBe(true);
+    expect(isPlausibleCron('0 9 * * 1#2')).toBe(true);
+    expect(isPlausibleCron('0 9 * * 5L')).toBe(true);
   });
   it('accepts named weekday/month fields the engine (croner 2) accepts', () => {
     expect(isPlausibleCron('0 9 * * MON-FRI')).toBe(true);
     expect(isPlausibleCron('0 0 1 JAN *')).toBe(true);
     expect(isPlausibleCron('0 9 * * mon,wed,fri')).toBe(true);
     expect(isPlausibleCron('30 14 1 JAN-MAR *')).toBe(true);
+  });
+  // F7b: name + # / L / step — all parsed by croner 2; gate must not reject.
+  it('accepts named fields with #nth, L, and /step (croner-accepted)', () => {
+    const engineAccepted = [
+      '0 9 * * MON#2',
+      '0 9 * * mon#2',
+      '0 9 * * SUN#1',
+      '0 9 * * SAT#5',
+      '0 9 * * MON-FRI#2',
+      '0 9 * * TUE,THU#1',
+      '0 9 * * FRIL',
+      '0 9 * * MONL',
+      '0 9 * * MON/2',
+      '0 9 * JAN/2 *',
+      '0 9 * JAN-DEC/3 *',
+    ];
+    for (const e of engineAccepted) {
+      expect(isPlausibleCron(e), e).toBe(true);
+    }
   });
   it('accepts croner @macros deliberately (not @reboot)', () => {
     expect(isPlausibleCron('@daily')).toBe(true);
@@ -107,7 +128,7 @@ describe('isPlausibleCron', () => {
     expect(isPlausibleCron('a b c d e')).toBe(false);
   });
   it('rejects names in the wrong field position', () => {
-    // MON in minute field
+    // MON in minute field — not substituted → fails numeric charset
     expect(isPlausibleCron('MON 9 * * 1-5')).toBe(false);
     // JAN in hour field
     expect(isPlausibleCron('0 JAN 1 * *')).toBe(false);

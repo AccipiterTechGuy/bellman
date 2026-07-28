@@ -144,9 +144,31 @@ through the real GUI. **`docs/qa4-evidence/p4d-capture-run.log` contains `DELETE
 
 | ID | Fix |
 |---|---|
-| F7 | `isPlausibleCron` now accepts month/weekday **names** in the correct positions (`MON-FRI`, `JAN`, `mon,wed,fri`) and croner `@daily`/`@hourly`/… macros; still rejects `not a cron` and `@reboot`. Live GUI: Create sensitive=False for garbage, True for `0 9 * * MON-FRI` and `0 0 1 JAN *`. |
+| F7 | First pass: named ranges/lists. Incomplete — missed `MON#2`, `FRIL`, steps. |
 
-Deliberate `@macro` policy: accept the set croner 2 parses (`@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@hourly`); reject `@reboot` (croner rejects it).
+## Rework #3 (supervisor NEEDS_FIX F7b)
+
+| ID | Fix |
+|---|---|
+| F7b | Name→number substitution then numeric charset: month JAN–DEC→1–12, dow SUN–SAT→0–6 (keeps `#`, `L`, `/step`). All 11 croner-accepted named forms Create-enabled; `not a cron` still blocked. |
+
+Live AT-SPI Create sensitive after fix:
+
+| Expression | Create |
+|---|---|
+| `0 9 * * MON-FRI` | True |
+| `0 9 * * MON#2` | True |
+| `0 9 * * FRIL` | True |
+| `0 9 * * TUE,THU#1` | True |
+| `0 9 * JAN/2 *` | True |
+| `0 9 * JAN-DEC/3 *` | True |
+| `not a cron` | False |
+
+Shot: `p4d-cron-named-nth-create-enabled.png` (`MON#2`).
+
+**Known slack (not tightened):** client may accept a few expressions croner rejects (e.g. `0 0 LW * *`, `0 9 * FEB 29`) — Create enabled, empty preview; same as pre-card. Prefer false-positive over blocking a real schedule.
+
+Deliberate `@macro` policy: accept croner 2 macros (`@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@hourly`); reject `@reboot`.
 
 ### ERROR vs ADVISORY (non-colour-only)
 

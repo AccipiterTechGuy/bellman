@@ -265,17 +265,25 @@ export function systemTimeZone() {
 
 /**
  * Structural cron check aligned with croner 2 (the engine in
- * `bellman-core::occurrence::schedule::next_cron`):
- *   - 5- or 6-field expressions, OR a single @macro croner accepts
- *   - numeric / *,/, -,?,#,L,W tokens in all positions
- *   - month names (JAN–DEC) only in the month field
- *   - weekday names (SUN–SAT) only in the day-of-week field
- *   - lists/ranges of names: MON-FRI, mon,wed,fri
+ * `bellman-core::occurrence::schedule::next_cron`).
  *
- * Deliberately accepts @yearly/@annually/@monthly/@weekly/@daily/@hourly
- * (croner 2 parses them) and rejects @reboot (croner rejects it).
- * Rejects free-text like "not a cron" (wrong field count) without
- * blocking legitimate named-field power-user expressions.
+ * Strategy (rework #3 / F7b — supervisor-proven):
+ *   1. Allow the @macros croner accepts (not @reboot).
+ *   2. Require 5 or 6 whitespace-separated fields.
+ *   3. In the month field, substitute JAN–DEC → 1–12.
+ *   4. In the day-of-week field, substitute SUN–SAT → 0–6.
+ *   5. Run a single numeric-field charset check on every (substituted) field.
+ *
+ * Name substitution is case-insensitive and keeps suffixes so forms the
+ * engine accepts stay open: MON#2 → 1#2, FRIL → 5L, MON-FRI → 1-5,
+ * mon,wed,fri → 1,3,5, JAN/2 → 1/2, JAN-DEC/3 → 1-12/3.
+ *
+ * Names only in month/dow positions: a name in minute/hour leaves letters
+ * that fail the numeric check (MON 9 * * 1 → rejected).
+ *
+ * Not a full parser — a few expressions the client accepts and croner
+ * rejects (e.g. `0 0 LW * *`) are deliberate slack so we never block a
+ * schedule the engine would run.
  *
  * @param {string} expr
  * @returns {boolean}
@@ -288,17 +296,36 @@ const CRON_MACROS = new Set([
   '@daily',
   '@hourly',
 ]);
-const CRON_MONTHS = 'JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC';
-const CRON_DOWS = 'SUN|MON|TUE|WED|THU|FRI|SAT';
+
+/** Month names → 1–12 (croner / Quartz-style). */
+const CRON_MONTH_NUM = {
+  JAN: '1', FEB: '2', MAR: '3', APR: '4', MAY: '5', JUN: '6',
+  JUL: '7', AUG: '8', SEP: '9', OCT: '10', NOV: '11', DEC: '12',
+};
+
+/** Weekday names → 0–6 (Sunday = 0), matching common croner mapping. */
+const CRON_DOW_NUM = {
+  SUN: '0', MON: '1', TUE: '2', WED: '3', THU: '4', FRI: '5', SAT: '6',
+};
 
 function isNumericCronField(field) {
   return /^[\d*,/\-?#LW]+$/i.test(field);
 }
 
-/** Name atom with optional range, or comma-list of those (MON-FRI / mon,wed). */
-function isCronNameField(field, names) {
-  const atom = `(?:${names})(?:-(?:${names}))?`;
-  return new RegExp(`^${atom}(?:,${atom})*$`, 'i').test(field);
+/**
+ * Replace 3-letter month/dow names with digits. Optional trailing `L`
+ * (last) stays attached so FRIL → 5L. Names must not be mid-word.
+ * @param {string} field
+ * @param {Record<string, string>} nameToNum
+ */
+export function substituteCronNames(field, nameToNum) {
+  const names = Object.keys(nameToNum).join('|');
+  // (?![A-Za-z]) would reject FRIL; allow optional L suffix kept as-is.
+  const re = new RegExp(`(?<![A-Za-z])(${names})(L)?(?![A-Za-z])`, 'gi');
+  return field.replace(re, (_, name, lastL) => {
+    const n = nameToNum[name.toUpperCase()];
+    return n + (lastL || '');
+  });
 }
 
 export function isPlausibleCron(expr) {
@@ -319,14 +346,10 @@ export function isPlausibleCron(expr) {
   const dowIdx = parts.length === 5 ? 4 : 5;
 
   for (let i = 0; i < parts.length; i++) {
-    const p = parts[i];
-    if (i === monthIdx) {
-      if (!(isNumericCronField(p) || isCronNameField(p, CRON_MONTHS))) return false;
-    } else if (i === dowIdx) {
-      if (!(isNumericCronField(p) || isCronNameField(p, CRON_DOWS))) return false;
-    } else if (!isNumericCronField(p)) {
-      return false;
-    }
+    let p = parts[i];
+    if (i === monthIdx) p = substituteCronNames(p, CRON_MONTH_NUM);
+    else if (i === dowIdx) p = substituteCronNames(p, CRON_DOW_NUM);
+    if (!isNumericCronField(p)) return false;
   }
   return true;
 }
