@@ -220,7 +220,7 @@ history) or a *server* (Cronicle, Dkron — Node/Redis-heavy, headless). The onl
 close UX match, Task Till Dawn, is closed-source, stalled since 2019, no Linux.
 Owning the engine is what buys cross-platform + seconds + logs.
 
-Steal from the best:
+What the best prior art gets right (design lessons, independently implemented):
 - **KAlarm** — richest per-alarm model (per-alarm tz, late-cancel grace,
   recurrence exceptions, positional monthly, Feb-29 policy, wake-from-suspend).
 - **Windows Task Scheduler** — policy vocabulary (StartWhenAvailable, four

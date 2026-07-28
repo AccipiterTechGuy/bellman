@@ -20,27 +20,28 @@ Naming map (synthesis used the old working title): `time-watcher` → **bellman*
 - **Hand-rolled ~300-line heap loop** — no off-the-shelf scheduler crate exposes
   horizon eviction + custom misfire + suspend detection.
 
-## Reference repos (inspiration while coding)
+## Prior art (background reading while building)
 
-Study these before/while building the matching module. "Steal" = read the idea,
-re-implement clean — no code copying without license care.
+Projects worth understanding before building the matching module. These are
+**prior art we read, not sources we copy from**: the rule is read the idea,
+then implement it independently. No code is lifted from any of them — where we
+depend on someone's work we do it properly, as a declared dependency with its
+licence (`croner`, `notify`, `rusqlite`, Tauri). Anything reimplemented here is
+our own code, and where our design diverges from theirs the table says so.
 
-**Local clones for grepping**: the code-level repos below are shallow-cloned at
-`~/reference_repos/bellman/<repo-name>` (croner-rust, Cronicle, kalarm, notify,
-pomodorolm, tokio-cron-scheduler, zeit — ~47 MB total). Build agents should
-read/grep there instead of browsing GitHub; docs-type links stay links. The
-folder is throwaway — deleted when v1 ships.
+Several of these are cloned locally for offline reading during development;
+those clones live outside this repository and nothing from them is vendored in.
 
 | Repo / link | Use it for |
 |---|---|
 | https://github.com/tauri-apps/tauri + https://v2.tauri.app/learn/system-tray/ | Tauri v2 patterns: tray, windows, IPC commands |
 | https://v2.tauri.app/plugin/autostart/ · https://v2.tauri.app/plugin/single-instance/ | The two required plugins — wiring examples |
-| https://github.com/vjousse/pomodorolm | Small real-world **Tauri tray timer app** — closest existing shape to Bellman's shell; study tray + window lifecycle |
+| https://github.com/vjousse/pomodorolm | Small real-world **Tauri tray timer app** — the closest existing shape to Bellman's shell; useful for understanding tray + window lifecycle on this stack |
 | https://github.com/Hexagon/croner-rust | The cron-variant parser we ship; seconds field + Quartz `L/W/#` |
 | https://github.com/mvniekerk/tokio-cron-scheduler | **Read, don't depend**: how a tokio scheduler loop is structured; we replace its all-in-memory model with the horizon window |
 | https://github.com/notify-rs/notify + https://docs.rs/notify-debouncer-full | Slot-dir watching; issue tracker documents every OS's lossy-event caveat |
 | https://github.com/rusqlite/rusqlite | Store layer; `bundled` feature, WAL pragmas |
-| https://github.com/KDE/kalarm | **Richest per-alarm data model in OSS** — per-alarm tz, late-cancel grace, recurrence exceptions, Feb-29 policy; mine its option set for our timer settings |
+| https://github.com/KDE/kalarm | **Richest per-alarm data model in OSS** — per-alarm tz, late-cancel grace, recurrence exceptions, Feb-29 policy. A benchmark for how much per-timer nuance a mature scheduler ends up needing |
 | https://github.com/jhuckaby/Cronicle | Job-scheduler UX: per-job catch-up toggle, overlap limits, retries, and the live per-timer log tail (our filtered-JSONL view) |
 | https://github.com/loimu/zeit | Minimal cron-GUI — what a thin wrapper looks like (and why we own the engine instead) |
 | https://github.com/super-productivity/super-productivity | Polished cross-platform productivity UI — layout/UX inspiration for the timer pages |
