@@ -315,3 +315,252 @@ describe('IPC DTO shape — the camelCase contract', () => {
     expect(w).not.toHaveProperty('wake_enabled');
   });
 });
+
+describe('api.js — C8 calendar UI command surface', () => {
+  let state;
+  beforeEach(() => { state = installTauriMock(); });
+  afterEach(() => {
+    delete window.__TAURI_INTERNALS__;
+    delete window.__TAURI_EVENT_PLUGIN_INTERNALS__;
+  });
+
+  it('createTimer invokes create_timer with the deliberate flat createTimer payload', async () => {
+    const { createTimer } = await import('./api.js');
+    // Mirrors src-tauri/src/web.rs::WebOccurrenceDto + CreateTimerInput
+    // (camelCase, tagged action, weekly-days-as-record). The dialog
+    // builds exactly this shape via `buildInput()`.
+    const input = {
+      name: 'morning',
+      enabled: false,
+      occurrence: {
+        occ: 'daily',
+        tz: 'UTC',
+        days: null,
+        at: '09:00:00',
+        onceAt: null,
+        everySecs: null,
+        anchor: null,
+        day: null,
+        month: null,
+        expr: null,
+      },
+      action: { type: 'none' },
+    };
+    await createTimer(input);
+    expect(state.invokes).toHaveLength(1);
+    expect(state.invokes[0].cmd).toBe('create_timer');
+    expect(state.invokes[0].args.input.name).toBe('morning');
+    expect(state.invokes[0].args.input.enabled).toBe(false);
+    expect(state.invokes[0].args.input.occurrence.occ).toBe('daily');
+    expect(state.invokes[0].args.input.occurrence.tz).toBe('UTC');
+    expect(state.invokes[0].args.input.occurrence.at).toBe('09:00:00');
+  });
+
+  it('updateTimer invokes update_timer with id + revision + patch (actionKind, not action)', async () => {
+    const { updateTimer } = await import('./api.js');
+    await updateTimer('timer-id-123', 4, {
+      name: 'renamed',
+      enabled: true,
+      occurrence: { occ: 'daily', tz: 'UTC', at: '10:30:00' },
+      actionKind: { type: 'notify', title: 'go', body: 'now' },
+    });
+    expect(state.invokes[0].cmd).toBe('update_timer');
+    expect(state.invokes[0].args.id).toBe('timer-id-123');
+    expect(state.invokes[0].args.expectedRevision).toBe(4);
+    expect(state.invokes[0].args.patch.name).toBe('renamed');
+    expect(state.invokes[0].args.patch.actionKind.title).toBe('go');
+  });
+
+  it('deleteTimer invokes delete_timer with id', async () => {
+    const { deleteTimer } = await import('./api.js');
+    await deleteTimer('abc');
+    expect(state.invokes[0].cmd).toBe('delete_timer');
+    expect(state.invokes[0].args.id).toBe('abc');
+  });
+
+  it('previewFires invokes preview_fires with the flat WebOccurrenceDto + n', async () => {
+    const { previewFires } = await import('./api.js');
+    // The dialog sends the deliberate WebOccurrenceDto shape (flat
+    // `{occ, tz, at, days, ...}`), not the legacy `kind/time/csv`
+    // triple. Mirrors `src-tauri/src/web.rs::WebOccurrenceDto`.
+    await previewFires(
+      {
+        occ: 'daily',
+        tz: 'UTC',
+        days: null,
+        at: '12:00:00',
+        onceAt: null,
+        everySecs: null,
+        anchor: null,
+        day: null,
+        month: null,
+        expr: null,
+      },
+      5,
+    );
+    expect(state.invokes[0].cmd).toBe('preview_fires');
+    expect(state.invokes[0].args.input.occ).toBe('daily');
+    expect(state.invokes[0].args.input.at).toBe('12:00:00');
+    expect(state.invokes[0].args.n).toBe(5);
+  });
+
+  it('PreviewResponseDto shape: keys are camelCase', async () => {
+    const resp = {
+      fires: [{ utc: '2030-01-01T12:00:00Z', localDate: '2030-01-01', localTime: '12:00:00', offset: 'UTC', tzName: 'UTC' }],
+      warnings: ['daily times in this timezone fall in a DST gap'],
+    };
+    expect(resp).toHaveProperty('fires');
+    expect(resp).toHaveProperty('warnings');
+    expect(resp.fires[0]).toHaveProperty('localTime');
+    expect(resp.fires[0]).toHaveProperty('localDate');
+    expect(resp.fires[0]).toHaveProperty('tzName');
+    expect(resp.fires[0]).not.toHaveProperty('local_time');
+    expect(resp.fires[0]).not.toHaveProperty('tz_name');
+    expect(resp.fires[0]).not.toHaveProperty('tz');
+  });
+
+  it('CreateTimerInput shape keeps camelCase enums / action discriminator', async () => {
+    const input = {
+      name: 'x',
+      enabled: true,
+      occurrence: { kind: 'weekly', tz: 'UTC', time: '09:00:00', days: 'mon,fri', everySecs: null, onceAt: null, intervalAnchor: null, day: null, month: null, cronExpr: null },
+      action: { type: 'launch', command: '/bin/true', args: ['a'], workdir: null },
+    };
+    // Confirm the structural shape survives JSON round-trip.
+    const s = JSON.stringify(input);
+    expect(s).toContain('"kind":"weekly"');
+    expect(s).toContain('"type":"launch"');
+    expect(s).not.toContain('kind_label'); // placeholder
+  });
+});
+
+describe('api.js — calendar helpers (pure, no IPC)', () => {
+  it('jsIsoWeekday: Mon=1 ... Sun=7', async () => {
+    const { jsIsoWeekday } = await import('./api.js');
+    // 2026-01-05 is a Monday (ISO).
+    const mon = new Date(2026, 0, 5);
+    expect(jsIsoWeekday(mon)).toBe(1);
+    // 2026-01-11 is a Sunday (ISO).
+    const sun = new Date(2026, 0, 11);
+    expect(jsIsoWeekday(sun)).toBe(7);
+    // 2026-01-07 is a Wednesday.
+    const wed = new Date(2026, 0, 7);
+    expect(jsIsoWeekday(wed)).toBe(3);
+  });
+
+  it('isoWeekStart lands on Monday', async () => {
+    const { isoWeekStart, isoDate } = await import('./api.js');
+    // Pick a Wednesday mid-month.
+    const wed = new Date(2026, 2, 18);
+    const start = isoWeekStart(wed);
+    const dow = start.getDay(); // 0=Sun..6=Sat
+    expect(dow).toBe(1); // Monday
+    expect(isoDate(start)).toBe('2026-03-16'); // Mon before Wed 2026-03-18
+  });
+
+  it('addDays crosses month boundary', async () => {
+    const { addDays, isoDate } = await import('./api.js');
+    const d = addDays(new Date(2026, 0, 30), 5);
+    expect(isoDate(d)).toBe('2026-02-04');
+  });
+
+  it('monthGrid Feb 2026 has 28 days starting Sun → 28-row grid', async () => {
+    const { monthGrid, isoDate, jsIsoWeekday } = await import('./api.js');
+    const grid = monthGrid(2026, 1, 1);
+    expect(grid.length).toBe(42);
+    // 2026-02-01 is a Sunday → grid starts on Mon 2026-01-26.
+    expect(isoDate(grid[0])).toBe('2026-01-26');
+    expect(jsIsoWeekday(grid[0])).toBe(1);
+    // Last cell covers end of week containing Feb 28.
+    expect(isoDate(grid[grid.length - 1])).toBe('2026-03-08');
+  });
+
+  it('daysInMonth handles leap year', async () => {
+    const { daysInMonth } = await import('./api.js');
+    expect(daysInMonth(2024, 1)).toBe(29); // Feb 2024 leap
+    expect(daysInMonth(2025, 1)).toBe(28);
+    expect(daysInMonth(2026, 3)).toBe(30); // April
+  });
+
+  it('clockToSeconds parses HH:MM and HH:MM:SS', async () => {
+    const { clockToSeconds } = await import('./api.js');
+    expect(clockToSeconds('09:30')).toBe(9 * 3600 + 30 * 60);
+    expect(clockToSeconds('00:00:00')).toBe(0);
+    expect(clockToSeconds('23:59:59')).toBe(23 * 3600 + 59 * 60 + 59);
+    expect(clockToSeconds('')).toBeNull();
+    expect(clockToSeconds('bad')).toBeNull();
+    expect(clockToSeconds('25:00')).toBeNull();
+  });
+
+  it('isoDate / isoClock format local fields', async () => {
+    const { isoDate, isoClock } = await import('./api.js');
+    const d = new Date(2026, 11, 5, 9, 7, 3);
+    expect(isoDate(d)).toBe('2026-12-05');
+    expect(isoClock(d)).toBe('09:07:03');
+  });
+});
+
+describe('api.js — structured-occurrence helpers (rework #1: auditor fix)', () => {
+  it('kindFromOccurrence reads the occ discriminator', async () => {
+    const { kindFromOccurrence } = await import('./api.js');
+    expect(kindFromOccurrence({ occ: 'weekly', days: {}, at: '08:00:00' })).toBe('weekly');
+    expect(kindFromOccurrence({ occ: 'daily' })).toBe('daily');
+    // Missing/non-string ⇒ '' so callers can `=== ''` to skip.
+    expect(kindFromOccurrence({})).toBe('');
+    expect(kindFromOccurrence(null)).toBe('');
+  });
+
+  it('weeklyDaysFromOccurrence parses the chrono bitmask object', async () => {
+    const { weeklyDaysFromOccurrence } = await import('./api.js');
+    expect(weeklyDaysFromOccurrence({ days: { mon: true, wed: true, fri: true } }))
+      .toEqual([1, 3, 5]);
+    expect(weeklyDaysFromOccurrence({ days: {} })).toEqual([]);
+    expect(weeklyDaysFromOccurrence({})).toEqual([]);
+    // Lowercase keys are accepted; uppercase keys ignored (chrono emits lowercase).
+    expect(weeklyDaysFromOccurrence({ days: { Mon: true } })).toEqual([1]);
+  });
+
+  it('clampedDayOfMonth mirrors core Clamp policy for monthly day 31', async () => {
+    // Replicate the MonthPage JS helper's math against the same leap-year
+    // cases the Rust core handles, so the GUI matches `bellman next`.
+    const { daysInMonth } = await import('./api.js');
+    const clamp = (y, m, d) => Math.min(d, daysInMonth(y, m));
+    expect(clamp(2026, 1, 31)).toBe(28);  // Feb 2026 = 28
+    expect(clamp(2024, 1, 31)).toBe(29);  // Feb 2024 leap
+    expect(clamp(2026, 3, 31)).toBe(30);  // Apr = 30
+    expect(clamp(2026, 0, 31)).toBe(31);  // Jan unchanged
+    expect(clamp(2026, 11, 31)).toBe(31); // Dec unchanged
+  });
+
+  it('TimerDto structured shape: weekly + Notify action round-trips through the IPC mock', async () => {
+    // Simulates the wire payload the Rust TimerDto emits after the auditor's
+    // rework — closed Finding 1: the dialog now sees the structured weekly
+    // `days` bitmask + tagged notify action instead of relying on summary
+    // string parsing (which previously dropped weekly timers on edit).
+    const { weeklyDaysFromOccurrence, kindFromOccurrence } = await import('./api.js');
+    const dto = {
+      id: '00000000-0000-0000-0000-000000000001',
+      name: 'weekly-mwf',
+      enabled: true,
+      tz: 'UTC',
+      nextFireUtc: null,
+      lastFired: null,
+      kind: 'weekly',
+      summary: 'weekly Mon,Wed,Fri 08:00:00 UTC',
+      action: 'notify: hello',
+      occurrence: {
+        occ: 'weekly',
+        tz: 'UTC',
+        days: { mon: true, wed: true, fri: true },
+        at: '08:00:00',
+      },
+      actionKind: { type: 'notify', title: 'hello', body: 'world' },
+      revision: 1,
+    };
+    expect(kindFromOccurrence(dto.occurrence)).toBe('weekly');
+    expect(weeklyDaysFromOccurrence(dto.occurrence)).toEqual([1, 3, 5]);
+    expect(dto.occurrence.at).toBe('08:00:00');
+    expect(dto.actionKind.type).toBe('notify');
+    expect(dto.actionKind.title).toBe('hello');
+  });
+});

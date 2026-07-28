@@ -17,8 +17,10 @@ pub mod commands;
 pub mod config;
 pub mod first_run;
 pub mod notify_sink;
+pub mod occurrence_input;
 pub mod state;
 pub mod tray;
+pub mod web;
 
 #[cfg(test)]
 mod dto_serde_tests;
@@ -186,6 +188,10 @@ fn register_commands(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<taur
         commands::set_enabled,
         commands::run_now,
         commands::list_log_tail,
+        commands::create_timer,
+        commands::update_timer,
+        commands::delete_timer,
+        commands::preview_fires,
         commands::get_pause_all,
         commands::set_pause_all,
         commands::wizard_status,
@@ -207,9 +213,7 @@ fn apply_autostart_from_config<R: tauri::Runtime>(
 ) -> tauri::Result<()> {
     use tauri_plugin_autostart::ManagerExt;
     let mgr = app.autolaunch();
-    let enabled = mgr
-        .is_enabled()
-        .unwrap_or(false);
+    let enabled = mgr.is_enabled().unwrap_or(false);
     if cfg.autostart_enabled && !enabled {
         let _ = mgr.enable();
     } else if !cfg.autostart_enabled && enabled {
@@ -219,9 +223,7 @@ fn apply_autostart_from_config<R: tauri::Runtime>(
 }
 
 fn setup_err<E: std::fmt::Display>(ctx: &'static str) -> impl FnOnce(E) -> tauri::Error {
-    move |e| {
-        tauri::Error::Anyhow(anyhow::anyhow!(format!("{ctx}: {e}")))
-    }
+    move |e| tauri::Error::Anyhow(anyhow::anyhow!(format!("{ctx}: {e}")))
 }
 
 fn setup_err_str(s: String) -> tauri::Error {

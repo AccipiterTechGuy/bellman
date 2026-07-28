@@ -39,6 +39,18 @@ impl Weekdays {
         self.0 == 0
     }
 
+    /// Raw bitmask (Mon=bit 0 .. Sun=bit 6). Used by the UI DTO so the
+    /// webview can show weekday checkboxes without parsing pretty
+    /// summaries.
+    pub fn as_u8(self) -> u8 {
+        self.0
+    }
+
+    /// Construct from a raw bitmask. Used by the UI DTO on save round-trip.
+    pub fn from_u8(bits: u8) -> Self {
+        Self(bits & 0b0111_1111)
+    }
+
     pub fn iter(self) -> impl Iterator<Item = Weekday> {
         const ORDER: [Weekday; 7] = [
             Weekday::Mon,
@@ -49,16 +61,13 @@ impl Weekdays {
             Weekday::Sat,
             Weekday::Sun,
         ];
-        ORDER
-            .into_iter()
-            .enumerate()
-            .filter_map(move |(i, d)| {
-                if self.0 & (1u8 << i) != 0 {
-                    Some(d)
-                } else {
-                    None
-                }
-            })
+        ORDER.into_iter().enumerate().filter_map(move |(i, d)| {
+            if self.0 & (1u8 << i) != 0 {
+                Some(d)
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -132,6 +141,21 @@ impl OccurrenceKind {
     /// Whether this kind uses UTC elapsed time (interval) vs wall-clock local.
     pub fn is_elapsed_time(&self) -> bool {
         matches!(self, Self::Interval { .. })
+    }
+
+    /// Short, type-stable kind label (lowercase, used as the webview
+    /// discriminator on the wire). Mirrors `kind_label` in
+    /// `src-tauri/src/commands.rs`.
+    pub fn kind_label(&self) -> &'static str {
+        match self {
+            Self::Once { .. } => "once",
+            Self::Interval { .. } => "interval",
+            Self::Daily { .. } => "daily",
+            Self::Weekly { .. } => "weekly",
+            Self::Monthly { .. } => "monthly",
+            Self::Yearly { .. } => "yearly",
+            Self::Cron { .. } => "cron",
+        }
     }
 
     /// Helper: last day-of-month for a year/month (1-based month).

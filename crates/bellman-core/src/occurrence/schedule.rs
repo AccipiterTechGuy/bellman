@@ -128,6 +128,18 @@ impl Occurrence {
         self.valid_until
     }
 
+    pub fn dst_gap(&self) -> DstGapPolicy {
+        self.dst_gap
+    }
+
+    pub fn dst_fold(&self) -> DstFoldPolicy {
+        self.dst_fold
+    }
+
+    pub fn invalid_monthday(&self) -> InvalidMonthDayPolicy {
+        self.invalid_monthday
+    }
+
     /// Add an EXDATE-style exclusion (local calendar date in the schedule tz).
     pub fn exclude_date(&mut self, date: NaiveDate) {
         self.exclusions.insert(date);
@@ -207,9 +219,7 @@ impl Occurrence {
             // Exclusion dates (local calendar date): jump to the end of that
             // local day so high-frequency intervals do not iterate every tick.
             if self.exclusions.contains(&candidate.date_naive()) {
-                cursor = self
-                    .jump_past_exclusion_day(candidate)
-                    .unwrap_or(candidate);
+                cursor = self.jump_past_exclusion_day(candidate).unwrap_or(candidate);
                 continue;
             }
 
@@ -299,28 +309,19 @@ impl Occurrence {
     fn raw_next_after(&self, after: DateTime<Tz>) -> Option<DateTime<Tz>> {
         match &self.kind {
             OccurrenceKind::Once { at } => self.next_once(*at, after),
-            OccurrenceKind::Interval {
-                every_secs,
-                anchor,
-            } => self.next_interval(*every_secs, *anchor, after),
+            OccurrenceKind::Interval { every_secs, anchor } => {
+                self.next_interval(*every_secs, *anchor, after)
+            }
             OccurrenceKind::Daily { at } => self.next_daily(*at, after),
             OccurrenceKind::Weekly { days, at } => self.next_weekly(*days, *at, after),
             OccurrenceKind::Monthly { day, at } => self.next_monthly(*day, *at, after),
-            OccurrenceKind::Yearly { month, day, at } => {
-                self.next_yearly(*month, *day, *at, after)
-            }
+            OccurrenceKind::Yearly { month, day, at } => self.next_yearly(*month, *day, *at, after),
             OccurrenceKind::Cron { expr } => self.next_cron(expr, after),
         }
     }
 
     fn resolve(&self, date: NaiveDate, time: NaiveTime) -> Option<DateTime<Tz>> {
-        resolve_local(
-            self.timezone(),
-            date,
-            time,
-            self.dst_gap,
-            self.dst_fold,
-        )
+        resolve_local(self.timezone(), date, time, self.dst_gap, self.dst_fold)
     }
 
     fn next_once(&self, at: NaiveDateTime, after: DateTime<Tz>) -> Option<DateTime<Tz>> {
@@ -441,8 +442,12 @@ impl Occurrence {
             if year >= after_local.year() + 200 {
                 break;
             }
-            let date =
-                clamp_month_day(year, u32::from(month), u32::from(day), self.invalid_monthday)?;
+            let date = clamp_month_day(
+                year,
+                u32::from(month),
+                u32::from(day),
+                self.invalid_monthday,
+            )?;
             if let Some(fire) = self.resolve(date, at) {
                 if fire > after_local {
                     return Some(fire);
