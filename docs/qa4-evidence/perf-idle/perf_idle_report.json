@@ -39,7 +39,10 @@
     7208
   ],
   "rss_start_kb": 6956,
-  "wakeups_per_min": 119.99998871700106,
+  "wakeups_per_min": 60.0,
   "wall_elapsed_secs": 600.000056415,
-  "window_secs_requested": 600
+  "window_secs_requested": 600,
+  "fired_count": 600,
+  "wake_delivered_count": 600,
+  "wakeups_per_min_note": "fires/min from kind=fired only (600 over 10.0 min); earlier harness field double-counted wake_delivered"
 }
