@@ -1,80 +1,118 @@
-# QA P4b — WebKitGTK GUI evidence for C8 calendar UI (rework #2)
+# QA P4b — WebKitGTK GUI evidence for C8 calendar UI (rework #3)
 
 Card: train run `2026-07-28_0001`.
-C8 base: `d49b7dc` / `ec8a330`. Layout CSS + preview-column tweak ship on this card.
+C8 base: `d49b7dc` / `ec8a330`. Layout + preview + kind-label tweaks ship on this card.
 
 ## Display setup (path a — real `:0` NVIDIA)
 
-```sh
-cd ui && npm ci && npm run build && cd ..
-cargo tauri build --no-bundle   # NOT plain cargo build (cfg(dev) → blank window)
+Copy-paste from a clean shell (repo root = this worktree or `~/bellman`):
 
+```sh
+set -euo pipefail
+ROOT="$(pwd)"                          # worktree or main checkout
+cd "$ROOT"
+
+# 1. Frontend + production Tauri shell
+#    MUST use cargo-tauri: plain `cargo build -p bellman --release` sets cfg(dev)
+#    and loads http://localhost:1420 → blank white window.
+cd ui && npm ci && npm run build && cd ..
+cargo tauri build --no-bundle
+
+# 2. Schema-v3 CLI as a SIDE copy (both packages emit a binary named "bellman")
 cargo build -p bellman-cli --release
 cp -a target/release/bellman /tmp/bellman-cli-schema3
-# restore GUI binary from cargo-tauri output if the CLI clobbered the name
+# Restore the GUI binary that cargo-cli may have overwritten:
+cp -a target/release/bundle/deb/*/data/usr/bin/bellman target/release/bellman 2>/dev/null \
+  || cargo tauri build --no-bundle
 
+BIN="$ROOT/target/release/bellman"
+test -x "$BIN"
+test -x /tmp/bellman-cli-schema3
+
+# 3. Isolated data dir + wizard already completed
 QA=/tmp/qa-p4b-session
 rm -rf "$QA"
 mkdir -p "$QA/share/io.bellman.desktop/logs" "$QA/share/io.bellman.desktop/slots" "$QA/config"
 printf '%s\n' '{"wizard_completed":true,"autostart_enabled":false,"start_minimized":false,"wake_enabled":false}' \
   > "$QA/share/io.bellman.desktop/config.json"
 
-export DISPLAY=:0 XDG_DATA_HOME="$QA/share" XDG_CONFIG_HOME="$QA/config" GDK_BACKEND=x11 RUST_LOG=info
-BIN=…/target/release/bellman
-: > /tmp/qa-p4b.out; : > /tmp/qa-p4b.err
+# 4. Launch GUI on the real display; tee raw stdout/stderr (0-byte is fine)
+export DISPLAY=:0
+export XDG_DATA_HOME="$QA/share"
+export XDG_CONFIG_HOME="$QA/config"
+export GDK_BACKEND=x11
+export RUST_LOG=info
+: > /tmp/qa-p4b.out
+: > /tmp/qa-p4b.err
 "$BIN" >>/tmp/qa-p4b.out 2>>/tmp/qa-p4b.err &
+echo $! > /tmp/qa-p4b.pid
+sleep 3
+wmctrl -x -r Bellman.Bellman -e 0,40,40,960,640 || true
 
+# 5. Drive GUI + capture
 export BELLMAN_CLI=/tmp/bellman-cli-schema3
 export BELLMAN_QA_DATA="$QA/share/io.bellman.desktop"
 python3 scripts/capture_qa_p4b.py
-# then: cp /tmp/qa-p4b.{out,err} docs/qa4-evidence/app-stdout.log / app-stderr.log
+
+# 6. Commit-ready log copies (raw; do not rewrite empty files as prose)
+cp -a /tmp/qa-p4b.out docs/qa4-evidence/app-stdout.log
+cp -a /tmp/qa-p4b.err docs/qa4-evidence/app-stderr.log
+cat /tmp/qa-p4b.out /tmp/qa-p4b.err > docs/qa4-evidence/app-combined.log
 ```
+
+If `CARGO_TARGET_DIR` is set (e.g. a shared target from another worktree), replace
+`BIN="$ROOT/target/release/bellman"` with
+`BIN="$CARGO_TARGET_DIR/release/bellman"`.
+
+### Paths tried for the WebKit empty-shell blocker
+
+| Path | Result |
+|---|---|
+| **(a) Real `:0` + NVIDIA** | **Works** — full UI paints; used for all evidence |
+| (b) Software under Xvfb (`LIBGL_ALWAYS_SOFTWARE`, `WEBKIT_DISABLE_*`, …) | Still empty shell (C8 rework); WebKitWebProcess alive but no pixels |
+| (c) Xephyr / DRI3 Xvfb config | Not required once (a) worked |
 
 ## Acceptance ledger
 
 | Item | Status | Evidence |
 |---|---|---|
 | WebKitGTK All/Week/Month/History | **PASS** | `p4b-all.png` (8 timers), week/month, `p4b-history.png` (4 records after Run now) |
-| Timer dialogs | **PASS** | kind combo matches fields (`once — one-shot…`); DST warning full text |
+| Timer dialogs | **PASS** | kind select shows full value (`once` / `weekly` / … after rework #3 short labels); DST warning full text |
 | 7-kind create/edit via GUI | **PASS** | `store-after-create.json` / `store-after-edit.json` |
 | 7-kind delete via GUI | **PASS** | 8× `DELETE OK` in `capture-run.log`; store emptied mid-session |
-| Preview vs `bellman next` | **PASS** | `p4b-dialog-preview-weekly.png` shows full `2026-07-29T05:00:00Z` and `+03:00 Europe/Helsinki` ×5; matches `cli-next-qa-weekly.txt` |
+| Preview vs `bellman next` | **PASS** | full `2026-07-29T05:00:00Z` + `+03:00 Europe/Helsinki` ×5 in `p4b-dialog-preview-weekly.png` and `p4b-dialog-1280x800.png` |
 | DST gap warning | **PASS** | `p4b-dialog-dst-gap.png` |
-| Layout 960 + larger, no clip of required data | **PASS** (rework #2) | Removed `table-layout:fixed`+ellipsis; dialog 860px + 3-col preview; Enabled visible; `p4b-dialog-1280x800.png` distinct from 960 preview |
-| WebKit pid + userAgent | **PASS with caveat** | pids in `webkit_pids*.json`; UA via lib default — see OPEN |
-| Per-shot `.meta.json` | **PASS** | committed next to each PNG |
-| App logs for rejects | **PASS** | raw teed files, **0 bytes** (app emitted nothing; no hand-written text) |
-| JSONL via Run now | **PASS** | 4 lines `fired`/`wake_delivered` |
+| Layout 960 + larger | **PASS** | no ellipsis on preview data; Enabled visible; large dialog shot distinct md5 |
+| WebKit pid + userAgent | **PASS with caveat** | see OPEN #2 |
+| Per-shot `.meta.json` | **PASS** | next to each PNG |
+| App logs for rejects | **PASS** | raw teed **0-byte** files |
+| JSONL via Run now | **PASS** | 4 lines `fired` / `wake_delivered` |
 
 ### OPEN / caveats (honest)
 
-1. **GUI create does not write `EventKind::Registered`** — only CLI/slot writers exist under `bellman-cli`. Own-card defect; evidence uses GUI **Run now** for JSONL instead. REPRO: create via GUI only → JSONL stays empty until Run now.
+1. **GUI create does not write `EventKind::Registered`** — only CLI/slot writers in `bellman-cli`. Own-card defect; session uses GUI **Run now** for JSONL. REPRO: create via GUI only → JSONL empty until Run now.
 
 2. **userAgent is library default, not live `navigator.userAgent`.**  
-   Method: `WebKit2.Settings.get_user_agent()` in the driver process (same `libwebkit2gtk-4.1` the app links; app never calls `set_user_agent`).  
-   Value: `Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15`  
-   Attempts: inspector server bind may fail if port busy (`userAgent.json`). Live page evaluate was not available without injecting JS into the product.
+   Method: `WebKit2.Settings.get_user_agent()` (same `libwebkit2gtk-4.1`; app never `set_user_agent`).  
+   Value: `Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15`
 
-3. **Form labels** (e.g. Weekdays csv legend) can still clip slightly at 960×640; **control values and preview numbers do not**.
+3. **Some form *labels*** (e.g. long Weekdays csv legend) can still clip slightly at 960×640. **Preview numbers and the occurrence-kind select value** are fully readable after rework #3 short option labels.
 
-4. **No `p4b-dialog-layout-fixed.png`** — removed; it was a byte-identical re-use of the preview shot (R2). Large-size proof is `p4b-dialog-1280x800.png` only (different geometry/md5 from the 960 preview).
+4. **No `p4b-dialog-layout-fixed.png`** — removed as a byte-identical re-use of the preview shot. Large-size dialog proof is only `p4b-dialog-1280x800.png`.
 
 ## Preview ↔ CLI parity (qa-weekly)
-
-On-screen (960 and 1280 dialogs):
 
 | # | Local | UTC | Offset / tz |
 |---|---|---|---|
 | 1 | 2026-07-29 08:00:00 | 2026-07-29T05:00:00Z | +03:00 Europe/Helsinki |
 | 2–5 | … | …T05:00:00Z | +03:00 Europe/Helsinki |
 
-CLI `bellman next`: `2026-07-29T05:00:00+00:00` … `2026-08-07T05:00:00+00:00` — matches.
+CLI: `2026-07-29T05:00:00+00:00` … `2026-08-07T05:00:00+00:00` — matches.
 
-## CSS changes on this card (product)
+## Product changes on this card
 
-- `.wizard.timer-dialog` width 860px (was 460 via wizard clash; was 760 after rework #0).
-- No `table-layout:fixed` / `text-overflow:ellipsis` on preview cells (rework #1 regression removed).
-- Preview table: Local / UTC / Offset·tz only (dropped redundant Date column).
+- Dialog width / overflow / preview columns (reworks #0–#2).
+- Kind `<option>` labels shortened to bare kind names (rework #3 / S3).
 
 ## Files
 

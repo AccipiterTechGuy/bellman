@@ -323,14 +323,16 @@
 
         <div class="form-row">
           <label for="td-kind">Occurrence kind</label>
+          <!-- Short labels so the closed select value is fully readable at
+               960×640 and 1280 (P4b S3). Kind-specific fields below carry the detail. -->
           <select id="td-kind" bind:value={form.occurrence.kind}>
-            <option value="once">once — one-shot at a specific datetime</option>
-            <option value="interval">interval — every N seconds</option>
-            <option value="daily">daily — every day at a wall-clock time</option>
-            <option value="weekly">weekly — chosen weekdays at a time</option>
-            <option value="monthly">monthly — day-of-month at a time</option>
-            <option value="yearly">yearly — month/day at a time</option>
-            <option value="cron">cron — power-user expression</option>
+            <option value="once">once</option>
+            <option value="interval">interval</option>
+            <option value="daily">daily</option>
+            <option value="weekly">weekly</option>
+            <option value="monthly">monthly</option>
+            <option value="yearly">yearly</option>
+            <option value="cron">cron</option>
           </select>
         </div>
 

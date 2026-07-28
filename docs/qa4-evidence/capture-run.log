@@ -1,12 +1,12 @@
 engine pids: {
   "WebKitWebProcess": [
-    "718951  718923 187712 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 50"
+    "722761  722732 187560 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 48"
   ],
   "WebKitNetworkProcess": [
-    "718942  718923 49384 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 21"
+    "722752  722732 49272 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 21"
   ],
   "bellman": [
-    "718923  718513 190340 /home/sami/bellman/.train-worktrees/2026-07-27_0012/target/release/bellman"
+    "722732  722374 189760 /home/sami/bellman/.train-worktrees/2026-07-27_0012/target/release/bellman"
   ]
 }
 userAgent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15
@@ -17,14 +17,14 @@ userAgent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, 
     field 'Name' -> 'qa-dst-gap' (want 'qa-dst-gap')
     field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
     field 'When' -> '2027-03-28T03:30:00' (want '2027-03-28T03:30:00')
-  captured p4b-dialog-dst-gap.png (960, 640) bytes=52301 mean=25.93 stdev=13.66 colors~5214
+  captured p4b-dialog-dst-gap.png (960, 640) bytes=49978 mean=25.83 stdev=13.33 colors~4929
 
 == CREATE qa-once (once) ==
   select_kind 'once' via keyboard (idx=0) combo_name='Occurrence kind'
     field 'Name' -> 'qa-once' (want 'qa-once')
     field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
     field 'When' -> '2027-03-28T03:30:00' (want '2027-03-28T03:30:00')
-  captured p4b-dialog-once-dialog.png (960, 640) bytes=53781 mean=26.09 stdev=13.5 colors~5433
+  captured p4b-dialog-once-dialog.png (960, 640) bytes=51401 mean=25.99 stdev=13.17 colors~5148
   store names after create: ['qa-dst-gap', 'qa-once']
 
 == CREATE qa-interval (interval) ==
@@ -46,7 +46,7 @@ userAgent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, 
     field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
     field 'Wall-clock' -> '08:00:00' (want '08:00:00')
     field 'Weekdays' -> 'mon,wed,fri' (want 'mon,wed,fri')
-  captured p4b-dialog-weekly-dialog.png (960, 640) bytes=69447 mean=28.07 stdev=13.73 colors~5338
+  captured p4b-dialog-weekly-dialog.png (960, 640) bytes=68149 mean=27.96 stdev=13.42 colors~5183
   store names after create: ['qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-once', 'qa-weekly']
 
 == CREATE qa-monthly (monthly) ==
@@ -72,7 +72,7 @@ userAgent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, 
     field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
     field 'Cron' -> '0 9 * * 1-5' (want '0 9 * * 1-5')
   store names after create: ['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once', 'qa-weekly', 'qa-yearly']
-  captured p4b-all.png (960, 640) bytes=96833 mean=37.54 stdev=16.3 colors~6416
+  captured p4b-all.png (960, 640) bytes=97229 mean=37.55 stdev=16.31 colors~6452
   captured p4b-week.png (960, 640) bytes=37531 mean=31.25 stdev=8.52 colors~2837
   captured p4b-month.png (960, 640) bytes=67078 mean=35.93 stdev=9.66 colors~3515
 
@@ -80,7 +80,7 @@ userAgent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, 
   Run now clicked for row0 name='qa-cron'
   Run now clicked for row1
   event log lines after Run now: 4
-  captured p4b-history.png (960, 640) bytes=39551 mean=27.24 stdev=7.74 colors~3063
+  captured p4b-history.png (960, 640) bytes=39481 mean=27.23 stdev=7.71 colors~3087
 
 == PREVIEW vs CLI (qa-weekly) ==
   open_edit attempt=0 n_edit=8 store=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once', 'qa-weekly', 'qa-yearly']
@@ -91,9 +91,9 @@ userAgent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, 
   try Edit[4] title='Edit "qa-monthly"' want='qa-weekly'
   try Edit[5] title='Edit "qa-once"' want='qa-weekly'
   try Edit[6] title='Edit "qa-weekly"' want='qa-weekly'
-  captured p4b-dialog-preview-weekly.png (960, 640) bytes=75664 mean=28.75 stdev=13.55 colors~5641
+  captured p4b-dialog-preview-weekly.png (960, 640) bytes=74369 mean=28.65 stdev=13.22 colors~5486
 cli next:
- next fires for "qa-weekly" (cf640c7a-e9e6-4f63-84c0-8dc3655cee8e):
+ next fires for "qa-weekly" (215a2b3c-1605-4977-9a74-97e4c0fb1ebe):
   1: 2026-07-29T05:00:00+00:00
   2: 2026-07-31T05:00:00+00:00
   3: 2026-08-03T05:00:00+00:00
@@ -168,7 +168,7 @@ cli next:
   try Edit[0] title='Edit "qa-cron"' want='qa-cron'
     field 'Cron' -> '30 9 * * 1-5' (want '30 9 * * 1-5')
   clicked Save
-  captured p4b-all-after-edit.png (960, 640) bytes=100100 mean=37.67 stdev=16.33 colors~6689
+  captured p4b-all-after-edit.png (960, 640) bytes=100467 mean=37.68 stdev=16.33 colors~6722
 deleting ['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
 
 == DELETE qa-cron ==
@@ -244,14 +244,14 @@ deleting ['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-
     field 'Wall-clock' -> '08:00:00' (want '08:00:00')
     field 'Weekdays' -> 'mon,wed,fri' (want 'mon,wed,fri')
   store names after create: ['qa-daily', 'qa-weekly']
-  captured p4b-all-1280x800.png (1280, 800) bytes=41792 mean=27.57 stdev=8.29 colors~4497
+  captured p4b-all-1280x800.png (1280, 800) bytes=41773 mean=27.57 stdev=8.29 colors~4508
   captured p4b-week-1280x800.png (1280, 800) bytes=43820 mean=28.86 stdev=6.8 colors~3317
   captured p4b-month-1280x800.png (1280, 800) bytes=67316 mean=32.98 stdev=7.82 colors~3153
-  captured p4b-history-1280x800.png (1280, 800) bytes=38304 mean=26.08 stdev=5.49 colors~2791
+  captured p4b-history-1280x800.png (1280, 800) bytes=38233 mean=26.08 stdev=5.47 colors~2815
   open_edit attempt=0 n_edit=2 store=['qa-daily', 'qa-weekly']
   try Edit[0] title='Edit "qa-daily"' want='qa-weekly'
   try Edit[1] title='Edit "qa-weekly"' want='qa-weekly'
-  captured p4b-dialog-1280x800.png (1280, 800) bytes=84021 mean=21.92 stdev=13.02 colors~6985
+  captured p4b-dialog-1280x800.png (1280, 800) bytes=82783 mean=21.86 stdev=12.81 colors~6844
 
 DONE {
   "display": ":0",
@@ -299,13 +299,13 @@ DONE {
   ],
   "webkit": {
     "WebKitWebProcess": [
-      "718951  718923 234956 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 50"
+      "722761  722732 252132 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 48"
     ],
     "WebKitNetworkProcess": [
-      "718942  718923 49704 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 21"
+      "722752  722732 49592 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 21"
     ],
     "bellman": [
-      "718923  718513 196304 /home/sami/bellman/.train-worktrees/2026-07-27_0012/target/release/bellman"
+      "722732  722374 197504 /home/sami/bellman/.train-worktrees/2026-07-27_0012/target/release/bellman"
     ]
   },
   "userAgent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",

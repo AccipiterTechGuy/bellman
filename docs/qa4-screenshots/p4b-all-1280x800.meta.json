@@ -4,10 +4,10 @@
     1280,
     800
   ],
-  "bytes": 41792,
+  "bytes": 41773,
   "mean_luma": 27.57,
   "stdev": 8.29,
-  "unique_colors_cap200k": 4497,
+  "unique_colors_cap200k": 4508,
   "window_id": "0x4800003",
   "wmctrl_geom": [
     30,

@@ -2,13 +2,13 @@ userAgent=Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, l
 ua_method=WebKit2.Settings.get_user_agent (lib default; not live navigator.userAgent)
 {
   "WebKitWebProcess": [
-    "718951  718923 234956 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 50"
+    "722761  722732 252132 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 48"
   ],
   "WebKitNetworkProcess": [
-    "718942  718923 49704 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 21"
+    "722752  722732 49592 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 21"
   ],
   "bellman": [
-    "718923  718513 196304 /home/sami/bellman/.train-worktrees/2026-07-27_0012/target/release/bellman"
+    "722732  722374 197504 /home/sami/bellman/.train-worktrees/2026-07-27_0012/target/release/bellman"
   ]
 }
 app_stdout_bytes=0
