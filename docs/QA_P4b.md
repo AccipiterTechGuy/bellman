@@ -90,15 +90,20 @@ If `CARGO_TARGET_DIR` is set (e.g. a shared target from another worktree), repla
 
 ### OPEN / caveats (honest)
 
-1. **GUI create does not write `EventKind::Registered`** — only CLI/slot writers in `bellman-cli`. Own-card defect; session uses GUI **Run now** for JSONL. REPRO: create via GUI only → JSONL empty until Run now.
+1. **GUI create does not write `EventKind::Registered`** — only CLI/slot writers in `bellman-cli`. Own-card defect; session uses GUI **Run now** for JSONL. REPRO: create via GUI only → JSONL empty until Run now.  
+   WHERE `src-tauri/src/commands.rs:291-303` (no log write) vs `crates/bellman-cli/src/commands.rs:315-328` (`registered`, message `cli add`). `crates/bellman-core/src/events/record.rs:12` documents the kind as "Timer created (CLI / slot / GUI)", so the GUI is not meeting a stated contract.  
+   **Owner: card `bellman-c8f-gui-create-writes-no-lifecycle-event-registered`** (filed from this run — not patched here, per this card's "defect to file, not to patch").
 
 2. **userAgent is library default, not live `navigator.userAgent`.**  
    Method: `WebKit2.Settings.get_user_agent()` (same `libwebkit2gtk-4.1`; app never `set_user_agent`).  
    Value: `Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15`
 
-3. **Some form *labels*** (e.g. long Weekdays csv legend) can still clip slightly at 960×640. **Preview numbers and the occurrence-kind select value** are fully readable after rework #3 short option labels.
+3. **Some form *labels*** (e.g. long Weekdays csv legend) can still clip slightly at 960×640 — the legend renders `mon,tue,wed,thu,fri,sat,su` with the trailing `n)` cut, at 960×640 **and** at 1280×800. No data is hidden and no control is blocked: **preview numbers and the occurrence-kind select value** are fully readable after rework #3 short option labels.  
+   **Owner: card `bellman-c8d-timer-input-ergonomics-pickers-date-formats-validation`**, whose scope replaces this CSV field with seven weekday toggle chips — the legend disappears with the field. Left OPEN here rather than restyled, per this card's "do NOT re-fix or refactor C8 code here".
 
-4. **No `p4b-dialog-layout-fixed.png`** — removed as a byte-identical re-use of the preview shot. Large-size dialog proof is only `p4b-dialog-1280x800.png`.
+4. **Kind `<option>` labels lost their inline descriptions** to fix the truncated select value (rework #3). A first-time user gets no in-place explanation of each kind; the kind-specific field labels below the select still describe the parameters. C8d rebuilds this control and should restore the descriptions in a form that fits (e.g. a helper line under the select, not inside the option text).
+
+5. **No `p4b-dialog-layout-fixed.png`** — removed as a byte-identical re-use of the preview shot. Large-size dialog proof is only `p4b-dialog-1280x800.png`.
 
 ## Preview ↔ CLI parity (qa-weekly)
 
