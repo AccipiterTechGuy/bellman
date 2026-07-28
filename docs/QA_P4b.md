@@ -76,7 +76,7 @@ If `CARGO_TARGET_DIR` is set (e.g. a shared target from another worktree), repla
 
 | Item | Status | Evidence |
 |---|---|---|
-| WebKitGTK All/Week/Month/History | **PASS** | `p4b-all.png` (8 timers), week/month, `p4b-history.png` (4 records after Run now) |
+| WebKitGTK All/Week/Month/History | **PASS** | `p4b-all.png` (7 timers), week/month, `p4b-history.png` (12 records after Run now: 8 registered + 4 fired/wake) |
 | Timer dialogs | **PASS** | kind select shows full value (`once` / `weekly` / … after rework #3 short labels); DST warning full text |
 | 7-kind create/edit via GUI | **PASS** | `store-after-create.json` / `store-after-edit.json` |
 | 7-kind delete via GUI | **PASS** | 8× `DELETE OK` in `capture-run.log`; store emptied mid-session |
@@ -86,13 +86,12 @@ If `CARGO_TARGET_DIR` is set (e.g. a shared target from another worktree), repla
 | WebKit pid + userAgent | **PASS with caveat** | see OPEN #2 |
 | Per-shot `.meta.json` | **PASS** | next to each PNG |
 | App logs for rejects | **PASS** | raw teed **0-byte** files |
-| JSONL via Run now | **PASS** | 4 lines `fired` / `wake_delivered` |
+| JSONL via Run now | **PASS** | 14 lines total (10 `registered` / `gui create`, 4 `fired` / `wake_delivered`) |
 
 ### OPEN / caveats (honest)
 
-1. **GUI create does not write `EventKind::Registered`** — only CLI/slot writers in `bellman-cli`. Own-card defect; session uses GUI **Run now** for JSONL. REPRO: create via GUI only → JSONL empty until Run now.  
-   WHERE `src-tauri/src/commands.rs:291-303` (no log write) vs `crates/bellman-cli/src/commands.rs:315-328` (`registered`, message `cli add`). `crates/bellman-core/src/events/record.rs:12` documents the kind as "Timer created (CLI / slot / GUI)", so the GUI is not meeting a stated contract.  
-   **Owner: card `bellman-c8f-gui-create-writes-no-lifecycle-event-registered`** (filed from this run — not patched here, per this card's "defect to file, not to patch").
+1. **GUI create does not write `EventKind::Registered`** — **RESOLVED** on card `2026-07-28_0002` (this card). `create_timer` now emits `EventKind::Registered` with message `gui create`.
+   Sibling commands `update_timer`, `delete_timer`, and toggle `set_enabled` / `set_pause_all` do NOT emit lifecycle events because there are no matching `EventKind` variants for update/delete. This gap is recorded and left for C11.
 
 2. **userAgent is library default, not live `navigator.userAgent`.**  
    Method: `WebKit2.Settings.get_user_agent()` (same `libwebkit2gtk-4.1`; app never `set_user_agent`).  
@@ -129,3 +128,22 @@ docs/QA_P4b.md
 docs/qa4-screenshots/p4b-*.png + p4b-*.meta.json
 docs/qa4-evidence/*
 ```
+
+## Screenshot Descriptions
+
+- **p4b-all.png**: Shows the main list view with 7 created timers (qa-daily, qa-dst-gap, qa-interval, qa-monthly, qa-once, qa-weekly, qa-yearly) visible at 960x640.
+- **p4b-all-after-edit.png**: Shows the main list view after editing all 8 timers (e.g. qa-once renamed to qa-once-edited) at 960x640.
+- **p4b-all-after-delete.png**: Shows the main list view empty after deleting all timers at 960x900.
+- **p4b-all-empty.png**: Shows the initial empty state of the main list view before creating any timers at 960x640.
+- **p4b-dialog-dst-gap.png**: Shows the create dialog for qa-dst-gap with a timezone gap warning message visible at 960x640.
+- **p4b-dialog-once-dialog.png**: Shows the create dialog configured for the qa-once timer at 960x640.
+- **p4b-dialog-weekly-dialog.png**: Shows the create dialog configured for the qa-weekly timer at 960x640.
+- **p4b-dialog-preview-weekly.png**: Shows the edit dialog for qa-weekly, featuring the 5-occurrence preview side-pane on the right at 960x640.
+- **p4b-week.png**: Shows the weekly calendar view displaying the scheduled occurrences for the week at 960x640.
+- **p4b-month.png**: Shows the monthly calendar view displaying the scheduled occurrences for the month at 960x640.
+- **p4b-history.png**: Shows the Run History tab containing 12 records (8 `registered` events from creation, and 4 `fired`/`wake_delivered` from running timers) at 960x640.
+- **p4b-all-1280x800.png**: Shows the main list view at 1280x800 resolution with qa-daily and qa-weekly timers.
+- **p4b-week-1280x800.png**: Shows the weekly calendar view at 1280x800 resolution.
+- **p4b-month-1280x800.png**: Shows the monthly calendar view at 1280x800 resolution.
+- **p4b-history-1280x800.png**: Shows the Run History tab at 1280x800 resolution containing the registration and fire events.
+- **p4b-dialog-1280x800.png**: Shows the edit dialog with preview side-pane at 1280x800 resolution.

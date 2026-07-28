@@ -8,7 +8,7 @@
         "type": "none"
       },
       "enabled": true,
-      "id": "15f5d7eb-5627-4a69-ab31-93b8648abd5c",
+      "id": "f59cbf8c-64b8-4581-a2d5-14599b43dea5",
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -50,7 +50,7 @@
         "type": "none"
       },
       "enabled": true,
-      "id": "d1c36f8d-6f3b-4376-af3b-c0cb81d65d63",
+      "id": "aa983664-9a1a-432a-8e63-5c17cbb7a09e",
       "last_fired": null,
       "max_runs": null,
       "misfire": {

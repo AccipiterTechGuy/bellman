@@ -294,9 +294,23 @@ pub fn create_timer(
     state: State<'_, AppState>,
     input: CreateTimerInput,
 ) -> Result<TimerDto, String> {
+    do_create_timer(&state, input)
+}
+
+pub(crate) fn do_create_timer(state: &AppState, input: CreateTimerInput) -> Result<TimerDto, String> {
     let new = input.into_new_timer()?;
     let mut store = state.store.lock();
     let timer = store.create_timer(new).map_err(|e| e.to_string())?;
+    
+    // Lifecycle: emit Registered event (analogous to the CLI)
+    if let Ok(mut log) = bellman_core::EventLog::open_under(&state.data_dir) {
+        let _ = log.emit(
+            bellman_core::events::EventRecord::new(bellman_core::events::EventKind::Registered)
+                .with_timer(timer.id, timer.name.clone())
+                .with_message("gui create"),
+        );
+    }
+
     if let Some(h) = state.control_handle.lock().as_ref() {
         h.refill();
     }
@@ -467,4 +481,103 @@ fn apply_autostart(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
         let _ = mgr.disable();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bellman_core::store::Store;
+    use bellman_core::NotifySink;
+    use crate::config::Config;
+    use tempfile::tempdir;
+    use std::fs;
+    use std::sync::Arc;
+    use std::io::Read;
+
+    struct DummySink;
+    impl NotifySink for DummySink {
+        fn show(&self, _title: &str, _body: &str) -> bellman_core::NotifyOutcome {
+            bellman_core::NotifyOutcome {
+                title: _title.into(),
+                body: _body.into(),
+                stubbed: true,
+            }
+        }
+    }
+
+    fn create_test_state(data_dir: std::path::PathBuf) -> AppState {
+        let store = bellman_core::open_store(&data_dir.join("timers.db")).unwrap();
+        AppState::new(
+            store,
+            data_dir,
+            Config::default(),
+            false,
+            Arc::new(DummySink),
+        )
+    }
+
+    fn dummy_input() -> CreateTimerInput {
+        CreateTimerInput {
+            name: "test timer".into(),
+            occurrence: crate::web::WebOccurrenceDto {
+                occ: "once".into(),
+                tz: "UTC".into(),
+                once_at: Some("2050-01-01T00:00:00".into()),
+                at: None,
+                every_secs: None,
+                anchor: None,
+                day: None,
+                month: None,
+                expr: None,
+                days: None,
+            },
+            action: crate::web::WebActionDto::Notify {
+                title: "title".into(),
+                body: "body".into(),
+            },
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn test_create_timer_logs_registered_event() {
+        let dir = tempdir().unwrap();
+        let data_dir = dir.path().to_path_buf();
+        let state = create_test_state(data_dir.clone());
+        
+        let result = do_create_timer(&state, dummy_input());
+        assert!(result.is_ok());
+        let dto = result.unwrap();
+
+        // Verify the log was written
+        let log_path = data_dir.join("logs").join("events.current.jsonl");
+        assert!(log_path.exists(), "log file should be created");
+
+        let mut file = fs::File::open(&log_path).unwrap();
+        let mut content = String::new();
+        file.read_to_string(&mut content).unwrap();
+
+        assert!(content.contains("\"registered\""), "should contain registered event");
+        assert!(content.contains("\"gui create\""), "should contain gui create message");
+        assert!(content.contains(&dto.id), "should contain timer id");
+        assert!(content.contains(&dto.name), "should contain timer name");
+    }
+
+    #[test]
+    fn test_create_timer_succeeds_when_log_unwritable() {
+        let dir = tempdir().unwrap();
+        let data_dir = dir.path().to_path_buf();
+        let state = create_test_state(data_dir.clone());
+
+        // Make the logs directory unwritable
+        let logs_dir = data_dir.join("logs");
+        fs::create_dir_all(&logs_dir).unwrap();
+        let mut perms = fs::metadata(&logs_dir).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&logs_dir, perms).unwrap();
+
+        // The command should still succeed
+        let result = do_create_timer(&state, dummy_input());
+        assert!(result.is_ok(), "command should succeed even if log fails");
+    }
 }
