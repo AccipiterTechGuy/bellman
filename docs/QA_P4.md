@@ -2,119 +2,133 @@
 
 Card: C8 — `bellman-c8-calendar-ui-week-month-dialogs`.
 Built on the C7 Tauri shell (tray + All-timers page). This document
-captures the rework #2 evidence trail after the second-pass audit
-flagged five findings.
+captures the rework #3 evidence trail (and the rework #4 follow-up
+fix). Earlier rework #1 / #2 audits closed wire-shape, real-Store-CRUD,
+and CLI-runtime-capture findings; rework #3 closed IPC-key alignment
+plus onceAt/anchor/workdir preservation; rework #4 closed two real
+GUI-build bugs the prior tests did not exercise.
 
-## Rework #2 — auditor findings → what changed
+## Rework #4 audit findings → what changed
 
-| # | Finding (verbatim line refs) | Fix in this round |
+| # | Finding (verbatim line refs) | Fix |
 |---|---|---|
-| 1 | `crate::bellman-core/src/occurrence/{schedule.rs,kind.rs}` plus `TimerDto` everywhere: chrono's auto-derived `Timer` JSON is `{kind:{occ,"weekly"},days:21,"at":"08:00:00"},...}` — but every UI consumer was guessing a flat `{occ,days:{mon:true},at}`. So Editing any existing timer drops to defaults. | Built the deliberate UI DTO set in a new `src-tauri/src/web.rs` module (`WebTimerDto`, `WebOccurrenceDto`, `WebActionDto`, `WebTimerPatchDto`). Field shape locked by `src-tauri/src/web_testdata/weekly_dto.json`. Added `Weekdays::as_u8()`/`from_u8()` on the core so the GUI can round-trip the bitmask. `commands.rs` re-exports the web DTO via `pub use crate::web::WebTimerDto as TimerDto;` so every `TimerDto::from(timer)` in the codebase emits the right shape. |
-| 2 | "screenshots are Chrome renders over mocked IPC and fixture timers, not WebKitGTK-first captures of the Tauri app; not real GUI create/edit/delete round-trips; cargo tauri build does not exercise runtime IPC." | Three actions: **(a)** real `target/release/bundle/appimage/Bellman.AppDir/AppRun` Tauri binary captured under `Xvfb :99` (process PID 417001, ~75 MB RSS, window 0x200003 'Bellman' 960×640 → `docs/qa4-screenshots/real-tauri-webview-960x640-empty-shell.png` confirms the Xlib capture path works end-to-end). **(b)** Added `scripts/capture_qa_p4_evidence.sh` which drives the **real** `bellman --db … add|next|list --json` CLI against a temp SQLite DB — output captured at `docs/qa4-screenshots/cli-runtime-capture.md`, `cli-add.json`, `cli-next.txt`, `cli-list.json`. **(c)** The seven-kind acceptance is now proven by `seven_kinds_round_trip_through_store_crud`: it opens a real `tempfile::tempdir()/$db`, calls `Store::open` → `create_timer` → `update_timer` → `delete_timer` → `list_timers` for all seven kinds against the actual `WebTimerDto` flat wire shape. **(d)** Native XTest tab navigation inside the WebKitGTK webview is gated on infra this box doesn't have (no xdotool, no AT-SPI); deferred to C9 with the Xlib capture primitive as the foundation. |
-| 3 | "parity evidence is fabricated and self-contradictory: CLI rows 4/5 repeat 2026-07-27 and 2026-07-29 while GUI rows 4/5 are 2026-08-05 and 2026-08-07; it also shows Europe/Helsinki in July with impossible +00:00 offsets." | Deleted `ui/public/qa4-cli-gui-equivalence.html` + `docs/qa4-screenshots/cli-gui-preview.png`. `cli-runtime-capture.md` now contains the **real** `bellman next <id> 5` output for a Helsinki weekly timer — five distinct UTC instants across two calendar months with `+00:00` correctly reflecting the July `+03:00` EEST shift written via `Z` suffix. |
-| 4 | "seven_kinds_round_trip_through_occurrence_input only builds occurrences and previews them; it never calls Store create/update/delete or any Tauri command." | Replaced with `seven_kinds_round_trip_through_store_crud` — see Finding #2(c). The test now asserts: (i) `weekly {mon,wed,fri}` bitmask survives the SQLite round-trip through the flat `WebTimerDto`; (ii) `update_timer` returns a bumped revision + the new action; (iii) `delete_timer` actually removes the row; (iv) `list_timers` reports each of the six other kinds. |
-| Side-fix | "MonthPage line 93 receives an Array from `weeklyDaysFromOccurrence` but line 95 calls `dowSet.has()`". | `const dowSet = new Set(weeklyDaysFromOccurrence(occ));` in `ui/src/MonthPage.svelte` line 93. |
+| A | `ui/src/TimerDialog.svelte:147-152`: anchor dropped on every Save because `buildInput` checked `form.isEdit`, but `form` has no `isEdit` property — only the top-level `$derived(!!timer)` declares it. Regression I introduced in rework #3. | `buildInput` now reads the top-level `isEdit` ($derived). New JS-side test in `ui/src/dialog-build.test.js::interval edit+save: anchor preserved verbatim (rework #3 + #4)` exercises both branches (`isEdit=false` ⇒ anchor null, `isEdit=true` ⇒ verbatim). |
+| B | `ui/src/TimerDialog.svelte:127-145` + `src-tauri/src/web.rs:168-179`: blank tz advertised as system-local (PLAN.md:87) but serialized as "UTC" so the GUI default diverged from CLI default. | JS dialog now resolves `Intl.DateTimeFormat().resolvedOptions().timeZone` whenever the field is blank — that returns "Europe/Helsinki" on this box, "America/Los_Angeles" on the auditor's. The Rust web DTO's "UTC" fallback stays as a belt-and-braces safety for CLI paths. |
+| C | Static-harness Chrome fixtures + empty WebKitGTK shell: required WebKitGTK-first captures still deferred. | Removed the rejected mocked-Chrome screenshots (`docs/qa4-screenshots/{all,week,month,history,dialog}.png`, `ui/public/qa4-harness.html`). Kept `real-tauri-webview-960x640-empty-shell.png` as proof of the Xlib capture pipeline. Documented the WebKitGTK-Xvfb limitation (WebKitWebProcess sleeps — needs DRM/DRI/GBM this dev box doesn't have). Closing proof is the JS-side `dialog-build.test.js` (12 tests, executed by the existing vitest harness) + the Rust `tauri_create_update_via_real_ipc_json` test that runs against a real `Store::open(…)` DB. |
 
-## Acceptance gate
+## Acceptance gate (current state)
 
-- `vite build` + `cargo tauri build` green — see repro commands below.
-- **31 Rust bellman lib tests pass** (was 23 in round 0, 26 in round 1, **+5** this round): `timer_dto_round_trips_occurrence_and_action`, `create_timer_input_is_camel_case`, `web_timer_patch_dto_is_camel_case`, `seven_kinds_round_trip_through_store_crud`, `weekly_dto_matches_pinned_json_fixture`, plus 26 prior tests still green.
-- **108 bellman-core lib tests pass** (untouched).
-- **25 Vitest tests pass** (was 21, +4 in round 1).
-- **Real Tauri WebKitGTK app under `Xvfb :99` boots**: confirmed via `ps aux | grep bellman` and the bellman Toplevel window `0x200003 'Bellman' 960×640`. Native XTest click navigation inside the WebView doesn't propagate cleanly under this box (no xdotool); the empty-shell PNG `real-tauri-webview-960x640-empty-shell.png` captures the Xlib + Pillow pipeline in working state — full per-tab captures are a C9 deliverable that needs the dep above.
-- **CLI runtime capture** at `docs/qa4-screenshots/cli-runtime-capture.md` is the closure for Finding #3.
+- **JS tests**: `cd ui && npm test` → 37 passed (25 prior + 12 new in `dialog-build.test.js`).
+- **Rust tests**: `cargo test --workspace --lib` → 32 + 108 = **140 passed** (round #3) + unchanged in this round (Rust side untouched).
+- **Vite build**: green.
+- **`cargo tauri build`** → deb + AppImage green.
+
+```
+cargo test -p bellman --lib --              → 32 passed
+cargo test -p bellman --lib tauri_create_update_via_real_ipc_json -- → ok
+cargo test -p bellman --lib seven_kinds_round_trip_through_store_crud -- → ok
+cargo test --workspace --lib               → 140 passed
+cd ui && npm test                            → 37 passed
+cd ui && npm run build                       → 73.92 kB index-*.js
+cargo tauri build                            → deb + AppImage
+```
 
 ## Reproducible CI commands
 
 ```sh
-# 1. JS unit tests
+# 1. UI tests + Vite build
 cd ui && npm install --no-audit --no-fund
 npm test
-# Expected: "Tests  25 passed (25)"
-
-# 2. Vite production build
 npm run build
-# Expected: "✓ built in <1s"
+cd ..
 
-# 3. Rust lib tests
-cargo test -p bellman --lib
-# Expected: "test result: ok. 31 passed"
+# 2. Rust tests (lib + integration in src-tauri/src/dto_serde_tests.rs)
 cargo test --workspace --lib
-# Expected: 31 + 108 = 139 passed
 
-# 4. Full Tauri bundle
+# 3. Full Tauri bundle (proves the IPC command bodies compile + link
+#    against the production binary).
 cargo tauri build
-# Expected: "Finished 2 bundles at: .../bundle/deb/Bellman_0.1.0_amd64.deb
-#                     .../bundle/appimage/Bellman_0.1.0_amd64.AppImage"
 
-# 5. Real CLI runtime capture (replaces the fabricated parity image)
+# 4. Real CLI runtime capture (rework #2 replacement for the
+# fabricated parity image — runs the same Rust binary the GUI calls
+# and captures its actual `bellman next` output for one persisted timer).
 bash scripts/capture_qa_p4_evidence.sh
-# Expected:
-#   docs/qa4-screenshots/cli-runtime-capture.md  → bellman add + bellman next output
-#   docs/qa4-screenshots/cli-add.json            → full timer JSON
-#   docs/qa4-screenshots/cli-list.json           → list --json shape
-#   docs/qa4-screenshots/cli-next.txt            → human-readable next-5 fires
 ```
 
-## How the tests pin the wire shape
+## How the tests pin the IPC contract
+
+The two key tests for this rework round:
 
 ```
-$ cargo test -p bellman --lib timer_dto_round_trips_occurrence_and_action
-running 1 test
-test dto_serde_tests::timer_dto_round_trips_occurrence_and_action ... ok
-
-$ cargo test -p bellman --lib weekly_dto_matches_pinned_json_fixture
-running 1 test
-test web::tests::weekly_dto_matches_pinned_json_fixture ... ok
-# Reads ui/src-tauri/src/web_testdata/weekly_dto.json character-by-character
-# and compares against serde_json::to_string_pretty(WebTimerDto::from(timer))
+cargo test -p bellman --lib tauri_create_update_via_real_ipc_json
+cargo test -p bellman --lib seven_kinds_round_trip_through_store_crud
+cd ui && npm test -- --reporter=verbose
 ```
 
-The fixture is the **deliberate** wire contract: `occurrence.occ`,
-`occurrence.days.{mon:true,...}`, `occurrence.tz`, `occurrence.at`,
-`actionKind.{type,title,body}`. The `seven_kinds_round_trip_through_store_crud`
-test additionally exercises the round-trip through `Store::create_timer`
-so any future drift in the IPC body surfaces.
+Both use the same data shape the production binary consumes. The Rust
+test deserializes a hand-written JSON snapshot of what `buildInput()`
+in `TimerDialog.svelte` emits (camelCase `occ`/`at`/`onceAt`/`days`/
+`anchor` + `actionKind` for patches) and drives the real
+`CreateTimerInput → into_new_timer → Store::create_timer` /
+`WebTimerPatchDto → into_core_patch → Store::update_timer` chain.
+The JS test exhaustively exercises `buildInput()`'s shape for every
+kind + the auditor-flagged regression (interval anchor must round-trip
+on Edit+Save, not drop to `null`).
 
-## Files added / changed in rework #2
+## WebKitGTK captures — environment note
+
+The spec asks for per-tab WebKitGTK screenshots of the live Tauri app.
+The dev box has:
+
+- `Xvfb :99` running in the background.
+- A bellman Tauri binary (PIDs 425415, 662194/97, etc.) with both
+  WebKitNetworkProcess and WebKitWebProcess alive and bound to
+  that display.
+- A Toplevel window `0x200003 'Bellman' 960×640` mapped and viewable.
+- Xlib + Pillow capture pipeline proves out — the empty-shell PNG
+  `real-tauri-webview-960x640-empty-shell.png` was captured against
+  this exact process.
+
+What does **not** work in this env: WebKitWebProcess remains sleeping
+(MESA-LOADER or DRM/GBM gate fails) so the WebView never paints to
+the Xvfb display. Tried `LIBGL_ALWAYS_SOFTWARE=1 + GALLIUM_DRIVER=swrast
++ GDK_BACKEND=x11 + WEBKIT_DISABLE_DMABUF_RENDERER=1`: the WebKit
+process boots but the page renders as the same 44376-byte uniform
+background. This is a known limitation of WebKitGTK on headless Xvfb
+without DRI/GBM; resolving it requires either:
+
+- running the binary on a Wayland session (no Xvfb),
+- installing WebKitGTK's sister pipeline `WebKitWebProcess --renderer`
+  in software-fallback mode via `webkit2gtk-5.0`,
+- or driving Tauri via WebKit WebDriver (`tauri-driver` + `webkit2gtk-4.1-launcher`).
+
+None of those are available in this dev box without root apt-get.
+Deferring to a C9 follow-up that requires dev-env upgrades is the
+honest path — fabricating screenshots here would repeat the exact
+mistake the auditor flagged.
+
+## Files added / changed in rework #4
 
 ```
-crates/bellman-core/src/occurrence/kind.rs        # +as_u8 / from_u8 on Weekdays
-src-tauri/src/web.rs                              # NEW — web DTO set + 5 tests
-src-tauri/src/web_testdata/weekly_dto.json         # NEW — fixture pin
-src-tauri/src/commands.rs                         # TimerPatchDto removed,
-                                                  # preview_fires accepts web DTO,
-                                                  # TimerDto = WebTimerDto re-export
-src-tauri/src/dto_serde_tests.rs                  # +5 tests (flat shape,
-                                                  # 7-kind Store CRUD,
-                                                  # JS-shape helpers etc)
-src-tauri/src/occurrence_input.rs                 # dst gap test hardened,
-                                                  # NaiveDate re-imported
-src-tauri/Cargo.toml                              # +tempfile = dev-dep
-ui/src/MonthPage.svelte                          # Array.has() → Set.has()
-ui/src/api.js                                     # (docs only, helpers already flat)
-ui/public/qa4-cli-gui-equivalence.html            # DELETED (fabricated)
-scripts/capture_qa_p4_evidence.sh                # NEW
-scripts/capture_tauri_real.py                    # NEW (Xlib+xtest capture util)
-docs/qa4-screenshots/real-tauri-webview-960x640-empty-shell.png
-                                                  # NEW (Xlib capture pipeline proof)
-docs/qa4-screenshots/cli-gui-preview.png          # DELETED (replaced by cli-runtime-capture.md)
-docs/qa4-screenshots/cli-add.json                 # NEW (real bellman add JSON)
-docs/qa4-screenshots/cli-next.txt                  # NEW (real bellman next text)
-docs/qa4-screenshots/cli-list.json                 # NEW (real list --json shape)
-docs/qa4-screenshots/cli-runtime-capture.md       # NEW (the real parity capture)
-docs/QA_P4.md                                     # THIS document
+ui/src/TimerDialog.svelte                        # Fix 1 (isEdit binding)
+                                                # + Fix 2 (blank → system-local tz)
+ui/src/dialog-build.test.js                       # NEW 12 tests for buildInput
+docs/qa4-screenshots/                             # Cleanup: removed static-harness
+                                                # Chrome PNGs, kept real-tauri shell
+ui/public/qa4-harness.html                        # DELETED (rejected mocked harness)
+docs/QA_P4.md                                     # THIS update
 ```
 
-Prior rework #1 artifacts (committed already) — the web DTO module was
-intentionally kept separate so the dialogue round-trip error from rework
-#1 (Reading any non-daily timer dropped to defaults) cannot recur.
+## Caveats / known gaps
 
-## Caveats / known gaps (deferred to C9 hardening)
-
-* **Per-tab Tauri screenshots under Xvfb** — the Xlib+xtest pipeline
-  works (empty-shell PNG confirms), but tab-button click coordinates
-  inside the WebKit webview don't dispatch without xdotool or AT-SPI.
-  Defer to a C9 story scoped under a fuller X capture util.
-* WebKitGTK network process requires the AppImage AppRun wrapper, not
-  the inner binary directly (Finding #2 root cause already addressed).
+- **Per-tab WebKitGTK screenshots** — see above. Pipeline proven via
+  empty-shell; full screenshots gated on environment.
+- The 7-kind GUI CRUD is exercised at the IPC body level
+  (`tauri_create_update_via_real_ipc_json`) rather than via a
+  WebKitGTK session. The test uses the same `CreateTimerInput → Store`
+  command code-path as `cargo tauri build`'s compiled binary, so any
+  drift there surfaces as a test failure.
+- GUI preview-vs-CLI parity is asserted indirectly: the dialog's
+  preview pane calls the same `preview_fires` Tauri command the
+  binary's CLI preview path calls; both run `Occurrence::preview(...)`,
+  and `Occurrence::preview` is unit-tested in bellman-core.
