@@ -1,0 +1,19 @@
+{
+  "file": "p4e-dialog-nearby-not-collision.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 80361,
+  "mean_luma": 34.04,
+  "stdev": 10.91,
+  "unique_colors_cap200k": 4747,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    60,
+    122,
+    960,
+    640
+  ],
+  "phase": "nearby-deduped"
+}

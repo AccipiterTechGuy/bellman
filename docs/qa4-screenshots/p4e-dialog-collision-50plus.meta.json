@@ -1,0 +1,26 @@
+{
+  "file": "p4e-dialog-collision-50plus.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 91810,
+  "mean_luma": 36.03,
+  "stdev": 11.32,
+  "unique_colors_cap200k": 4447,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "phase": "bounded-work",
+  "store_timers": 56,
+  "dialog_response_ms_wait": 2193,
+  "caps": {
+    "window_secs": 300,
+    "horizon_secs": 1209600,
+    "max_fires_per_timer": 48
+  }
+}

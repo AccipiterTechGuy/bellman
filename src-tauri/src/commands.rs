@@ -465,6 +465,37 @@ fn preview_fires_from_occurrence(
         .collect()
 }
 
+/// `query_neighbours` — store-aware "what else fires at/near these instants?"
+///
+/// Used by the timer dialog (Next 5 fires collision names + nearby panel) and
+/// by the All timers list (shared next-fire density). Reads the store and
+/// expands via the same `Occurrence::preview` path as `preview_fires`.
+/// Does **not** change scheduling, store schema, or occurrence semantics.
+///
+/// Thresholds / caps: see [`crate::neighbours`] named constants
+/// (`NEIGHBOUR_WINDOW_SECS`, `NEIGHBOUR_HORIZON_SECS`,
+/// `NEIGHBOUR_MAX_FIRES_PER_TIMER`).
+#[tauri::command]
+pub fn query_neighbours(
+    state: State<'_, AppState>,
+    candidates: Vec<DateTime<Utc>>,
+    exclude_timer_id: Option<String>,
+    window_secs: Option<i64>,
+) -> Result<crate::neighbours::QueryNeighboursResponse, String> {
+    let exclude = crate::neighbours::parse_exclude_id(exclude_timer_id.as_deref())?;
+    let window = window_secs.unwrap_or(crate::neighbours::NEIGHBOUR_WINDOW_SECS);
+    let store = state.store.lock();
+    let timers = store.list_timers().map_err(|e| e.to_string())?;
+    drop(store);
+    Ok(crate::neighbours::query_neighbours_from_timers(
+        &timers,
+        &candidates,
+        exclude,
+        window,
+        Utc::now(),
+    ))
+}
+
 // `TimerPatchDto` was removed in rework #2: the GUI now sends the
 // `WebTimerPatchDto` from `crate::web` directly. See `crate::web` for
 // the flat wire shape and round-trip logic.

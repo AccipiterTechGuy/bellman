@@ -10,7 +10,7 @@
   } from './api.js';
 
   /** @type {(t:any) => void} */
-  let { onEdit, onToast, timers = [], tick = 0 } = $props();
+  let { onEdit, onCreateDate, onToast, timers = [], tick = 0 } = $props();
 
   let weekAnchor = $state(new Date());
 
@@ -114,6 +114,17 @@
   }
 
   let weekLabel = $derived(`${isoDate(weekAnchor)} – ${isoDate(addDays(weekAnchor, 6))}`);
+
+  function dayIsoForCol(colIndex) {
+    const weekStart = isoWeekStart(weekAnchor);
+    return isoDate(addDays(weekStart, colIndex));
+  }
+
+  function onEmptyDayClick(colIndex) {
+    if (typeof onCreateDate === 'function') {
+      onCreateDate(dayIsoForCol(colIndex));
+    }
+  }
 </script>
 
 <section class="section-title">
@@ -127,28 +138,34 @@
   <button class="btn" onclick={() => shiftWeek(1)} aria-label="next week">Next ▶</button>
 </div>
 
-{#if timers.length === 0}
-  <div class="empty">
-    <p>No timers yet.</p>
-    <p>Create a weekly or daily timer from <em>All timers</em> and it will appear here.</p>
-  </div>
-{:else}
-  <div class="week-grid">
-    {#each WEEKDAY_LABELS as label, i}
-      <div class="week-col">
-        <header>{label}</header>
-        {#if cells[i].length === 0}
-          <div class="empty-cell">—</div>
-        {:else}
-          {#each cells[i] as chip}
-            <button class="chip" class:interval={chip.intervalBadge} onclick={() => onEdit(chip.timer)}>
-              <div class="chip-time">{chip.localTime}</div>
-              <div class="chip-name" title={chip.timer.name}>{chip.timer.name}</div>
-              <div class="chip-summary">{chip.timer.summary}</div>
-            </button>
-          {/each}
-        {/if}
-      </div>
-    {/each}
-  </div>
-{/if}
+<div class="week-grid">
+  {#each WEEKDAY_LABELS as label, i}
+    <div class="week-col">
+      <header>
+        <span>{label}</span>
+        <span class="day-count" title="{cells[i].length} fire(s) this day">
+          {cells[i].length > 0 ? cells[i].length : ''}
+        </span>
+      </header>
+      {#if cells[i].length === 0}
+        <button type="button" class="empty-cell empty-day-create"
+                title="Create timer on {dayIsoForCol(i)}"
+                onclick={() => onEmptyDayClick(i)}>
+          <span class="empty-day-hint">+ New</span>
+          <span class="muted mono">{dayIsoForCol(i)}</span>
+        </button>
+      {:else}
+        {#each cells[i] as chip}
+          <button class="chip" class:interval={chip.intervalBadge} onclick={() => onEdit(chip.timer)}>
+            <div class="chip-time">{chip.localTime}</div>
+            <div class="chip-name name-text" title={chip.timer.name}>{chip.timer.name}</div>
+            <div class="chip-summary">{chip.timer.summary}</div>
+          </button>
+        {/each}
+        <button type="button" class="empty-day-create subtle"
+                title="Create another timer on {dayIsoForCol(i)}"
+                onclick={() => onEmptyDayClick(i)}>+ New on this day</button>
+      {/if}
+    </div>
+  {/each}
+</div>

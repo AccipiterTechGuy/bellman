@@ -1,0 +1,5 @@
+bellman: system.prune ready id=00000000-0000-4000-8000-000000000001 next=Some(2026-08-03T00:17:00Z)
+bellman: prune catch-up: timers=0 archives_removed=0 archived=None
+bellman: year_recalibrate: checked=1 updated=0
+bellman: system.prune ready id=00000000-0000-4000-8000-000000000001 next=Some(2026-08-03T00:17:00Z)
+bellman: system.prune ready id=00000000-0000-4000-8000-000000000001 next=Some(2026-08-03T00:17:00Z)

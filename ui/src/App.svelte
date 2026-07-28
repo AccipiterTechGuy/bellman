@@ -14,6 +14,8 @@
   let wizardOpen = $state(false);
   let toasts = $state([]);
   let editingTimer = $state(null);   // null = closed, {} = new, timer = edit
+  /** YYYY-MM-DD when create was opened from a calendar day cell. */
+  let createInitialDate = $state(null);
   let timers = $state([]);           // cached for week / month / dialog prefill
   let refreshTick = $state(0);
 
@@ -70,10 +72,22 @@
     refresh();
   }
 
-  function openCreate() { editingTimer = {}; }
-  function openEdit(t) { editingTimer = t; }
+  function openCreate() {
+    createInitialDate = null;
+    editingTimer = {};
+  }
+  /** Open New timer pre-filled for a calendar day (YYYY-MM-DD). */
+  function openCreateOnDate(isoDate) {
+    createInitialDate = isoDate || null;
+    editingTimer = {};
+  }
+  function openEdit(t) {
+    createInitialDate = null;
+    editingTimer = t;
+  }
   async function dialogClosed(saved) {
     editingTimer = null;
+    createInitialDate = null;
     if (saved) {
       await refreshTimers();
       refreshTick++;
@@ -152,9 +166,9 @@
       onCreate={openCreate}
     />
   {:else if page === 'week'}
-    <WeekPage onEdit={openEdit} onToast={pushToast} timers={timers} tick={refreshTick} />
+    <WeekPage onEdit={openEdit} onCreateDate={openCreateOnDate} onToast={pushToast} timers={timers} tick={refreshTick} />
   {:else if page === 'month'}
-    <MonthPage onEdit={openEdit} onToast={pushToast} timers={timers} tick={refreshTick} />
+    <MonthPage onEdit={openEdit} onCreateDate={openCreateOnDate} onToast={pushToast} timers={timers} tick={refreshTick} />
   {:else if page === 'history'}
     <HistoryPage onToast={pushToast} />
   {/if}
@@ -167,6 +181,7 @@
 {#if editingTimer !== null}
   <TimerDialog
     timer={editingTimer && editingTimer.id ? editingTimer : null}
+    initialDate={editingTimer && editingTimer.id ? null : createInitialDate}
     onClose={dialogClosed}
     onToast={pushToast}
   />

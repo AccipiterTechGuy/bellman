@@ -1,0 +1,19 @@
+{
+  "file": "p4e-week-create-prefill.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 61487,
+  "mean_luma": 31.59,
+  "stdev": 10.1,
+  "unique_colors_cap200k": 5669,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "expect": "dialog prefilled from week day"
+}

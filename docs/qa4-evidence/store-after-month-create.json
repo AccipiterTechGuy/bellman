@@ -1,0 +1,12 @@
+[
+  {
+    "name": "qa-from-month-cell",
+    "next_fire_utc": null,
+    "occurrence": "{\"kind\":{\"occ\":\"once\",\"at\":\"2026-07-14T09:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}"
+  },
+  {
+    "name": "qa-from-month-cell-aug",
+    "next_fire_utc": "2026-08-15T06:00:00.000000000Z",
+    "occurrence": "{\"kind\":{\"occ\":\"once\",\"at\":\"2026-08-15T09:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}"
+  }
+]

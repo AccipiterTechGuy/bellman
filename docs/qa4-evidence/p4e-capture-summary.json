@@ -1,0 +1,18 @@
+{
+  "elapsed_s": 69.82,
+  "cli": "/tmp/bellman-cli-p4e",
+  "data_dir": "/tmp/qa-p4e-session/share/io.bellman.desktop",
+  "shots": [
+    "p4e-dialog-collision-1280x800.png",
+    "p4e-dialog-collision-50plus.png",
+    "p4e-dialog-collision-names-three.png",
+    "p4e-dialog-nearby-not-collision.png",
+    "p4e-dialog-no-collision.png",
+    "p4e-list-filter-search.png",
+    "p4e-list-long-name-readable.png",
+    "p4e-list-sort-next-fire.png",
+    "p4e-month-fire-counts.png",
+    "p4e-week-create-prefill.png",
+    "p4e-week-day-counts.png"
+  ]
+}

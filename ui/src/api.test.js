@@ -404,6 +404,18 @@ describe('api.js — C8 calendar UI command surface', () => {
     expect(state.invokes[0].args.n).toBe(5);
   });
 
+  it('queryNeighbours invokes query_neighbours with candidates + exclude', async () => {
+    const { queryNeighbours } = await import('./api.js');
+    await queryNeighbours(['2030-06-01T09:00:00Z'], {
+      excludeTimerId: 'abc-id',
+      windowSecs: 300,
+    });
+    expect(state.invokes[0].cmd).toBe('query_neighbours');
+    expect(state.invokes[0].args.candidates).toEqual(['2030-06-01T09:00:00Z']);
+    expect(state.invokes[0].args.excludeTimerId).toBe('abc-id');
+    expect(state.invokes[0].args.windowSecs).toBe(300);
+  });
+
   it('PreviewResponseDto shape: keys are camelCase', async () => {
     const resp = {
       fires: [{ utc: '2030-01-01T12:00:00Z', localDate: '2030-01-01', localTime: '12:00:00', offset: 'UTC', tzName: 'UTC' }],

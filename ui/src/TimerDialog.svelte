@@ -5,6 +5,7 @@
     updateTimer,
     deleteTimer,
     previewFires,
+    queryNeighbours,
     isTauri,
   } from './api.js';
   import { buildInput as buildWireInput, weekdaysCsvToMap, weekdaysMapToCsv, WEEKDAY_CHIPS } from './dialog-build.js';
@@ -17,8 +18,11 @@
     systemTimeZone,
   } from './datetime-input.js';
 
-  /** Existing Timer when editing; null when creating. */
-  let { timer = null, onClose, onToast } = $props();
+  /**
+   * Existing Timer when editing; null when creating.
+   * `initialDate` (YYYY-MM-DD) pre-fills once-date from calendar click-to-create.
+   */
+  let { timer = null, initialDate = null, onClose, onToast } = $props();
 
   // Form state. Kind-specific free-text fields keep what the user typed;
   // buildInput normalizes to the wire ISO/CSV the Rust side expects.
@@ -33,20 +37,33 @@
   let previewToken = 0;
   let nameInputEl = $state(null);
   let tzFilter = $state('');
+  /** Neighbours for the current preview fire list (store-aware). */
+  let neighbours = $state({
+    byCandidate: [],
+    collisions: [],
+    nearby: [],
+    stats: null,
+    windowSecs: 300,
+  });
+  let neighboursBusy = $state(false);
+  let neighboursToken = 0;
 
   const allTimeZones = listTimeZones();
 
-  function emptyForm() {
+  function emptyForm(prefillDate = null) {
     const sysTz = systemTimeZone();
+    // Calendar click-to-create: pre-select once on that date so the dialog
+    // opens on the day the user was looking at (Week/Month empty cell).
+    const useOnce = !!prefillDate;
     return {
       name: '',
       enabled: true,
       occurrence: {
-        kind: 'daily',
+        kind: useOnce ? 'once' : 'daily',
         tz: sysTz,
         time: '09:00',
         onceAt: '',
-        onceDate: '',
+        onceDate: prefillDate || '',
         onceTime: '09:00',
         everySecs: 300,
         intervalAnchor: null,
@@ -133,7 +150,7 @@
 
   $effect(() => {
     if (timer && timer.id) loadFromTimer(timer);
-    else if (!timer || !timer.id) form = emptyForm();
+    else if (!timer || !timer.id) form = emptyForm(initialDate);
   });
 
   let isEdit = $derived(!!(timer && timer.id));
@@ -310,6 +327,60 @@
       : timeParsed.hhmmss;
   });
 
+  function refreshNeighbours(fires) {
+    const my = ++neighboursToken;
+    if (!isTauri() || !fires || fires.length === 0) {
+      neighbours = {
+        byCandidate: [],
+        collisions: [],
+        nearby: [],
+        stats: null,
+        windowSecs: 300,
+      };
+      neighboursBusy = false;
+      return;
+    }
+    neighboursBusy = true;
+    const candidates = fires.map((f) => f.utc).filter(Boolean);
+    queryNeighbours(candidates, {
+      excludeTimerId: isEdit && timer?.id ? timer.id : null,
+    })
+      .then((r) => {
+        if (my !== neighboursToken) return;
+        neighbours = {
+          byCandidate: r.byCandidate || [],
+          collisions: r.collisions || [],
+          nearby: r.nearby || [],
+          stats: r.stats || null,
+          windowSecs: r.windowSecs ?? 300,
+        };
+      })
+      .catch(() => {
+        if (my !== neighboursToken) return;
+        neighbours = {
+          byCandidate: [],
+          collisions: [],
+          nearby: [],
+          stats: null,
+          windowSecs: 300,
+        };
+      })
+      .finally(() => {
+        if (my === neighboursToken) neighboursBusy = false;
+      });
+  }
+
+  /** Collisions for preview row `i` (by candidate UTC second). */
+  function collisionsForFire(f) {
+    if (!f || !f.utc || !neighbours.byCandidate?.length) return [];
+    const target = new Date(f.utc).getTime();
+    const bucket = neighbours.byCandidate.find((c) => {
+      if (!c.candidateUtc) return false;
+      return Math.abs(new Date(c.candidateUtc).getTime() - target) < 1000;
+    });
+    return bucket?.collisions || [];
+  }
+
   function previewTimeout() {
     const my = ++previewToken;
     // Don't hit the backend with known-invalid local state.
@@ -317,19 +388,23 @@
       preview = { fires: [], warnings: [] };
       previewError = null;
       previewBusy = false;
+      refreshNeighbours([]);
       return;
     }
     previewBusy = true;
     previewFires(buildInput().occurrence, 5)
       .then((r) => {
         if (my !== previewToken) return;
-        preview = { fires: r.fires || [], warnings: r.warnings || [] };
+        const fires = r.fires || [];
+        preview = { fires, warnings: r.warnings || [] };
         previewError = null;
+        refreshNeighbours(fires);
       })
       .catch((e) => {
         if (my !== previewToken) return;
         preview = { fires: [], warnings: [] };
         previewError = String(e);
+        refreshNeighbours([]);
       })
       .finally(() => {
         if (my === previewToken) previewBusy = false;
@@ -650,7 +725,7 @@
       <aside class="preview-pane">
         <header>
           <span>Next 5 fires</span>
-          {#if previewBusy}<span class="muted">updating…</span>{/if}
+          {#if previewBusy || neighboursBusy}<span class="muted">updating…</span>{/if}
         </header>
         {#if previewError}
           <div class="preview-error" role="alert">
@@ -676,20 +751,81 @@
                 <th>Local</th>
                 <th>UTC</th>
                 <th>Offset / tz</th>
+                <th>Also firing</th>
               </tr>
             </thead>
             <tbody>
               {#each preview.fires as f, i}
-                <tr>
+                {@const coll = collisionsForFire(f)}
+                <tr class:row-collision={coll.length > 0}>
                   <td>{i + 1}</td>
                   <td class="mono">{f.localDate} {f.localTime}</td>
                   <td class="mono">{f.utc ? new Date(f.utc).toISOString().replace(/\.\d+Z$/, 'Z') : ''}</td>
                   <td class="mono">{f.offset} {f.tzName}</td>
+                  <td class="collision-cell">
+                    {#if coll.length === 0}
+                      <span class="muted">—</span>
+                    {:else}
+                      <span class="collision-badge" title="Same-second collision" aria-label="collision">⚠ collision</span>
+                      <ul class="collision-names">
+                        {#each coll as h}
+                          <li class="name-full" title="{h.name} · {h.actionKind} · {h.localDate} {h.localTime}">
+                            <span class="name-text">{h.name}</span>
+                            <span class="name-meta">({h.actionKind} · {h.localTime})</span>
+                          </li>
+                        {/each}
+                      </ul>
+                    {/if}
+                  </td>
                 </tr>
               {/each}
             </tbody>
           </table>
         {/if}
+
+        <!-- Nearby panel is always visible (not behind a button): the dialog's
+             whole point is seeing pile-ups while choosing a time; hiding it
+             would re-create the blind spot this card removes. -->
+        <div class="neighbours-panel" role="region" aria-label="Nearby timers">
+          <header>
+            <span>Nearby timers</span>
+            <span class="muted">±{Math.round((neighbours.windowSecs || 300) / 60)} min · not a veto</span>
+          </header>
+          {#if neighbours.collisions && neighbours.collisions.length > 0}
+            <div class="collision-notice" role="status">
+              <span class="banner-kind">Collision</span>
+              <div class="banner-body">
+                Same-second pile-up with
+                {#each neighbours.collisions as h, i}
+                  {i > 0 ? '; ' : ' '}
+                  <strong class="name-text">{h.name}</strong>
+                  <span class="name-meta">({h.actionKind} · {h.localDate} {h.localTime} {h.offset})</span>
+                {/each}
+                . Create/Save is still allowed.
+              </div>
+            </div>
+          {/if}
+          {#if !preview.fires.length}
+            <div class="empty small">Fill the form to check neighbours.</div>
+          {:else if (!neighbours.nearby || neighbours.nearby.length === 0) && (!neighbours.collisions || neighbours.collisions.length === 0)}
+            <div class="neighbours-clear" role="status">
+              <span class="clear-mark" aria-hidden="true">✓</span>
+              No other timers fire at or near these instants (within ±{Math.round((neighbours.windowSecs || 300) / 60)} min).
+            </div>
+          {:else if neighbours.nearby && neighbours.nearby.length > 0}
+            <ul class="nearby-list">
+              {#each neighbours.nearby as h}
+                <li class="nearby-row">
+                  <span class="nearby-delta mono" title="seconds from nearest candidate">
+                    {h.deltaSecs > 0 ? '+' : ''}{h.deltaSecs}s
+                  </span>
+                  <span class="name-text">{h.name}</span>
+                  <span class="name-meta mono">{h.localDate} {h.localTime} · {h.actionKind} · {h.occurrenceKind}</span>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
       </aside>
     </div>
 

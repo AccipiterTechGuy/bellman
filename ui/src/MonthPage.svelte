@@ -11,7 +11,7 @@
   } from './api.js';
 
   /** @type {(t:any) => void} */
-  let { onEdit, onToast, timers = [], tick = 0 } = $props();
+  let { onEdit, onCreateDate, onToast, timers = [], tick = 0 } = $props();
 
   let year = $state(new Date().getFullYear());
   let month = $state(new Date().getMonth()); // 0-indexed
@@ -151,9 +151,17 @@
     {@const inMonth = d.getMonth() === month}
     {@const isToday = iso === isoDate(new Date())}
     {@const chips = daysMap[iso] || []}
-    <div class="month-cell" class:out={!inMonth} class:today={isToday}>
+    {@const crowded = chips.length >= 3}
+    <div class="month-cell"
+         class:out={!inMonth}
+         class:today={isToday}
+         class:crowded={crowded}
+         class:has-fires={chips.length > 0}>
       <div class="month-cell-head">
         <span class="day-num">{d.getDate()}</span>
+        {#if chips.length > 0}
+          <span class="day-fire-count" aria-label="{chips.length} fires">{chips.length}</span>
+        {/if}
         {#if jsIsoWeekday(d) === 1 || d.getDate() === 1}
           <span class="day-month">{d.toLocaleString(undefined, { month: 'short' })}</span>
         {/if}
@@ -161,7 +169,9 @@
       {#if chips.length > 0}
         <div class="month-chip-wrap">
           {#each chips.slice(0, 3) as chip}
-            <button class="month-chip kind-{chip.kind}" onclick={() => onEdit(chip.timer)} title={chip.timer.name}>
+            <button class="month-chip kind-{chip.kind} name-text"
+                    onclick={() => onEdit(chip.timer)}
+                    title={chip.timer.name}>
               {chip.timer.name}
             </button>
           {/each}
@@ -170,6 +180,15 @@
           {/if}
         </div>
       {/if}
+      <!-- Real <button> so AT-SPI/WebKit exposes a clickable create path (role=div fails). -->
+      <button type="button"
+              class="month-day-create"
+              class:empty={chips.length === 0}
+              title="Create timer on {iso}"
+              aria-label="Create timer on {iso}"
+              onclick={() => { if (typeof onCreateDate === 'function') onCreateDate(iso); }}>
+        {#if chips.length === 0}+ New{:else}+ Add{/if}
+      </button>
     </div>
   {/each}
 </div>

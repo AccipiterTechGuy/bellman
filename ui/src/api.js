@@ -186,6 +186,22 @@ export async function deleteTimer(id) {
 export async function previewFires(input, n = 5) {
   return await invoke('preview_fires', { input, n });
 }
+/**
+ * Store-aware neighbours for candidate fire instants (UTC ISO strings or Date).
+ * @param {Array<string|Date>} candidates
+ * @param {{ excludeTimerId?: string, windowSecs?: number }} [opts]
+ */
+export async function queryNeighbours(candidates, opts = {}) {
+  const cands = (candidates || []).map((c) => {
+    if (c instanceof Date) return c.toISOString();
+    return c;
+  });
+  return await invoke('query_neighbours', {
+    candidates: cands,
+    excludeTimerId: opts.excludeTimerId ?? null,
+    windowSecs: opts.windowSecs ?? null,
+  });
+}
 export async function getPauseAll() {
   return await invoke('get_pause_all');
 }

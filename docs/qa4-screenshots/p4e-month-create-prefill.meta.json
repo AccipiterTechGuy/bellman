@@ -1,0 +1,20 @@
+{
+  "file": "p4e-month-create-prefill.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 60136,
+  "mean_luma": 31.61,
+  "stdev": 10.08,
+  "unique_colors_cap200k": 5479,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    60,
+    122,
+    960,
+    640
+  ],
+  "from": "Create timer on 2026-08-15",
+  "future": true
+}

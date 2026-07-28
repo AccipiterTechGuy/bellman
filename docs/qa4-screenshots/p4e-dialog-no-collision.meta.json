@@ -1,0 +1,20 @@
+{
+  "file": "p4e-dialog-no-collision.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 68838,
+  "mean_luma": 32.56,
+  "stdev": 10.52,
+  "unique_colors_cap200k": 4352,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "phase": "clear",
+  "expect": "No other timers fire at or near\u2026"
+}
