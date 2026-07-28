@@ -5,8 +5,8 @@
   "identifier": "io.bellman.desktop",
   "build": {
     "beforeDevCommand": "npm run dev -- --port 1420",
-    "beforeBuildCommand": "bash ../scripts/stage_cli_sidecar.sh && npm run build",
-    "beforeBundleCommand": "bash ../scripts/stage_cli_sidecar.sh",
+    "beforeBuildCommand": "bash -c 'if [ -f ../scripts/stage_cli_sidecar.sh ]; then bash ../scripts/stage_cli_sidecar.sh; else bash scripts/stage_cli_sidecar.sh; fi' && npm run build",
+    "beforeBundleCommand": "bash -c 'if [ -f ../scripts/stage_cli_sidecar.sh ]; then bash ../scripts/stage_cli_sidecar.sh; else bash scripts/stage_cli_sidecar.sh; fi'",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../ui/dist"
   },
