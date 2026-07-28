@@ -518,6 +518,17 @@ impl CreateTimerInput {
         new.wake_machine = self.wake_machine;
         Ok(new)
     }
+
+    /// Build a `NewTimer` applying Settings misfire defaults from `cfg`
+    /// (calendar kinds only; intervals stay Skip).
+    pub fn into_new_timer_with_config(
+        self,
+        cfg: &bellman_core::AppConfig,
+    ) -> Result<NewTimer, String> {
+        let mut new = self.into_new_timer()?;
+        new.misfire = cfg.misfire_for_occurrence(&new.occurrence);
+        Ok(new)
+    }
 }
 
 /// `create_timer` — insert a fresh timer. Mirrors `bellman add`.
@@ -530,7 +541,8 @@ pub fn create_timer(
 }
 
 pub(crate) fn do_create_timer(state: &AppState, input: CreateTimerInput) -> Result<TimerDto, String> {
-    let new = input.into_new_timer()?;
+    let cfg = state.config.lock().clone();
+    let new = input.into_new_timer_with_config(&cfg)?;
     let timer = {
         let mut store = state.store.lock();
         store.create_timer(new).map_err(|e| e.to_string())?
@@ -847,5 +859,92 @@ mod tests {
         // The command should still succeed
         let result = do_create_timer(&state, dummy_input());
         assert!(result.is_ok(), "command should succeed even if log fails");
+    }
+
+    /// Settings "Misfire defaults" must actually land on newly created calendar
+    /// timers (supervisor R1). Interval timers stay Skip.
+    #[test]
+    fn create_timer_applies_misfire_defaults_from_config() {
+        use bellman_core::store::MisfirePolicy;
+        use std::str::FromStr;
+        use uuid::Uuid;
+
+        let dir = tempdir().unwrap();
+        let data_dir = dir.path().to_path_buf();
+        let state = create_test_state(data_dir.clone());
+
+        // Simulate Settings → set_misfire_defaults(catch_up, 77).
+        {
+            let mut cfg = state.config.lock().clone();
+            cfg.default_misfire_policy = "catch_up".into();
+            cfg.default_misfire_grace_secs = 77;
+            cfg = cfg.sanitized();
+            cfg.save(&state.data_dir).unwrap();
+            *state.config.lock() = cfg;
+        }
+
+        let input = CreateTimerInput {
+            wake_machine: false,
+            name: "cal-default".into(),
+            occurrence: crate::web::WebOccurrenceDto {
+                occ: "daily".into(),
+                tz: "UTC".into(),
+                once_at: None,
+                at: Some("09:00:00".into()),
+                every_secs: None,
+                anchor: None,
+                day: None,
+                month: None,
+                expr: None,
+                days: None,
+            },
+            action: crate::web::WebActionDto::None,
+            enabled: true,
+        };
+        let dto = do_create_timer(&state, input).expect("create calendar timer");
+        let id = Uuid::from_str(&dto.id).unwrap();
+
+        let store = state.store.lock();
+        let timer = store.get_timer(id).unwrap().expect("timer row");
+        assert_eq!(
+            timer.misfire,
+            MisfirePolicy::CatchUp {
+                grace_secs: 77,
+                max_catch_up: 10,
+            },
+            "calendar timer must store Settings misfire defaults"
+        );
+
+        // Interval still Skip even when config says coalesce.
+        drop(store);
+        {
+            let mut cfg = state.config.lock().clone();
+            cfg.default_misfire_policy = "coalesce".into();
+            cfg.default_misfire_grace_secs = 3600;
+            *state.config.lock() = cfg;
+        }
+        let interval = CreateTimerInput {
+            wake_machine: false,
+            name: "int-skip".into(),
+            occurrence: crate::web::WebOccurrenceDto {
+                occ: "interval".into(),
+                tz: "UTC".into(),
+                once_at: None,
+                at: None,
+                every_secs: Some(30),
+                anchor: None,
+                day: None,
+                month: None,
+                expr: None,
+                days: None,
+            },
+            action: crate::web::WebActionDto::None,
+            enabled: true,
+        };
+        let dto2 = do_create_timer(&state, interval).expect("create interval");
+        let id2 = Uuid::from_str(&dto2.id).unwrap();
+        let store = state.store.lock();
+        let t2 = store.get_timer(id2).unwrap().unwrap();
+        assert_eq!(t2.misfire, MisfirePolicy::Skip);
     }
 }
