@@ -650,6 +650,15 @@ main {
   max-width: 92vw;
 }
 
+/* TimerDialog reuses the wizard chrome (backdrop + panel) but needs the
+ * two-column form + preview layout. Without this, the later `.wizard`
+ * width: 460px overrides `.timer-dialog` width: 760px (same specificity,
+ * source order) and collapses the "Next 5 fires" pane to a ~20px sliver. */
+.wizard.timer-dialog {
+  width: 760px;
+  max-width: min(96vw, 920px);
+}
+
 .wizard h2 {
   margin: 0 0 6px;
   font-size: 16px;
