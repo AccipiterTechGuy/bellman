@@ -1,6 +1,6 @@
 {
   "command": "list",
-  "count": 4,
+  "count": 2,
   "ok": true,
   "timers": [
     {
@@ -8,7 +8,7 @@
         "type": "none"
       },
       "enabled": true,
-      "id": "3b5ee62c-627b-44f8-858a-85169be3ff7c",
+      "id": "9d20f246-c6d7-4d37-9274-f06dd0cf53eb",
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -50,7 +50,7 @@
         "type": "none"
       },
       "enabled": true,
-      "id": "73f0497c-c3f3-4135-ae9f-4e36a83fe793",
+      "id": "597041a2-d967-42de-9ff8-a966ba753b10",
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -58,16 +58,17 @@
           "grace_secs": 3600
         }
       },
-      "name": "qa-dst-gap",
-      "next_fire_utc": "2027-03-28T01:00:00Z",
+      "name": "qa-weekly",
+      "next_fire_utc": "2026-07-29T05:00:00Z",
       "occurrence": {
         "dst_fold": "first_occurrence",
         "dst_gap": "first_valid_after_gap",
         "exclusions": [],
         "invalid_monthday": "clamp",
         "kind": {
-          "at": "2027-03-28T03:30:00",
-          "occ": "once"
+          "at": "08:00:00",
+          "days": 21,
+          "occ": "weekly"
         },
         "max_runs": null,
         "pending_skips": 0,
@@ -82,92 +83,6 @@
         "max_retries": 1
       },
       "revision": 1,
-      "tags": [],
-      "tz": "Europe/Helsinki",
-      "valid_from": null,
-      "valid_until": null
-    },
-    {
-      "action": {
-        "type": "none"
-      },
-      "enabled": true,
-      "id": "88992a6c-e477-4cea-8d2a-24005d049511",
-      "last_fired": null,
-      "max_runs": null,
-      "misfire": {
-        "coalesce": {
-          "grace_secs": 3600
-        }
-      },
-      "name": "qa-once-edited",
-      "next_fire_utc": "2027-03-28T01:00:00Z",
-      "occurrence": {
-        "dst_fold": "first_occurrence",
-        "dst_gap": "first_valid_after_gap",
-        "exclusions": [],
-        "invalid_monthday": "clamp",
-        "kind": {
-          "at": "2027-03-28T03:30:00",
-          "occ": "once"
-        },
-        "max_runs": null,
-        "pending_skips": 0,
-        "runs_done": 0,
-        "tz": "Europe/Helsinki",
-        "valid_from": null,
-        "valid_until": null
-      },
-      "overlap": "skip",
-      "retry": {
-        "delay_secs": 30,
-        "max_retries": 1
-      },
-      "revision": 2,
-      "tags": [],
-      "tz": "Europe/Helsinki",
-      "valid_from": null,
-      "valid_until": null
-    },
-    {
-      "action": {
-        "type": "none"
-      },
-      "enabled": true,
-      "id": "bdfb9368-3d5e-4323-b57c-4b2e61440b0d",
-      "last_fired": null,
-      "max_runs": null,
-      "misfire": {
-        "coalesce": {
-          "grace_secs": 3600
-        }
-      },
-      "name": "qa-yearly",
-      "next_fire_utc": "2026-12-28T10:00:00Z",
-      "occurrence": {
-        "dst_fold": "first_occurrence",
-        "dst_gap": "first_valid_after_gap",
-        "exclusions": [],
-        "invalid_monthday": "clamp",
-        "kind": {
-          "at": "12:00:00",
-          "day": 28,
-          "month": 12,
-          "occ": "yearly"
-        },
-        "max_runs": null,
-        "pending_skips": 0,
-        "runs_done": 0,
-        "tz": "Europe/Helsinki",
-        "valid_from": null,
-        "valid_until": null
-      },
-      "overlap": "skip",
-      "retry": {
-        "delay_secs": 30,
-        "max_retries": 1
-      },
-      "revision": 2,
       "tags": [],
       "tz": "Europe/Helsinki",
       "valid_from": null,

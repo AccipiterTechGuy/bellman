@@ -1,0 +1,19 @@
+{
+  "file": "p4b-dialog-preview-weekly.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 89171,
+  "mean_luma": 27.91,
+  "stdev": 13.9,
+  "unique_colors_cap200k": 6193,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "phase": "preview-vs-cli"
+}

@@ -328,21 +328,60 @@ def read_entry(entry) -> str:
         return ""
 
 
-def select_kind(app, kind_prefix: str):
-    """Open Occurrence kind combo and pick the menu item starting with kind_prefix."""
+# Occurrence kind order matches TimerDialog.svelte <option> order.
+KIND_ORDER = ("once", "interval", "daily", "weekly", "monthly", "yearly", "cron")
+
+
+def select_kind(app, kind_prefix: str, d=None):
+    """Select occurrence kind via pointer click + keyboard (not AT-SPI menu Action).
+
+    AT-SPI doAction on menu items left the combo label stuck on 'daily' while
+    fields followed the real selection (auditor F3). Keyboard selection updates
+    the visible label.
+    """
+    if d is None:
+        d = xdisp()
+    prefix = kind_prefix.lower()
+    if prefix not in KIND_ORDER:
+        raise RuntimeError(f"unknown kind {kind_prefix!r}")
+    target_idx = KIND_ORDER.index(prefix)
+
     combos = walk_find(app, lambda a: a.getRoleName() == "combo box")
     if not combos:
         raise RuntimeError("no combo box")
-    do_action(combos[0])
+    combo = combos[0]
+    comp = combo.queryComponent()
+    try:
+        comp.grabFocus()
+    except Exception:
+        pass
+    ext = comp.getExtents(pyatspi.DESKTOP_COORDS)
+    cx = int(ext.x + max(ext.width // 2, 4))
+    cy = int(ext.y + max(ext.height // 2, 4))
+    xtest.fake_input(d, X.MotionNotify, x=cx, y=cy)
+    xtest.fake_input(d, X.ButtonPress, detail=1)
+    xtest.fake_input(d, X.ButtonRelease, detail=1)
+    d.sync()
     time.sleep(0.35)
-    items = walk_find(app, lambda a: a.getRoleName() == "menu item")
-    for it in items:
-        n = it.name or ""
-        if n.lower().startswith(kind_prefix.lower()):
-            do_action(it)
-            time.sleep(0.25)
-            return n
-    raise RuntimeError(f"menu item starting {kind_prefix!r} not found; have {[i.name for i in items]}")
+
+    # Jump to first option then Down to target (default is daily = index 2).
+    key_tap(d, XK.string_to_keysym("Home"))
+    time.sleep(0.08)
+    for _ in range(target_idx):
+        key_tap(d, XK.string_to_keysym("Down"))
+        time.sleep(0.05)
+    key_tap(d, XK.string_to_keysym("Return"))
+    time.sleep(0.4)
+
+    # Read back combo name if exposed
+    label = combo.name or ""
+    try:
+        # Some WebKits expose the selected text via accessible name of combo
+        label = combo.name or label
+    except Exception:
+        pass
+    print(f"  select_kind {prefix!r} via keyboard (idx={target_idx}) combo_name={label!r}")
+    return prefix
 
 
 def close_dialog_if_open(app):
@@ -544,9 +583,9 @@ def create_kind(app, d, spec: KindSpec, *, snap_prefix: str | None = None):
     click_named(app, "+ New timer", "push button")
     time.sleep(0.6)
 
-    # kind first so conditional fields appear
-    select_kind(app, spec.kind_prefix)
-    time.sleep(0.35)
+    # kind first so conditional fields appear (keyboard path — F3)
+    select_kind(app, spec.kind_prefix, d)
+    time.sleep(0.45)
     fill_fields(app, d, spec.fields)
     # allow preview debounce + IPC (longer so Next-5 table paints)
     time.sleep(1.2)
@@ -584,49 +623,63 @@ def ui_timer_names(app) -> list[str]:
     return [t.get("name") for t in list_timers_db() if t.get("name")]
 
 
+def dialog_title(app) -> str:
+    dialogs = walk_find(app, lambda a: a.getRoleName() == "dialog")
+    if not dialogs:
+        return ""
+    heads = walk_find(dialogs[0], lambda a: a.getRoleName() == "heading")
+    if heads:
+        return heads[0].name or ""
+    return dialogs[0].name or ""
+
+
 def open_edit_for(app, d, timer_name: str):
-    """Click the Edit button associated with a timer row (All timers page)."""
+    """Open Edit dialog for timer_name by title-matching (never silent wrong row)."""
+    close_dialog_if_open(app)
+    # Force list refresh (avoids stale rows after create/delete).
+    click_named(app, "Week", "push button")
+    time.sleep(0.35)
     click_named(app, "All timers", "push button")
-    time.sleep(0.45)
-    edits = walk_find(
-        app,
-        lambda a: a.getRoleName() == "push button" and (a.name or "") == "Edit",
-    )
-    if not edits:
-        btns = walk_find(app, lambda a: a.getRoleName() == "push button")
-        print("  buttons:", [b.name for b in btns])
-        raise RuntimeError(f"no Edit button for {timer_name}")
-    # Match by UI table order, not DB sort order.
-    order = ui_timer_names(app)
-    if timer_name in order and len(edits) >= len(order):
-        idx = order.index(timer_name)
-        print(f"  Edit index {idx} for {timer_name!r} (ui order={order})")
-        do_action(edits[idx])
-    elif len(edits) == 1:
-        do_action(edits[0])
-    else:
-        # Last resort: index into store list alphabetically may be wrong —
-        # try each Edit until dialog title matches.
-        matched = False
-        for i, btn in enumerate(edits):
-            do_action(btn)
-            time.sleep(0.55)
-            dialogs = walk_find(app, lambda a: a.getRoleName() == "dialog")
-            title = ""
-            if dialogs:
-                heads = walk_find(dialogs[0], lambda a: a.getRoleName() == "heading")
-                title = heads[0].name if heads else (dialogs[0].name or "")
-            print(f"  try Edit[{i}] title={title!r}")
-            if timer_name in (title or ""):
-                matched = True
+    time.sleep(0.7)
+    close_dialog_if_open(app)
+    time.sleep(0.2)
+
+    # Map every Edit button → dialog title, then open the match.
+    # Re-scan from index 0 each outer attempt because cancel can reshuffle.
+    for attempt in range(3):
+        edits = walk_find(
+            app,
+            lambda a: a.getRoleName() == "push button" and (a.name or "") == "Edit",
+        )
+        print(f"  open_edit attempt={attempt} n_edit={len(edits)} store={[t.get('name') for t in list_timers_db()]}")
+        if not edits:
+            btns = walk_find(app, lambda a: a.getRoleName() == "push button")
+            print("  buttons:", [b.name for b in btns])
+            raise RuntimeError(f"no Edit button for {timer_name}")
+
+        for i in range(len(edits)):
+            edits = walk_find(
+                app,
+                lambda a: a.getRoleName() == "push button" and (a.name or "") == "Edit",
+            )
+            if i >= len(edits):
                 break
+            do_action(edits[i])
+            time.sleep(0.65)
+            title = dialog_title(app)
+            print(f"  try Edit[{i}] title={title!r} want={timer_name!r}")
+            if timer_name in title:
+                time.sleep(0.15)
+                return
             close_dialog_if_open(app)
-            time.sleep(0.3)
-        if not matched:
-            raise RuntimeError(f"could not open Edit for {timer_name}")
-        time.sleep(0.2)
-        return
-    time.sleep(0.75)
+            time.sleep(0.35)
+        # refresh list and retry full scan
+        click_named(app, "Month", "push button")
+        time.sleep(0.3)
+        click_named(app, "All timers", "push button")
+        time.sleep(0.7)
+
+    raise RuntimeError(f"could not open Edit for {timer_name}")
 
 
 def edit_kind(app, d, spec: KindSpec):
@@ -654,13 +707,18 @@ def edit_kind(app, d, spec: KindSpec):
 
 
 def delete_kind(app, d, name: str):
+    """Delete timer by GUI; FAIL loudly if the store row is still present."""
     print(f"\n== DELETE {name} ==")
+    before = {t.get("name") for t in list_timers_db()}
+    if name not in before:
+        raise RuntimeError(f"delete_kind: {name!r} not in store before delete: {sorted(before)}")
     close_dialog_if_open(app)
-    click_named(app, "All timers", "push button")
-    time.sleep(0.4)
     open_edit_for(app, d, name)
-    # Delete button
-    # TimerDialog: first "Delete…", then "Confirm delete".
+    # Verify we have the right dialog before deleting
+    title = dialog_title(app)
+    if name not in title:
+        raise RuntimeError(f"delete_kind: wrong dialog title {title!r} for {name!r}")
+
     btns = walk_find(
         app,
         lambda a: a.getRoleName() == "push button"
@@ -672,22 +730,27 @@ def delete_kind(app, d, name: str):
             lambda a: a.getRoleName() == "push button" and "elete" in (a.name or ""),
         )
     if not btns:
-        raise RuntimeError("no Delete button")
+        raise RuntimeError("no Delete… button")
     do_action(btns[0])
-    time.sleep(0.45)
+    time.sleep(0.5)
     conf = walk_find(
         app,
-        lambda a: a.getRoleName() == "push button"
-        and (a.name or "") in ("Confirm delete", "Confirm", "Delete", "Yes"),
+        lambda a: a.getRoleName() == "push button" and (a.name or "") == "Confirm delete",
     )
-    if conf:
-        do_action(conf[-1])
-        print("  confirmed delete")
-    else:
-        print("  WARNING: no Confirm delete button after Delete…")
-    time.sleep(0.8)
-    names = [t.get("name") for t in list_timers_db()]
-    print(f"  store after delete: {names}")
+    if not conf:
+        raise RuntimeError("no Confirm delete button after Delete…")
+    do_action(conf[-1])
+    print("  clicked Confirm delete")
+    time.sleep(1.0)
+    close_dialog_if_open(app)
+    after = {t.get("name") for t in list_timers_db()}
+    print(f"  store after delete: {sorted(after)}")
+    if name in after:
+        raise RuntimeError(
+            f"DELETE NO-OP: {name!r} still in store after Confirm delete "
+            f"(before={sorted(before)} after={sorted(after)}). Product defect if title matched."
+        )
+    print(f"  DELETE OK {name}")
 
 
 def tab(app, label: str):
@@ -698,6 +761,108 @@ def tab(app, label: str):
 # ---------------------------------------------------------------------------
 # Main flow
 # ---------------------------------------------------------------------------
+
+def capture_user_agent(evidence: Path) -> dict:
+    """Capture page/engine userAgent evidence (auditor F5).
+
+    Attempts, in order:
+      1. WebKitGTK default WebKitSettings user-agent (library default the
+         page process inherits when the app does not override it).
+      2. WEBKIT_INSPECTOR_SERVER HTTP probe if the env is set.
+    Records every command + output so impossibility is evidence, not silence.
+    """
+    attempts = []
+    ua = None
+
+    # 1) WebKit2 Settings default UA (same lib as the running WebKitWebProcess)
+    try:
+        import gi
+
+        gi.require_version("WebKit2", "4.1")
+        from gi.repository import WebKit2
+
+        settings = WebKit2.Settings()
+        ua_lib = settings.get_user_agent()
+        attempts.append(
+            {
+                "method": "WebKit2.Settings.get_user_agent()",
+                "ok": True,
+                "userAgent": ua_lib,
+            }
+        )
+        ua = ua_lib
+    except Exception as e:
+        attempts.append(
+            {"method": "WebKit2.Settings.get_user_agent()", "ok": False, "error": repr(e)}
+        )
+
+    # 2) Inspector server (only if launched with WEBKIT_INSPECTOR_SERVER)
+    insp = os.environ.get("WEBKIT_INSPECTOR_SERVER", "")
+    if insp:
+        hostport = insp.replace("http://", "").strip()
+        url = f"http://{hostport}/"
+        try:
+            r = subprocess.run(
+                ["curl", "-sS", "-m", "2", url],
+                capture_output=True,
+                text=True,
+            )
+            attempts.append(
+                {
+                    "method": f"curl {url}",
+                    "ok": r.returncode == 0,
+                    "stdout": (r.stdout or "")[:2000],
+                    "stderr": (r.stderr or "")[:500],
+                }
+            )
+        except Exception as e:
+            attempts.append({"method": f"curl {url}", "ok": False, "error": repr(e)})
+    else:
+        attempts.append(
+            {
+                "method": "WEBKIT_INSPECTOR_SERVER",
+                "ok": False,
+                "error": "env not set for this session",
+            }
+        )
+
+    # 3) /proc cmdline of WebKitWebProcess (engine proof companion)
+    pids = webkit_pids()
+    out = {
+        "userAgent": ua,
+        "attempts": attempts,
+        "webkit_pids": pids,
+        "note": (
+            "WebKit2.Settings.get_user_agent() is the default UA string the "
+            "running libwebkit2gtk-4.1 WebKitWebProcess inherits when the app "
+            "does not call set_user_agent. App does not override (grep: no "
+            "set_user_agent in src-tauri)."
+        ),
+    }
+    evidence.joinpath("userAgent.json").write_text(json.dumps(out, indent=2) + "\n")
+    if ua:
+        evidence.joinpath("userAgent.txt").write_text(ua + "\n")
+    print("userAgent:", ua)
+    return out
+
+
+def run_now_first_timer(app, d) -> str | None:
+    """Click the first 'Run now' on All timers. Returns timer name if known."""
+    click_named(app, "All timers", "push button")
+    time.sleep(0.5)
+    names = ui_timer_names(app)
+    runs = walk_find(
+        app,
+        lambda a: a.getRoleName() == "push button" and (a.name or "") == "Run now",
+    )
+    if not runs:
+        raise RuntimeError("no Run now button")
+    do_action(runs[0])
+    time.sleep(1.2)
+    name = names[0] if names else None
+    print(f"  Run now clicked for row0 name={name!r}")
+    return name
+
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
@@ -710,16 +875,19 @@ def main() -> int:
     print("engine pids:", json.dumps(pids, indent=2))
     (EVIDENCE / "webkit_pids.json").write_text(json.dumps(pids, indent=2) + "\n")
 
+    # F5 — page/engine userAgent
+    ua_info = capture_user_agent(EVIDENCE)
+
     # --- 0. baseline empty All page ---
     close_dialog_if_open(app)
     tab(app, "All timers")
     capture(d, "p4b-all-empty", {"phase": "baseline", "webkit": pids})
 
-    # --- 1. DST gap warning shot (once @ Helsinki spring gap) before full CRUD ---
+    # --- 1. DST gap warning (once @ Helsinki spring gap) ---
     print("\n== DST gap warning dialog ==")
     click_named(app, "+ New timer", "push button")
     time.sleep(0.5)
-    select_kind(app, "once")
+    select_kind(app, "once", d)
     fill_fields(
         app,
         d,
@@ -729,22 +897,20 @@ def main() -> int:
             ("When", "2027-03-28T03:30:00"),
         ],
     )
-    time.sleep(1.4)  # preview debounce + IPC so DST warning + table paint
+    time.sleep(1.4)
     capture(d, "p4b-dialog-dst-gap", {"phase": "dst-warning"})
-    # Create it so it is session data, then continue
     click_named(app, "Create", "push button")
-    time.sleep(0.8)
+    time.sleep(1.0)
 
-    # --- 2. Create remaining six kinds (once already created as qa-dst-gap;
-    #        still create qa-once as a clean non-gap once for the seven-kind set) ---
+    # --- 2. Create all seven KINDS ---
     for spec in KINDS:
-        # skip re-using dst name
-        snap = "p4b-dialog-weekly" if spec.kind_prefix == "weekly" else None
-        if spec.kind_prefix == "once":
+        snap = None
+        if spec.kind_prefix == "weekly":
+            snap = "p4b-dialog-weekly"
+        elif spec.kind_prefix == "once":
             snap = "p4b-dialog-once"
         create_kind(app, d, spec, snap_prefix=snap)
 
-    # Persist post-create store before any edit/delete.
     (EVIDENCE / "store-after-create.json").write_text(
         json.dumps(list_timers_db(), indent=2, default=str) + "\n"
     )
@@ -752,10 +918,10 @@ def main() -> int:
         json.dumps(cli_list_json(), indent=2) + "\n"
     )
 
-    # --- 3. Pages with data ---
+    # --- 3. Pages with data (wait for list refresh after last Create toast) ---
     tab(app, "All timers")
-    time.sleep(0.5)
-    capture(d, "p4b-all", {"phase": "with-data"})
+    time.sleep(1.5)  # TimerList polls; avoid 7-of-8 refresh lag (F6a)
+    capture(d, "p4b-all", {"phase": "with-data", "expected_min_timers": 8})
 
     tab(app, "Week")
     capture(d, "p4b-week", {"phase": "with-data"})
@@ -763,22 +929,40 @@ def main() -> int:
     tab(app, "Month")
     capture(d, "p4b-month", {"phase": "with-data"})
 
+    # --- 3b. Run now → JSONL Fired + Run history with records (F2) ---
+    print("\n== RUN NOW for JSONL evidence ==")
+    run_now_first_timer(app, d)
+    time.sleep(0.8)
+    # second fire for a different row if available
+    runs = walk_find(
+        app,
+        lambda a: a.getRoleName() == "push button" and (a.name or "") == "Run now",
+    )
+    if len(runs) > 1:
+        do_action(runs[1])
+        time.sleep(1.0)
+        print("  Run now clicked for row1")
+
+    log = event_log_tail(500)
+    (EVIDENCE / "events.current.jsonl").write_text(log)
+    print(f"  event log lines after Run now: {len(log.splitlines()) if log else 0}")
+
     tab(app, "Run history")
-    capture(d, "p4b-history", {"phase": "with-data"})
+    time.sleep(0.8)
+    capture(d, "p4b-history", {"phase": "with-run-now-events"})
 
     # --- 4. Preview vs CLI for qa-weekly ---
     print("\n== PREVIEW vs CLI (qa-weekly) ==")
-    tab(app, "All timers")
-    time.sleep(0.3)
     open_edit_for(app, d, "qa-weekly")
     time.sleep(1.4)
     capture(d, "p4b-dialog-preview-weekly", {"phase": "preview-vs-cli"})
+    # In-session layout-fixed proof (same dialog, full preview visible)
+    capture(d, "p4b-dialog-layout-fixed", {"phase": "in-session-layout-proof"})
     timers = list_timers_db()
     weekly = next((t for t in timers if t.get("name") == "qa-weekly"), None)
     if weekly:
         tid = weekly.get("id")
         nxt = cli_next(str(tid), 5)
-        # also JSON if supported
         r = subprocess.run(
             [CLI_BIN, "--db", str(DATA_DIR / "timers.db"), "next", str(tid), "5", "--json"],
             capture_output=True,
@@ -789,52 +973,83 @@ def main() -> int:
             (EVIDENCE / "cli-next-qa-weekly.json").write_text(r.stdout)
         print("cli next:\n", nxt)
     else:
-        print("WARNING: qa-weekly missing for CLI compare")
+        raise RuntimeError("qa-weekly missing for CLI compare")
     close_dialog_if_open(app)
 
-    # --- 5. Edit all seven (use current names) ---
-    # after create we have qa-dst-gap + 7 kinds = 8 timers; edit the KINDS set
+    # --- 5. Edit all seven KINDS ---
     for spec in KINDS:
-        try:
-            edit_kind(app, d, spec)
-        except Exception as e:
-            print(f"  EDIT FAIL {spec.name}: {e}")
+        edit_kind(app, d, spec)
 
     tab(app, "All timers")
+    time.sleep(0.8)
     capture(d, "p4b-all-after-edit", {"phase": "after-edit"})
     (EVIDENCE / "store-after-edit.json").write_text(
         json.dumps(list_timers_db(), indent=2, default=str) + "\n"
     )
 
-    # --- 6. Delete all kinds we created (KINDS names may have been renamed) ---
-    # Re-read store for names matching qa-
+    # --- 6. Delete ALL qa-* rows through GUI; fail on no-op (F1) ---
+    # Taller window so every timer row + Edit is on-screen (8 rows overflow 640).
+    subprocess.run(
+        ["wmctrl", "-x", "-r", "Bellman.Bellman", "-e", "0,20,20,960,900"],
+        check=False,
+    )
+    time.sleep(0.5)
     remaining = [t.get("name") for t in list_timers_db() if (t.get("name") or "").startswith("qa-")]
     print("deleting", remaining)
+    failed = []
     for name in list(remaining):
         try:
-            # open_edit uses name; after edit some names changed
             delete_kind(app, d, name)
         except Exception as e:
             print(f"  DELETE FAIL {name}: {e}")
+            failed.append((name, str(e)))
             close_dialog_if_open(app)
+            time.sleep(0.3)
 
     tab(app, "All timers")
+    time.sleep(0.5)
     capture(d, "p4b-all-after-delete", {"phase": "after-delete"})
+    left = [t.get("name") for t in list_timers_db() if (t.get("name") or "").startswith("qa-")]
+    if left:
+        # One more pass by title match
+        print("retry deletes for", left)
+        for name in list(left):
+            try:
+                delete_kind(app, d, name)
+            except Exception as e:
+                failed.append((name, f"retry: {e}"))
+                close_dialog_if_open(app)
+        left = [t.get("name") for t in list_timers_db() if (t.get("name") or "").startswith("qa-")]
+        tab(app, "All timers")
+        capture(d, "p4b-all-after-delete", {"phase": "after-delete-retry"})
 
-    # --- 7. Larger layout size ---
+    if left:
+        raise RuntimeError(f"F1 FAIL: qa-* still in store after delete pass: {left}; errors={failed}")
+
+    # --- 7. Larger layout: 1280x800 including dialog + Month/History (F4) ---
     print("\n== layout at 1280x800 ==")
     subprocess.run(
         ["wmctrl", "-x", "-r", "Bellman.Bellman", "-e", "0,20,20,1280,800"],
         check=False,
     )
     time.sleep(0.6)
-    # re-create one timer so larger shot isn't empty
-    create_kind(app, d, KINDS[2])  # daily
+    create_kind(app, d, KINDS[2])  # daily for non-empty pages
+    create_kind(app, d, KINDS[3])  # weekly for week/month chips
     tab(app, "All timers")
+    time.sleep(0.8)
     capture(d, "p4b-all-1280x800", {"phase": "layout-large"})
     tab(app, "Week")
     capture(d, "p4b-week-1280x800", {"phase": "layout-large"})
-    # restore 960x640
+    tab(app, "Month")
+    capture(d, "p4b-month-1280x800", {"phase": "layout-large"})
+    tab(app, "Run history")
+    capture(d, "p4b-history-1280x800", {"phase": "layout-large"})
+    # Dialog at larger size (the control the width fix targets)
+    open_edit_for(app, d, "qa-weekly")
+    time.sleep(1.2)
+    capture(d, "p4b-dialog-1280x800", {"phase": "layout-large-dialog"})
+    close_dialog_if_open(app)
+
     subprocess.run(
         ["wmctrl", "-x", "-r", "Bellman.Bellman", "-e", "0,40,40,960,640"],
         check=False,
@@ -855,16 +1070,27 @@ def main() -> int:
         json.dumps(webkit_pids(), indent=2) + "\n"
     )
 
-    # userAgent — best-effort via a tiny evaluate is NOT allowed; record
-    # process path as engine proof instead.
+    # Copy live app log if the launcher teed it (F7)
+    for src_name, dst_name in (
+        ("/tmp/qa-p4b.out", "app-stdout.log"),
+        ("/tmp/qa-p4b.err", "app-stderr.log"),
+        ("/tmp/qa-p4b-combined.log", "app-combined.log"),
+    ):
+        sp = Path(src_name)
+        if sp.exists():
+            (EVIDENCE / dst_name).write_text(sp.read_text(errors="replace"))
+
     summary = {
         "display": DISPLAY_NAME,
         "data_dir": str(DATA_DIR),
         "cli_bin": CLI_BIN,
         "screenshots": sorted(p.name for p in OUT.glob("p4b-*.png")),
+        "meta_json": sorted(p.name for p in OUT.glob("p4b-*.meta.json")),
         "timers_final": [t.get("name") for t in final_store],
         "webkit": webkit_pids(),
+        "userAgent": ua_info.get("userAgent"),
         "event_log_lines": len(log.splitlines()) if log else 0,
+        "delete_failures": failed,
     }
     (EVIDENCE / "session-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print("\nDONE", json.dumps(summary, indent=2))

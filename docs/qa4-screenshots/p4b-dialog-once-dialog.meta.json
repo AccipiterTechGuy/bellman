@@ -1,0 +1,20 @@
+{
+  "file": "p4b-dialog-once-dialog.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 56552,
+  "mean_luma": 24.98,
+  "stdev": 13.93,
+  "unique_colors_cap200k": 5659,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "kind": "once",
+  "phase": "create"
+}

@@ -653,10 +653,45 @@ main {
 /* TimerDialog reuses the wizard chrome (backdrop + panel) but needs the
  * two-column form + preview layout. Without this, the later `.wizard`
  * width: 460px overrides `.timer-dialog` width: 760px (same specificity,
- * source order) and collapses the "Next 5 fires" pane to a ~20px sliver. */
+ * source order) and collapses the "Next 5 fires" pane to a ~20px sliver.
+ * Flex + minmax(0, …) keeps the Enabled row and preview table inside the
+ * 960×640 window without clipping or a horizontal scrollbar (P4b F4). */
 .wizard.timer-dialog {
   width: 760px;
   max-width: min(96vw, 920px);
+  max-height: min(92vh, 600px);
+  overflow: hidden;
+}
+
+.wizard.timer-dialog .dialog-body {
+  /* minmax(0, fr) stops grid min-content from forcing overflow-x */
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  overflow-x: hidden;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+.wizard.timer-dialog .form-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+}
+
+.wizard.timer-dialog .form-row input,
+.wizard.timer-dialog .form-row select {
+  min-width: 0;
+  width: 100%;
+}
+
+.wizard.timer-dialog .preview-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.wizard.timer-dialog .preview-table th,
+.wizard.timer-dialog .preview-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .wizard h2 {

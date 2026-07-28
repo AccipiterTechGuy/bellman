@@ -1,0 +1,20 @@
+{
+  "file": "p4b-all.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 97035,
+  "mean_luma": 37.52,
+  "stdev": 16.28,
+  "unique_colors_cap200k": 6474,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "phase": "with-data",
+  "expected_min_timers": 8
+}
