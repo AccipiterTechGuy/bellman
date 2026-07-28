@@ -44,6 +44,7 @@ fn sample_timer(action: Action, retry: RetryPolicy) -> Timer {
         revision: 1,
         jitter_secs: 0,
         accuracy_slack_secs: None,
+        wake_machine: false,
     }
 }
 

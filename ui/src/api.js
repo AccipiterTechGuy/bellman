@@ -220,6 +220,39 @@ export async function wizardReRun() {
 export async function appInfo() {
   return await invoke('app_info');
 }
+export async function wakeStatus() {
+  return await invoke('wake_status');
+}
+export async function wakeReprobe() {
+  return await invoke('wake_reprobe');
+}
+export async function setWakeEnabled(enabled) {
+  return await invoke('set_wake_enabled', { enabled });
+}
+export async function setAutostartEnabled(enabled) {
+  return await invoke('set_autostart_enabled', { enabled });
+}
+export async function setMaxConcurrentActions(value) {
+  return await invoke('set_max_concurrent_actions', { value });
+}
+export async function dependencyCheck() {
+  return await invoke('dependency_check');
+}
+export async function wakeFixPowercfg(rail = 'ac') {
+  return await invoke('wake_fix_powercfg', { rail });
+}
+export async function wakeEnrollMacos() {
+  return await invoke('wake_enroll_macos');
+}
+export async function wakeOpenLoginItems() {
+  return await invoke('wake_open_login_items');
+}
+export async function getMisfireDefaults() {
+  return await invoke('get_misfire_defaults');
+}
+export async function setMisfireDefaults(policy, graceSecs) {
+  return await invoke('set_misfire_defaults', { policy, graceSecs });
+}
 
 // ── UI-side helpers (calendar / dialog math). Keep these pure so unit tests
 // ── can import them and run without a webview. See api.test.js for the

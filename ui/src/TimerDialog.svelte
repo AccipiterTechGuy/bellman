@@ -7,6 +7,7 @@
     previewFires,
     queryNeighbours,
     isTauri,
+    wakeStatus,
   } from './api.js';
   import { buildInput as buildWireInput, weekdaysCsvToMap, weekdaysMapToCsv, WEEKDAY_CHIPS } from './dialog-build.js';
   import {
@@ -80,8 +81,12 @@
       launchWorkdir: '',
       notifyTitle: '',
       notifyBody: '',
+      // RTC single-next-wake election (default false).
+      wakeMachine: false,
     };
   }
+
+  let wakeCap = $state(null);
 
   function loadFromTimer(t) {
     const occ = t.occurrence || {};
@@ -121,6 +126,7 @@
     form = {
       name: t.name || '',
       enabled: !!t.enabled,
+      wakeMachine: !!t.wakeMachine,
       occurrence: {
         kind: occKind,
         tz: occ.tz || systemTimeZone(),
@@ -194,6 +200,7 @@
     return {
       name: input.name,
       enabled: input.enabled,
+      wakeMachine: input.wakeMachine,
       occurrence: input.occurrence,
       actionKind: input.action,
     };
@@ -432,6 +439,11 @@
     // Focus Name so typing starts immediately and Escape reaches the dialog
     // (handler is on the backdrop; events bubble from the focused field).
     nameInputEl?.focus();
+    try {
+      wakeCap = await wakeStatus();
+    } catch {
+      wakeCap = null;
+    }
   });
 
   async function save() {
@@ -719,6 +731,20 @@
 
         <div class="form-row checkbox-row">
           <label><input type="checkbox" bind:checked={form.enabled} /> Enabled</label>
+          <label
+            title={wakeCap && !wakeCap.enabled ? (wakeCap.statusLine || 'Wake disabled') : ''}
+            class:disabled-opt={wakeCap && !wakeCap.enabled}
+          >
+            <input
+              type="checkbox"
+              bind:checked={form.wakeMachine}
+              disabled={wakeCap && !wakeCap.enabled}
+            />
+            Wake the computer for this timer
+            {#if wakeCap && !wakeCap.enabled}
+              <span class="hint-inline">({wakeCap.statusLine})</span>
+            {/if}
+          </label>
         </div>
       </div>
 

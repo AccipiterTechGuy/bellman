@@ -80,6 +80,8 @@ pub fn set_enabled(
     if let Some(h) = state.control_handle.lock().as_ref() {
         h.refill();
     }
+    drop(store);
+    state.rearm_wake();
     Ok(TimerDto::from(updated))
 }
 
@@ -201,6 +203,9 @@ pub fn wizard_set_choice(
     *state.config.lock() = cfg.clone();
     // Apply the autostart bit immediately.
     let _ = apply_autostart(&app, cfg.autostart_enabled);
+    // Master wake toggle from wizard answer.
+    state.set_wake_master(cfg.wake_enabled);
+    state.rearm_wake();
     Ok(WizardStatus {
         completed: cfg.wizard_completed,
         defaults: WizardChoice {
@@ -237,6 +242,11 @@ pub struct AppInfo {
     pub wizard_completed: bool,
     pub autostart_enabled: bool,
     pub pause_all: bool,
+    pub wake_enabled: bool,
+    pub wake_status_line: String,
+    pub max_concurrent_actions: usize,
+    pub default_misfire_policy: String,
+    pub default_misfire_grace_secs: u64,
 }
 
 #[tauri::command]
@@ -250,6 +260,222 @@ pub fn app_info(state: State<'_, AppState>) -> AppInfo {
         wizard_completed: cfg.wizard_completed,
         autostart_enabled: cfg.autostart_enabled,
         pause_all: state.pause_all(),
+        wake_enabled: cfg.wake_enabled,
+        wake_status_line: state.wake_status_line(),
+        max_concurrent_actions: cfg.max_concurrent_actions,
+        default_misfire_policy: cfg.default_misfire_policy.clone(),
+        default_misfire_grace_secs: cfg.default_misfire_grace_secs,
+    }
+}
+
+// ── P7 wake / Settings commands ──────────────────────────────────────
+
+/// Snapshot returned by `wake_status` / `wake_reprobe`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WakeStatusDto {
+    pub status_line: String,
+    /// Effective capability (platform AND master toggle).
+    pub enabled: bool,
+    /// Master config toggle (`wake.enabled`).
+    pub master_enabled: bool,
+    /// Platform probe only (ignores master) — drives greying of the master toggle.
+    pub platform_enabled: bool,
+    pub platform: String,
+    pub fix_hint: Option<String>,
+    /// `linux_udev` | `windows_powercfg` | `macos_enroll` | `macos_login_items`
+    pub fix_action: Option<String>,
+    pub udev_snippet: Option<String>,
+    pub powercfg_command: Option<String>,
+    pub login_items_url: Option<String>,
+    pub capability: serde_json::Value,
+}
+
+#[tauri::command]
+pub fn wake_status(state: State<'_, AppState>) -> WakeStatusDto {
+    state.wake_status_dto()
+}
+
+#[tauri::command]
+pub fn wake_reprobe(state: State<'_, AppState>) -> WakeStatusDto {
+    let _ = state.wake_reprobe();
+    state.emit_wake_capability_if_changed();
+    state.wake_status_dto()
+}
+
+#[tauri::command]
+pub fn set_wake_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<WakeStatusDto, String> {
+    let mut cfg = state.config.lock().clone();
+    cfg.wake_enabled = enabled;
+    cfg.save(&state.data_dir).map_err(|e| e.to_string())?;
+    *state.config.lock() = cfg;
+    state.set_wake_master(enabled);
+    state.rearm_wake();
+    state.emit_wake_capability_if_changed();
+    Ok(state.wake_status_dto())
+}
+
+#[tauri::command]
+pub fn set_autostart_enabled(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    let mut cfg = state.config.lock().clone();
+    cfg.autostart_enabled = enabled;
+    cfg.save(&state.data_dir).map_err(|e| e.to_string())?;
+    *state.config.lock() = cfg;
+    apply_autostart(&app, enabled).map_err(|e| e.to_string())?;
+    Ok(enabled)
+}
+
+#[tauri::command]
+pub fn set_max_concurrent_actions(
+    state: State<'_, AppState>,
+    value: usize,
+) -> Result<usize, String> {
+    let mut cfg = state.config.lock().clone();
+    cfg.max_concurrent_actions = value.clamp(1, 256);
+    let saved = cfg.max_concurrent_actions;
+    cfg.save(&state.data_dir).map_err(|e| e.to_string())?;
+    *state.config.lock() = cfg;
+    Ok(saved)
+}
+
+/// Dependency check for the first-run wizard (informational only).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyCheckDto {
+    pub items: Vec<DepItemDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DepItemDto {
+    pub name: String,
+    pub ok: bool,
+    pub hint: Option<String>,
+}
+
+/// User-initiated Windows powercfg fix-it (UAC). Rail: `"ac"` | `"dc"`.
+#[tauri::command]
+pub fn wake_fix_powercfg(
+    state: State<'_, AppState>,
+    rail: Option<String>,
+) -> Result<crate::commands::WakeStatusDto, String> {
+    let rail = match rail.as_deref() {
+        Some("dc") | Some("battery") => bellman_core::PowerRail::Dc,
+        _ => bellman_core::PowerRail::Ac,
+    };
+    crate::wake_fixit::run_windows_powercfg_fix(rail)?;
+    let _ = state.wake_reprobe();
+    state.emit_wake_capability_if_changed();
+    Ok(state.wake_status_dto())
+}
+
+/// User-initiated macOS SMAppService enroll + Login Items deep-link.
+#[tauri::command]
+pub fn wake_enroll_macos(state: State<'_, AppState>) -> Result<WakeStatusDto, String> {
+    let msg = crate::wake_fixit::enroll_macos_wake_daemon()?;
+    log::info!("bellman: {msg}");
+    let _ = state.wake_reprobe();
+    state.emit_wake_capability_if_changed();
+    Ok(state.wake_status_dto())
+}
+
+/// Open macOS Login Items (helper awaiting approval).
+#[tauri::command]
+pub fn wake_open_login_items(state: State<'_, AppState>) -> Result<WakeStatusDto, String> {
+    let msg = crate::wake_fixit::open_macos_login_items()?;
+    log::info!("bellman: {msg}");
+    let _ = state.wake_reprobe();
+    Ok(state.wake_status_dto())
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MisfireDefaultsDto {
+    pub policy: String,
+    pub grace_secs: u64,
+}
+
+#[tauri::command]
+pub fn get_misfire_defaults(state: State<'_, AppState>) -> MisfireDefaultsDto {
+    let cfg = state.config.lock().clone();
+    MisfireDefaultsDto {
+        policy: cfg.default_misfire_policy,
+        grace_secs: cfg.default_misfire_grace_secs,
+    }
+}
+
+#[tauri::command]
+pub fn set_misfire_defaults(
+    state: State<'_, AppState>,
+    policy: String,
+    grace_secs: u64,
+) -> Result<MisfireDefaultsDto, String> {
+    let mut cfg = state.config.lock().clone();
+    cfg.default_misfire_policy = policy;
+    cfg.default_misfire_grace_secs = grace_secs;
+    cfg = cfg.sanitized();
+    cfg.save(&state.data_dir).map_err(|e| e.to_string())?;
+    let out = MisfireDefaultsDto {
+        policy: cfg.default_misfire_policy.clone(),
+        grace_secs: cfg.default_misfire_grace_secs,
+    };
+    *state.config.lock() = cfg;
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn dependency_check() -> DependencyCheckDto {
+    #[cfg(target_os = "linux")]
+    {
+        let mut items = Vec::new();
+        // webkit2gtk is a link-time dep of the app — if we're running, it's present.
+        items.push(DepItemDto {
+            name: "webkit2gtk".into(),
+            ok: true,
+            hint: None,
+        });
+        // AppIndicator: best-effort via presence of the shared lib.
+        let indicator = std::path::Path::new("/usr/lib/x86_64-linux-gnu/libayatana-appindicator3.so.1")
+            .exists()
+            || std::path::Path::new("/usr/lib/libayatana-appindicator3.so.1").exists();
+        items.push(DepItemDto {
+            name: "tray AppIndicator".into(),
+            ok: indicator,
+            hint: if indicator {
+                None
+            } else {
+                Some(
+                    "GNOME: install the AppIndicator extension, or use KDE/others with tray support."
+                        .into(),
+                )
+            },
+        });
+        DependencyCheckDto { items }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        DependencyCheckDto {
+            items: vec![DepItemDto {
+                name: "WebView2 runtime".into(),
+                ok: true, // evergreen bootstrapper in installer
+                hint: None,
+            }],
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        DependencyCheckDto { items: vec![] }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        DependencyCheckDto { items: vec![] }
     }
 }
 
@@ -274,6 +500,8 @@ pub struct CreateTimerInput {
     pub action: crate::web::WebActionDto,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    #[serde(default)]
+    pub wake_machine: bool,
 }
 
 fn default_enabled() -> bool {
@@ -287,6 +515,18 @@ impl CreateTimerInput {
         let mut new = NewTimer::new(self.name, occurrence);
         new.action = action;
         new.enabled = self.enabled;
+        new.wake_machine = self.wake_machine;
+        Ok(new)
+    }
+
+    /// Build a `NewTimer` applying Settings misfire defaults from `cfg`
+    /// (calendar kinds only; intervals stay Skip).
+    pub fn into_new_timer_with_config(
+        self,
+        cfg: &bellman_core::AppConfig,
+    ) -> Result<NewTimer, String> {
+        let mut new = self.into_new_timer()?;
+        new.misfire = cfg.misfire_for_occurrence(&new.occurrence);
         Ok(new)
     }
 }
@@ -301,9 +541,12 @@ pub fn create_timer(
 }
 
 pub(crate) fn do_create_timer(state: &AppState, input: CreateTimerInput) -> Result<TimerDto, String> {
-    let new = input.into_new_timer()?;
-    let mut store = state.store.lock();
-    let timer = store.create_timer(new).map_err(|e| e.to_string())?;
+    let cfg = state.config.lock().clone();
+    let new = input.into_new_timer_with_config(&cfg)?;
+    let timer = {
+        let mut store = state.store.lock();
+        store.create_timer(new).map_err(|e| e.to_string())?
+    };
     
     // Lifecycle: emit Registered event (analogous to the CLI)
     if let Ok(mut log) = bellman_core::EventLog::open_under(&state.data_dir) {
@@ -317,6 +560,7 @@ pub(crate) fn do_create_timer(state: &AppState, input: CreateTimerInput) -> Resu
     if let Some(h) = state.control_handle.lock().as_ref() {
         h.refill();
     }
+    state.rearm_wake();
     Ok(TimerDto::from(timer))
 }
 
@@ -344,6 +588,8 @@ pub fn update_timer(
     if let Some(h) = state.control_handle.lock().as_ref() {
         h.refill();
     }
+    drop(store);
+    state.rearm_wake();
     Ok(TimerDto::from(updated))
 }
 
@@ -356,6 +602,8 @@ pub fn delete_timer(state: State<'_, AppState>, id: String) -> Result<bool, Stri
     if let Some(h) = state.control_handle.lock().as_ref() {
         h.refill();
     }
+    drop(store);
+    state.rearm_wake();
     Ok(n)
 }
 
@@ -549,6 +797,7 @@ mod tests {
 
     fn dummy_input() -> CreateTimerInput {
         CreateTimerInput {
+            wake_machine: false,
             name: "test timer".into(),
             occurrence: crate::web::WebOccurrenceDto {
                 occ: "once".into(),
@@ -610,5 +859,92 @@ mod tests {
         // The command should still succeed
         let result = do_create_timer(&state, dummy_input());
         assert!(result.is_ok(), "command should succeed even if log fails");
+    }
+
+    /// Settings "Misfire defaults" must actually land on newly created calendar
+    /// timers (supervisor R1). Interval timers stay Skip.
+    #[test]
+    fn create_timer_applies_misfire_defaults_from_config() {
+        use bellman_core::store::MisfirePolicy;
+        use std::str::FromStr;
+        use uuid::Uuid;
+
+        let dir = tempdir().unwrap();
+        let data_dir = dir.path().to_path_buf();
+        let state = create_test_state(data_dir.clone());
+
+        // Simulate Settings → set_misfire_defaults(catch_up, 77).
+        {
+            let mut cfg = state.config.lock().clone();
+            cfg.default_misfire_policy = "catch_up".into();
+            cfg.default_misfire_grace_secs = 77;
+            cfg = cfg.sanitized();
+            cfg.save(&state.data_dir).unwrap();
+            *state.config.lock() = cfg;
+        }
+
+        let input = CreateTimerInput {
+            wake_machine: false,
+            name: "cal-default".into(),
+            occurrence: crate::web::WebOccurrenceDto {
+                occ: "daily".into(),
+                tz: "UTC".into(),
+                once_at: None,
+                at: Some("09:00:00".into()),
+                every_secs: None,
+                anchor: None,
+                day: None,
+                month: None,
+                expr: None,
+                days: None,
+            },
+            action: crate::web::WebActionDto::None,
+            enabled: true,
+        };
+        let dto = do_create_timer(&state, input).expect("create calendar timer");
+        let id = Uuid::from_str(&dto.id).unwrap();
+
+        let store = state.store.lock();
+        let timer = store.get_timer(id).unwrap().expect("timer row");
+        assert_eq!(
+            timer.misfire,
+            MisfirePolicy::CatchUp {
+                grace_secs: 77,
+                max_catch_up: 10,
+            },
+            "calendar timer must store Settings misfire defaults"
+        );
+
+        // Interval still Skip even when config says coalesce.
+        drop(store);
+        {
+            let mut cfg = state.config.lock().clone();
+            cfg.default_misfire_policy = "coalesce".into();
+            cfg.default_misfire_grace_secs = 3600;
+            *state.config.lock() = cfg;
+        }
+        let interval = CreateTimerInput {
+            wake_machine: false,
+            name: "int-skip".into(),
+            occurrence: crate::web::WebOccurrenceDto {
+                occ: "interval".into(),
+                tz: "UTC".into(),
+                once_at: None,
+                at: None,
+                every_secs: Some(30),
+                anchor: None,
+                day: None,
+                month: None,
+                expr: None,
+                days: None,
+            },
+            action: crate::web::WebActionDto::None,
+            enabled: true,
+        };
+        let dto2 = do_create_timer(&state, interval).expect("create interval");
+        let id2 = Uuid::from_str(&dto2.id).unwrap();
+        let store = state.store.lock();
+        let t2 = store.get_timer(id2).unwrap().unwrap();
+        assert_eq!(t2.misfire, MisfirePolicy::Skip);
     }
 }

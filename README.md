@@ -50,7 +50,7 @@ keeping private integrations out of git.
 | Calendar UI (week / month) | ✅ built |
 | Pruner, hardening, perf gates | ✅ built |
 | Packaging — deb / AppImage (Linux); NSIS, MSI, dmg unsigned in CI | ✅ built |
-| Wake-from-sleep (RTC) + Settings + first-run wizard | ⬜ not started |
+| Wake-from-sleep (RTC) + Settings + first-run wizard | ✅ P7 (platform::wake + Settings + wizard) |
 | Full-system validation | ⬜ not started |
 
 Linux `.deb` and `.AppImage` build and install today: the deb puts **Bellman** in

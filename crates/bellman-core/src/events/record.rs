@@ -30,6 +30,8 @@ pub enum EventKind {
     Pruned,
     /// Jan-1 year consistency pass completed.
     YearRecalibrate,
+    /// Platform wake capability at startup or on transition (status line in `message`).
+    WakeCapability,
 }
 
 impl EventKind {
@@ -45,6 +47,7 @@ impl EventKind {
             Self::NoAck => "no_ack",
             Self::Pruned => "pruned",
             Self::YearRecalibrate => "year_recalibrate",
+            Self::WakeCapability => "wake_capability",
         }
     }
 }

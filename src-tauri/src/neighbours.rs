@@ -416,6 +416,7 @@ mod tests {
             revision: 1,
             jitter_secs: 0,
             accuracy_slack_secs: None,
+            wake_machine: false,
         }
     }
 

@@ -9,7 +9,7 @@ the defaults below.
 | `wizard_completed` | bool | `false` | First-run wizard dismissed |
 | `autostart_enabled` | bool | `false` | Launch on login |
 | `start_minimized` | bool | `false` | Start tray-only |
-| `wake_enabled` | bool | `false` | User opted into OS wake-from-sleep setup |
+| `wake_enabled` | bool | `false` | Master toggle: allow RTC wake-from-sleep (P7) |
 | `horizon_secs` | u64 | `86400` (24 h) | Near-horizon heap window |
 | `retention_days` | u64 | `30` | JSONL archive retention |
 | `min_free_slots` | usize | `5` | Empty free-slot floor |
@@ -17,6 +17,8 @@ the defaults below.
 | `ack_grace_secs` | u64 | `60` | Grace before terminal one-shots are prune-eligible |
 | `accuracy_slack_secs` | u64 | `1` | Default high-frequency accuracy slack |
 | `prune_interval_secs` | u64 | `604800` (7 d) | Weekly prune cadence / startup catch-up |
+| `default_misfire_policy` | string | `"coalesce"` | Default for new calendar timers (`coalesce` / `skip` / `catch_up`) |
+| `default_misfire_grace_secs` | u64 | `3600` | Grace window for coalesce / catch_up defaults |
 
 Sidecar (not JSON): `pause_all` file contains `1`/`0` for vacation mode.
 

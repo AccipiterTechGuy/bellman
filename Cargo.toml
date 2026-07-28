@@ -5,6 +5,8 @@ members = [
     "crates/bellman-cli",
     "src-tauri",
 ]
+# Standalone macOS helper — built with its own [workspace] under helpers/.
+exclude = ["helpers/macos-wake-daemon"]
 
 [workspace.package]
 version = "0.1.0"
@@ -20,10 +22,12 @@ croner = "2"
 notify = "8"
 notify-debouncer-full = "0.5"
 rusqlite = { version = "0.32", features = ["bundled"] }
+rustix = { version = "1", features = ["time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
+zbus = { version = "5", features = ["blocking-api"] }
 
 [profile.dev]
 incremental = true

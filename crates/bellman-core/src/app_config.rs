@@ -5,6 +5,8 @@
 //! is forbidden — BUILD_PLAN rule 7). Missing keys fall back to product defaults
 //! so packaging can ship a partial file.
 
+use crate::occurrence::Occurrence;
+use crate::store::MisfirePolicy;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -23,6 +25,10 @@ pub const DEFAULT_ACK_GRACE_SECS: u64 = 60;
 pub const DEFAULT_ACCURACY_SLACK_SECS: u64 = 1;
 /// Weekly prune cadence (7 days).
 pub const DEFAULT_PRUNE_INTERVAL_SECS: u64 = 7 * 24 * 60 * 60;
+/// Default calendar misfire grace (1 hour) — product default Coalesce window.
+pub const DEFAULT_MISFIRE_GRACE_SECS: u64 = 3600;
+/// Default calendar misfire policy name (`coalesce` | `skip` | `catch_up`).
+pub const DEFAULT_MISFIRE_POLICY: &str = "coalesce";
 
 /// Path of the user/engine config file under the data dir.
 pub fn config_path(data_dir: &Path) -> PathBuf {
@@ -70,6 +76,15 @@ pub struct AppConfig {
     /// `now > last_prune + prune_interval_secs`.
     #[serde(default = "default_prune_interval_secs")]
     pub prune_interval_secs: u64,
+
+    /// Default misfire policy for **new calendar** timers: `coalesce`, `skip`,
+    /// or `catch_up`. Per-timer overrides still win; this is the Settings
+    /// default applied when the dialog does not set a policy.
+    #[serde(default = "default_misfire_policy")]
+    pub default_misfire_policy: String,
+    /// Grace window (seconds) for coalesce / catch_up calendar defaults.
+    #[serde(default = "default_misfire_grace_secs")]
+    pub default_misfire_grace_secs: u64,
 }
 
 fn default_horizon_secs() -> u64 {
@@ -93,6 +108,12 @@ fn default_accuracy_slack_secs() -> u64 {
 fn default_prune_interval_secs() -> u64 {
     DEFAULT_PRUNE_INTERVAL_SECS
 }
+fn default_misfire_policy() -> String {
+    DEFAULT_MISFIRE_POLICY.to_string()
+}
+fn default_misfire_grace_secs() -> u64 {
+    DEFAULT_MISFIRE_GRACE_SECS
+}
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -108,6 +129,8 @@ impl Default for AppConfig {
             ack_grace_secs: DEFAULT_ACK_GRACE_SECS,
             accuracy_slack_secs: DEFAULT_ACCURACY_SLACK_SECS,
             prune_interval_secs: DEFAULT_PRUNE_INTERVAL_SECS,
+            default_misfire_policy: DEFAULT_MISFIRE_POLICY.to_string(),
+            default_misfire_grace_secs: DEFAULT_MISFIRE_GRACE_SECS,
         }
     }
 }
@@ -163,6 +186,14 @@ impl AppConfig {
         if self.prune_interval_secs == 0 {
             self.prune_interval_secs = DEFAULT_PRUNE_INTERVAL_SECS;
         }
+        let p = self.default_misfire_policy.to_ascii_lowercase();
+        self.default_misfire_policy = match p.as_str() {
+            "skip" | "coalesce" | "catch_up" => p,
+            _ => DEFAULT_MISFIRE_POLICY.to_string(),
+        };
+        if self.default_misfire_grace_secs == 0 {
+            self.default_misfire_grace_secs = DEFAULT_MISFIRE_GRACE_SECS;
+        }
         self
     }
 
@@ -185,11 +216,36 @@ impl AppConfig {
     pub fn accuracy_slack(&self) -> Duration {
         Duration::from_secs(self.accuracy_slack_secs)
     }
+
+    /// Resolve the misfire policy for a **new** timer from Settings defaults.
+    ///
+    /// - Interval (elapsed-time) timers always keep product default [`MisfirePolicy::Skip`]
+    ///   — Settings defaults only apply to calendar kinds.
+    /// - Calendar kinds use `default_misfire_policy` + `default_misfire_grace_secs`.
+    pub fn misfire_for_occurrence(&self, occ: &Occurrence) -> MisfirePolicy {
+        if occ.kind().is_elapsed_time() {
+            return MisfirePolicy::default_interval();
+        }
+        let grace = self.default_misfire_grace_secs;
+        match self.default_misfire_policy.as_str() {
+            "skip" => MisfirePolicy::Skip,
+            "catch_up" => MisfirePolicy::CatchUp {
+                grace_secs: grace,
+                max_catch_up: 10,
+            },
+            // "coalesce" and any other sanitized value
+            _ => MisfirePolicy::Coalesce {
+                grace_secs: grace,
+            },
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::occurrence::{Occurrence, OccurrenceKind};
+    use chrono::{NaiveTime, TimeZone, Utc};
 
     #[test]
     fn defaults_match_product() {
@@ -198,6 +254,58 @@ mod tests {
         assert_eq!(c.retention_days, DEFAULT_RETENTION_DAYS);
         assert_eq!(c.min_free_slots, DEFAULT_MIN_FREE_SLOTS);
         assert_eq!(c.max_concurrent_actions, DEFAULT_MAX_CONCURRENT_ACTIONS);
+    }
+
+    #[test]
+    fn misfire_for_occurrence_applies_calendar_defaults() {
+        let mut c = AppConfig::default();
+        c.default_misfire_policy = "skip".into();
+        c.default_misfire_grace_secs = 120;
+        let daily = Occurrence::new(
+            OccurrenceKind::Daily {
+                at: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            },
+            "UTC",
+        )
+        .unwrap();
+        assert_eq!(c.misfire_for_occurrence(&daily), MisfirePolicy::Skip);
+
+        c.default_misfire_policy = "catch_up".into();
+        c.default_misfire_grace_secs = 90;
+        assert_eq!(
+            c.misfire_for_occurrence(&daily),
+            MisfirePolicy::CatchUp {
+                grace_secs: 90,
+                max_catch_up: 10,
+            }
+        );
+
+        c.default_misfire_policy = "coalesce".into();
+        c.default_misfire_grace_secs = 42;
+        assert_eq!(
+            c.misfire_for_occurrence(&daily),
+            MisfirePolicy::Coalesce { grace_secs: 42 }
+        );
+    }
+
+    #[test]
+    fn misfire_for_occurrence_interval_always_skip() {
+        let mut c = AppConfig::default();
+        c.default_misfire_policy = "coalesce".into();
+        c.default_misfire_grace_secs = 99;
+        let interval = Occurrence::new(
+            OccurrenceKind::Interval {
+                every_secs: 60,
+                anchor: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            },
+            "UTC",
+        )
+        .unwrap();
+        assert_eq!(
+            c.misfire_for_occurrence(&interval),
+            MisfirePolicy::Skip,
+            "interval timers must not pick up calendar settings defaults"
+        );
     }
 
     #[test]

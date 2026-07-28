@@ -158,7 +158,8 @@ impl Store {
             "SELECT id, name, enabled, occurrence, tz, next_fire_utc, last_fired,
                     misfire_policy, overlap_policy, retry_policy,
                     valid_from, valid_until, max_runs, tags, action, revision,
-                    COALESCE(jitter_secs, 0), accuracy_slack_secs
+                    COALESCE(jitter_secs, 0), accuracy_slack_secs,
+                    COALESCE(wake_machine, 0)
              FROM timers WHERE id = ?1",
         )?;
         let row = stmt
@@ -173,7 +174,8 @@ impl Store {
             "SELECT id, name, enabled, occurrence, tz, next_fire_utc, last_fired,
                     misfire_policy, overlap_policy, retry_policy,
                     valid_from, valid_until, max_runs, tags, action, revision,
-                    COALESCE(jitter_secs, 0), accuracy_slack_secs
+                    COALESCE(jitter_secs, 0), accuracy_slack_secs,
+                    COALESCE(wake_machine, 0)
              FROM timers ORDER BY name, id",
         )?;
         let rows = stmt.query_map([], row_to_timer)?;
@@ -212,7 +214,8 @@ impl Store {
             "SELECT id, name, enabled, occurrence, tz, next_fire_utc, last_fired,
                     misfire_policy, overlap_policy, retry_policy,
                     valid_from, valid_until, max_runs, tags, action, revision,
-                    COALESCE(jitter_secs, 0), accuracy_slack_secs
+                    COALESCE(jitter_secs, 0), accuracy_slack_secs,
+                    COALESCE(wake_machine, 0)
              FROM timers
              WHERE enabled = 1
                AND next_fire_utc IS NOT NULL
@@ -733,6 +736,9 @@ fn apply_patch(timer: &mut Timer, patch: TimerPatch) -> StoreResult<()> {
     if let Some(a) = patch.accuracy_slack_secs {
         timer.accuracy_slack_secs = a;
     }
+    if let Some(w) = patch.wake_machine {
+        timer.wake_machine = w;
+    }
     Ok(())
 }
 
@@ -763,12 +769,12 @@ fn create_timer_tx(tx: &Transaction<'_>, new: NewTimer) -> StoreResult<Timer> {
             id, name, enabled, occurrence, tz, next_fire_utc, last_fired,
             misfire_policy, overlap_policy, retry_policy,
             valid_from, valid_until, max_runs, tags, action, revision,
-            jitter_secs, accuracy_slack_secs
+            jitter_secs, accuracy_slack_secs, wake_machine
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7,
             ?8, ?9, ?10,
             ?11, ?12, ?13, ?14, ?15, ?16,
-            ?17, ?18
+            ?17, ?18, ?19
          )",
         params![
             id.to_string(),
@@ -789,6 +795,7 @@ fn create_timer_tx(tx: &Transaction<'_>, new: NewTimer) -> StoreResult<Timer> {
             revision,
             i64::from(new.jitter_secs),
             new.accuracy_slack_secs.map(i64::from),
+            i64::from(new.wake_machine),
         ],
     )?;
     get_timer_tx(tx, id)?.ok_or_else(|| StoreError::Internal("timer missing after insert".into()))
@@ -825,8 +832,8 @@ fn update_timer_tx(tx: &Transaction<'_>, update: TimerUpdate) -> StoreResult<Tim
             misfire_policy = ?7, overlap_policy = ?8, retry_policy = ?9,
             valid_from = ?10, valid_until = ?11, max_runs = ?12,
             tags = ?13, action = ?14, revision = ?15,
-            jitter_secs = ?16, accuracy_slack_secs = ?17
-         WHERE id = ?18 AND revision = ?19",
+            jitter_secs = ?16, accuracy_slack_secs = ?17, wake_machine = ?18
+         WHERE id = ?19 AND revision = ?20",
         params![
             next.name,
             i64::from(next.enabled),
@@ -845,6 +852,7 @@ fn update_timer_tx(tx: &Transaction<'_>, update: TimerUpdate) -> StoreResult<Tim
             next.revision,
             i64::from(next.jitter_secs),
             next.accuracy_slack_secs.map(i64::from),
+            i64::from(next.wake_machine),
             next.id.to_string(),
             update.expected_revision,
         ],
@@ -865,7 +873,8 @@ fn get_timer_tx(tx: &Transaction<'_>, id: TimerId) -> StoreResult<Option<Timer>>
         "SELECT id, name, enabled, occurrence, tz, next_fire_utc, last_fired,
                 misfire_policy, overlap_policy, retry_policy,
                 valid_from, valid_until, max_runs, tags, action, revision,
-                COALESCE(jitter_secs, 0), accuracy_slack_secs
+                COALESCE(jitter_secs, 0), accuracy_slack_secs,
+                COALESCE(wake_machine, 0)
          FROM timers WHERE id = ?1",
     )?;
     let row = stmt
@@ -965,6 +974,7 @@ fn row_to_timer(r: &rusqlite::Row<'_>) -> rusqlite::Result<Timer> {
     let revision: i64 = r.get(15)?;
     let jitter_secs_i: i64 = r.get(16)?;
     let accuracy_slack_i: Option<i64> = r.get(17)?;
+    let wake_machine_i: i64 = r.get(18)?;
 
     let occurrence: Occurrence = serde_json::from_str(&occ_json).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e))
@@ -1049,6 +1059,7 @@ fn row_to_timer(r: &rusqlite::Row<'_>) -> rusqlite::Result<Timer> {
         revision,
         jitter_secs,
         accuracy_slack_secs,
+        wake_machine: wake_machine_i != 0,
     })
 }
 

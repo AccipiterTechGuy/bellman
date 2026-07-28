@@ -37,6 +37,9 @@ thiserror = "1"
 parking_lot = "0.12"
 uuid = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

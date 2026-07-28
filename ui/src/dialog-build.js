@@ -75,6 +75,7 @@ export function buildInput(form, isEdit, overrides = {}) {
   return {
     name: form.name.trim(),
     enabled: form.enabled,
+    wakeMachine: !!form.wakeMachine,
     occurrence: o,
     action,
   };
