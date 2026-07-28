@@ -26,7 +26,6 @@ pub mod web;
 mod dto_serde_tests;
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use tauri::Manager;
 use tauri_plugin_autostart::MacosLauncher;
@@ -78,9 +77,14 @@ pub fn run() {
                 config.autostart_enabled
             );
 
-            // Open the store. This applies the schema (v3) and PRAGMAs.
-            let mut store = bellman_core::open_store(&db_path)
+            // Open the store. This applies the schema (v4) and PRAGMAs.
+            let store = bellman_core::open_store(&db_path)
                 .map_err(|e| setup_err_str(format!("open store: {e}")))?;
+            // Persist a complete config.json on first run so packaging / hand
+            // edits see every documented key (horizon, retention, slots, cap).
+            if !config::config_path(&data_dir).exists() {
+                let _ = config.save(&data_dir);
+            }
             // `update_timer` + `claim_run` are &mut on the store; all the
             // scheduler / Tauri commands share one Store via Mutex.
 

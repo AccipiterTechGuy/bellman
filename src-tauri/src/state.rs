@@ -66,22 +66,32 @@ impl AppState {
     /// to its own `Store`/`ActionRunner` handles; commands mutate the shared
     /// store directly and send `Refill` so the next tick rebuilds the heap.
     pub fn start_scheduler(&self) {
-        let mut store = self.store.lock();
-        let cfg = SchedulerConfig::default();
+        let store = self.store.lock();
+        // Engine tunables from config.json (horizon, retention, concurrency…).
+        let app_cfg = self.config.lock().clone();
+        let cfg = SchedulerConfig::from_app_config(&app_cfg)
+            .with_data_dir(self.data_dir.clone());
         // Open the JSONL event log once and hand it to the runner so
         // scheduled fires (not just run-now) land in events.current.jsonl.
         // Without this, the per-timer "live log tail" panel in the GUI
         // would only see events from manual run-now invocations, and the
         // docs/QA_P3.md "window close leaves engine firing" check would
         // be unprovable.
-        let event_log = match bellman_core::EventLog::open_under(&self.data_dir) {
+        let event_log = match bellman_core::EventLog::open(
+            bellman_core::EventLogConfig::new(self.data_dir.join("logs"))
+                .with_retention(app_cfg.retention()),
+        ) {
             Ok(log) => Some(log),
             Err(e) => {
                 log::error!("bellman: could not open event log under {}: {e}", self.data_dir.display());
                 None
             }
         };
-        let mut runner = ActionRunner::new(ActionRunnerConfig::default())
+        let runner_cfg = ActionRunnerConfig {
+            max_concurrent_actions: app_cfg.max_concurrent_actions,
+            ..ActionRunnerConfig::default()
+        };
+        let mut runner = ActionRunner::new(runner_cfg)
             .with_notify_sink(self.notify_sink.clone());
         if let Some(log) = event_log {
             runner = runner.with_event_log(log);

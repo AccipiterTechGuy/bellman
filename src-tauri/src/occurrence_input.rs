@@ -38,7 +38,7 @@ pub struct CreateTimerInput {
 /// What the dialog emits per occurrence variant. The discriminator is the
 /// `kind` string ("once" | "interval" | ...); kind-specific fields are only
 /// meaningful for their variant. Mirrors `OccurrenceKind`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OccurrenceInput {
     pub kind: String,
@@ -60,25 +60,7 @@ pub struct OccurrenceInput {
     pub invalid_monthday: Option<InvalidMonthDayPolicy>,
 }
 
-impl Default for OccurrenceInput {
-    fn default() -> Self {
-        Self {
-            kind: String::new(),
-            tz: None,
-            time: None,
-            once_at: None,
-            every_secs: None,
-            interval_anchor: None,
-            days: None,
-            day: None,
-            month: None,
-            cron_expr: None,
-            dst_gap: None,
-            dst_fold: None,
-            invalid_monthday: None,
-        }
-    }
-}
+
 
 impl OccurrenceInput {
     /// Build a fresh `Occurrence` honoring all policies. Validates early so
@@ -371,8 +353,8 @@ fn dst_warning_for_month(day: u8, at: NaiveTime, tz: Tz) -> Option<String> {
     let mut year = next_local.year();
     let mut month = next_local.month();
     for _ in 0..24 {
-        let days_in = OccurrenceKind::days_in_month(year, month as u32);
-        let use_day = (day as u32).min(days_in);
+        let days_in = OccurrenceKind::days_in_month(year, month);
+        let use_day = u32::from(day).min(days_in);
         if let Some(probe_date) = NaiveDate::from_ymd_opt(year, month, use_day) {
             let naive = NaiveDateTime::new(probe_date, at);
             let resolved = tz.from_local_datetime(&naive);
@@ -410,7 +392,7 @@ fn dst_warning_for_year(month: u8, day: u8, at: NaiveTime, tz: Tz) -> Option<Str
 /// requested naive local, or None for clean alignment.
 fn describe_local_diff(
     naive: &NaiveDateTime,
-    tz: Tz,
+    _tz: Tz,
     resolved: LocalResult<DateTime<Tz>>,
     kind_label: &str,
 ) -> Option<String> {
@@ -641,7 +623,6 @@ fn extract_zoneinfo_name(path: &std::path::Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Datelike;
 
     #[test]
     fn clock_time_parses_short_and_long() {
@@ -887,6 +868,8 @@ mod tests {
             tags: vec!["x".into()],
             action: Action::default(),
             revision: 1,
+            jitter_secs: 0,
+            accuracy_slack_secs: None,
         };
         let dto = timer_to_input(&timer);
         assert_eq!(dto.name, "tick");

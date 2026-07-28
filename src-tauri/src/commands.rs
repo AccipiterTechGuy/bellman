@@ -1,4 +1,7 @@
 //! Tauri commands — every IPC call the webview can invoke.
+// Tauri injects `State<'_, T>` / `AppHandle` by value into every command;
+// taking them by reference is not an option for the `#[tauri::command]` ABI.
+#![allow(clippy::needless_pass_by_value)]
 //!
 //! Each command is small and passes through to the underlying core service
 //! or store. No scheduling logic lives here; the engine runs in its own
@@ -12,19 +15,19 @@
 use std::str::FromStr;
 
 use bellman_core::events::EventRecord;
-use bellman_core::store::{NewTimer, TimerPatch};
+use bellman_core::store::NewTimer;
 use bellman_core::RunNowOptions;
 use chrono::offset::Offset as _Offset;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
-use crate::config::Config;
+use crate::config;
 use crate::first_run::{WizardChoice, WizardStatus};
-use crate::occurrence_input::{self, OccurrenceInput, PreviewFire};
+use crate::occurrence_input::{self, PreviewFire};
 use crate::state::{AppState, RunNowResponse};
-use crate::web::{WebTimerDto, WebTimerPatchDto};
+use crate::web::WebTimerPatchDto;
 
 /// Re-export the deliberate UI-shaped DTO under its command-facing name.
 /// See `src-tauri/src/web.rs` for the wire contract (fixture-pinned by
@@ -194,7 +197,7 @@ pub fn wizard_set_choice(
     state: State<'_, AppState>,
     choice: WizardChoice,
 ) -> Result<WizardStatus, String> {
-    let cfg = Config::record_wizard_choice(&state.data_dir, choice).map_err(|e| e.to_string())?;
+    let cfg = config::record_wizard_choice(&state.data_dir, choice).map_err(|e| e.to_string())?;
     *state.config.lock() = cfg.clone();
     // Apply the autostart bit immediately.
     let _ = apply_autostart(&app, cfg.autostart_enabled);
@@ -486,7 +489,6 @@ fn apply_autostart(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bellman_core::store::Store;
     use bellman_core::NotifySink;
     use crate::config::Config;
     use tempfile::tempdir;
