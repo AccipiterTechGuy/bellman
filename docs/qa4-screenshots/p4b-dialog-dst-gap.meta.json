@@ -1,0 +1,19 @@
+{
+  "file": "p4b-dialog-dst-gap.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 49978,
+  "mean_luma": 25.83,
+  "stdev": 13.33,
+  "unique_colors_cap200k": 4929,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "phase": "dst-warning"
+}

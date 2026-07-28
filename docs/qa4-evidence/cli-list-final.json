@@ -1,0 +1,92 @@
+{
+  "command": "list",
+  "count": 2,
+  "ok": true,
+  "timers": [
+    {
+      "action": {
+        "type": "none"
+      },
+      "enabled": true,
+      "id": "15f5d7eb-5627-4a69-ab31-93b8648abd5c",
+      "last_fired": null,
+      "max_runs": null,
+      "misfire": {
+        "coalesce": {
+          "grace_secs": 3600
+        }
+      },
+      "name": "qa-daily",
+      "next_fire_utc": "2026-07-29T05:15:00Z",
+      "occurrence": {
+        "dst_fold": "first_occurrence",
+        "dst_gap": "first_valid_after_gap",
+        "exclusions": [],
+        "invalid_monthday": "clamp",
+        "kind": {
+          "at": "08:15:00",
+          "occ": "daily"
+        },
+        "max_runs": null,
+        "pending_skips": 0,
+        "runs_done": 0,
+        "tz": "Europe/Helsinki",
+        "valid_from": null,
+        "valid_until": null
+      },
+      "overlap": "skip",
+      "retry": {
+        "delay_secs": 30,
+        "max_retries": 1
+      },
+      "revision": 1,
+      "tags": [],
+      "tz": "Europe/Helsinki",
+      "valid_from": null,
+      "valid_until": null
+    },
+    {
+      "action": {
+        "type": "none"
+      },
+      "enabled": true,
+      "id": "d1c36f8d-6f3b-4376-af3b-c0cb81d65d63",
+      "last_fired": null,
+      "max_runs": null,
+      "misfire": {
+        "coalesce": {
+          "grace_secs": 3600
+        }
+      },
+      "name": "qa-weekly",
+      "next_fire_utc": "2026-07-29T05:00:00Z",
+      "occurrence": {
+        "dst_fold": "first_occurrence",
+        "dst_gap": "first_valid_after_gap",
+        "exclusions": [],
+        "invalid_monthday": "clamp",
+        "kind": {
+          "at": "08:00:00",
+          "days": 21,
+          "occ": "weekly"
+        },
+        "max_runs": null,
+        "pending_skips": 0,
+        "runs_done": 0,
+        "tz": "Europe/Helsinki",
+        "valid_from": null,
+        "valid_until": null
+      },
+      "overlap": "skip",
+      "retry": {
+        "delay_secs": 30,
+        "max_retries": 1
+      },
+      "revision": 1,
+      "tags": [],
+      "tz": "Europe/Helsinki",
+      "valid_from": null,
+      "valid_until": null
+    }
+  ]
+}

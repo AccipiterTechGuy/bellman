@@ -1,0 +1,19 @@
+{
+  "file": "p4b-week.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 37531,
+  "mean_luma": 31.25,
+  "stdev": 8.52,
+  "unique_colors_cap200k": 2837,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "phase": "with-data"
+}

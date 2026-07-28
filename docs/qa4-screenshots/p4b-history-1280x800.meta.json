@@ -1,0 +1,19 @@
+{
+  "file": "p4b-history-1280x800.png",
+  "size": [
+    1280,
+    800
+  ],
+  "bytes": 38233,
+  "mean_luma": 26.08,
+  "stdev": 5.47,
+  "unique_colors_cap200k": 2815,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    30,
+    92,
+    1280,
+    800
+  ],
+  "phase": "layout-large"
+}

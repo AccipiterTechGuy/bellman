@@ -1,0 +1,314 @@
+engine pids: {
+  "WebKitWebProcess": [
+    "722761  722732 187560 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 48"
+  ],
+  "WebKitNetworkProcess": [
+    "722752  722732 49272 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 21"
+  ],
+  "bellman": [
+    "722732  722374 189760 /home/sami/bellman/.train-worktrees/2026-07-27_0012/target/release/bellman"
+  ]
+}
+userAgent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15
+  captured p4b-all-empty.png (960, 640) bytes=20139 mean=25.85 stdev=5.65 colors~2018
+
+== DST gap warning dialog ==
+  select_kind 'once' via keyboard (idx=0) combo_name='Occurrence kind'
+    field 'Name' -> 'qa-dst-gap' (want 'qa-dst-gap')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'When' -> '2027-03-28T03:30:00' (want '2027-03-28T03:30:00')
+  captured p4b-dialog-dst-gap.png (960, 640) bytes=49978 mean=25.83 stdev=13.33 colors~4929
+
+== CREATE qa-once (once) ==
+  select_kind 'once' via keyboard (idx=0) combo_name='Occurrence kind'
+    field 'Name' -> 'qa-once' (want 'qa-once')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'When' -> '2027-03-28T03:30:00' (want '2027-03-28T03:30:00')
+  captured p4b-dialog-once-dialog.png (960, 640) bytes=51401 mean=25.99 stdev=13.17 colors~5148
+  store names after create: ['qa-dst-gap', 'qa-once']
+
+== CREATE qa-interval (interval) ==
+  select_kind 'interval' via keyboard (idx=1) combo_name='Occurrence kind'
+    field 'Name' -> 'qa-interval' (want 'qa-interval')
+    field 'Every' -> '120' (want '120')
+  store names after create: ['qa-dst-gap', 'qa-interval', 'qa-once']
+
+== CREATE qa-daily (daily) ==
+  select_kind 'daily' via keyboard (idx=2) combo_name='Occurrence kind'
+    field 'Name' -> 'qa-daily' (want 'qa-daily')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Wall-clock' -> '08:15:00' (want '08:15:00')
+  store names after create: ['qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-once']
+
+== CREATE qa-weekly (weekly) ==
+  select_kind 'weekly' via keyboard (idx=3) combo_name='Occurrence kind'
+    field 'Name' -> 'qa-weekly' (want 'qa-weekly')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Wall-clock' -> '08:00:00' (want '08:00:00')
+    field 'Weekdays' -> 'mon,wed,fri' (want 'mon,wed,fri')
+  captured p4b-dialog-weekly-dialog.png (960, 640) bytes=68149 mean=27.96 stdev=13.42 colors~5183
+  store names after create: ['qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-once', 'qa-weekly']
+
+== CREATE qa-monthly (monthly) ==
+  select_kind 'monthly' via keyboard (idx=4) combo_name='Occurrence kind'
+    field 'Name' -> 'qa-monthly' (want 'qa-monthly')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Wall-clock' -> '10:00:00' (want '10:00:00')
+    field 'Day of month' -> '15' (want '15')
+  store names after create: ['qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once', 'qa-weekly']
+
+== CREATE qa-yearly (yearly) ==
+  select_kind 'yearly' via keyboard (idx=5) combo_name='Occurrence kind'
+    field 'Name' -> 'qa-yearly' (want 'qa-yearly')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Wall-clock' -> '12:00:00' (want '12:00:00')
+    field 'Month (1' -> '7' (want '7')
+    field 'Day of month' -> '28' (want '28')
+  store names after create: ['qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once', 'qa-weekly', 'qa-yearly']
+
+== CREATE qa-cron (cron) ==
+  select_kind 'cron' via keyboard (idx=6) combo_name='Occurrence kind'
+    field 'Name' -> 'qa-cron' (want 'qa-cron')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Cron' -> '0 9 * * 1-5' (want '0 9 * * 1-5')
+  store names after create: ['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once', 'qa-weekly', 'qa-yearly']
+  captured p4b-all.png (960, 640) bytes=97229 mean=37.55 stdev=16.31 colors~6452
+  captured p4b-week.png (960, 640) bytes=37531 mean=31.25 stdev=8.52 colors~2837
+  captured p4b-month.png (960, 640) bytes=67078 mean=35.93 stdev=9.66 colors~3515
+
+== RUN NOW for JSONL evidence ==
+  Run now clicked for row0 name='qa-cron'
+  Run now clicked for row1
+  event log lines after Run now: 4
+  captured p4b-history.png (960, 640) bytes=39481 mean=27.23 stdev=7.71 colors~3087
+
+== PREVIEW vs CLI (qa-weekly) ==
+  open_edit attempt=0 n_edit=8 store=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once', 'qa-weekly', 'qa-yearly']
+  try Edit[0] title='Edit "qa-cron"' want='qa-weekly'
+  try Edit[1] title='Edit "qa-daily"' want='qa-weekly'
+  try Edit[2] title='Edit "qa-dst-gap"' want='qa-weekly'
+  try Edit[3] title='Edit "qa-interval"' want='qa-weekly'
+  try Edit[4] title='Edit "qa-monthly"' want='qa-weekly'
+  try Edit[5] title='Edit "qa-once"' want='qa-weekly'
+  try Edit[6] title='Edit "qa-weekly"' want='qa-weekly'
+  captured p4b-dialog-preview-weekly.png (960, 640) bytes=74369 mean=28.65 stdev=13.22 colors~5486
+cli next:
+ next fires for "qa-weekly" (215a2b3c-1605-4977-9a74-97e4c0fb1ebe):
+  1: 2026-07-29T05:00:00+00:00
+  2: 2026-07-31T05:00:00+00:00
+  3: 2026-08-03T05:00:00+00:00
+  4: 2026-08-05T05:00:00+00:00
+  5: 2026-08-07T05:00:00+00:00
+
+
+== EDIT qa-once ==
+  open_edit attempt=0 n_edit=8 store=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once', 'qa-weekly', 'qa-yearly']
+  try Edit[0] title='Edit "qa-cron"' want='qa-once'
+  try Edit[1] title='Edit "qa-daily"' want='qa-once'
+  try Edit[2] title='Edit "qa-dst-gap"' want='qa-once'
+  try Edit[3] title='Edit "qa-interval"' want='qa-once'
+  try Edit[4] title='Edit "qa-monthly"' want='qa-once'
+  try Edit[5] title='Edit "qa-once"' want='qa-once'
+    field 'Name' -> 'qa-once-edited' (want 'qa-once-edited')
+  clicked Save
+
+== EDIT qa-interval ==
+  open_edit attempt=0 n_edit=8 store=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+  try Edit[0] title='Edit "qa-cron"' want='qa-interval'
+  try Edit[1] title='Edit "qa-daily"' want='qa-interval'
+  try Edit[2] title='Edit "qa-dst-gap"' want='qa-interval'
+  try Edit[3] title='Edit "qa-interval"' want='qa-interval'
+    field 'Every' -> '180' (want '180')
+  clicked Save
+
+== EDIT qa-daily ==
+  open_edit attempt=0 n_edit=8 store=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+  try Edit[0] title='Edit "qa-cron"' want='qa-daily'
+  try Edit[1] title='Edit "qa-daily"' want='qa-daily'
+    field 'Wall-clock' -> '09:15:00' (want '09:15:00')
+  clicked Save
+
+== EDIT qa-weekly ==
+  open_edit attempt=0 n_edit=8 store=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+  try Edit[0] title='Edit "qa-cron"' want='qa-weekly'
+  try Edit[1] title='Edit "qa-daily"' want='qa-weekly'
+  try Edit[2] title='Edit "qa-dst-gap"' want='qa-weekly'
+  try Edit[3] title='Edit "qa-interval"' want='qa-weekly'
+  try Edit[4] title='Edit "qa-monthly"' want='qa-weekly'
+  try Edit[5] title='Edit "qa-once-edited"' want='qa-weekly'
+  try Edit[6] title='Edit "qa-weekly"' want='qa-weekly'
+    field 'Weekdays' -> 'tue,thu' (want 'tue,thu')
+  clicked Save
+
+== EDIT qa-monthly ==
+  open_edit attempt=0 n_edit=8 store=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+  try Edit[0] title='Edit "qa-cron"' want='qa-monthly'
+  try Edit[1] title='Edit "qa-daily"' want='qa-monthly'
+  try Edit[2] title='Edit "qa-dst-gap"' want='qa-monthly'
+  try Edit[3] title='Edit "qa-interval"' want='qa-monthly'
+  try Edit[4] title='Edit "qa-monthly"' want='qa-monthly'
+    field 'Day of month' -> '20' (want '20')
+  clicked Save
+
+== EDIT qa-yearly ==
+  open_edit attempt=0 n_edit=8 store=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+  try Edit[0] title='Edit "qa-cron"' want='qa-yearly'
+  try Edit[1] title='Edit "qa-daily"' want='qa-yearly'
+  try Edit[2] title='Edit "qa-dst-gap"' want='qa-yearly'
+  try Edit[3] title='Edit "qa-interval"' want='qa-yearly'
+  try Edit[4] title='Edit "qa-monthly"' want='qa-yearly'
+  try Edit[5] title='Edit "qa-once-edited"' want='qa-yearly'
+  try Edit[6] title='Edit "qa-weekly"' want='qa-yearly'
+  try Edit[7] title='Edit "qa-yearly"' want='qa-yearly'
+    field 'Month (1' -> '12' (want '12')
+  clicked Save
+
+== EDIT qa-cron ==
+  open_edit attempt=0 n_edit=8 store=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+  try Edit[0] title='Edit "qa-cron"' want='qa-cron'
+    field 'Cron' -> '30 9 * * 1-5' (want '30 9 * * 1-5')
+  clicked Save
+  captured p4b-all-after-edit.png (960, 640) bytes=100467 mean=37.68 stdev=16.33 colors~6722
+deleting ['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+
+== DELETE qa-cron ==
+  open_edit attempt=0 n_edit=8 store=['qa-cron', 'qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+  try Edit[0] title='Edit "qa-cron"' want='qa-cron'
+  clicked Confirm delete
+  store after delete: ['qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+  DELETE OK qa-cron
+
+== DELETE qa-daily ==
+  open_edit attempt=0 n_edit=7 store=['qa-daily', 'qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+  try Edit[0] title='Edit "qa-daily"' want='qa-daily'
+  clicked Confirm delete
+  store after delete: ['qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+  DELETE OK qa-daily
+
+== DELETE qa-dst-gap ==
+  open_edit attempt=0 n_edit=6 store=['qa-dst-gap', 'qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+  try Edit[0] title='Edit "qa-dst-gap"' want='qa-dst-gap'
+  clicked Confirm delete
+  store after delete: ['qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+  DELETE OK qa-dst-gap
+
+== DELETE qa-interval ==
+  open_edit attempt=0 n_edit=5 store=['qa-interval', 'qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+  try Edit[0] title='Edit "qa-interval"' want='qa-interval'
+  clicked Confirm delete
+  store after delete: ['qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+  DELETE OK qa-interval
+
+== DELETE qa-monthly ==
+  open_edit attempt=0 n_edit=4 store=['qa-monthly', 'qa-once-edited', 'qa-weekly', 'qa-yearly']
+  try Edit[0] title='Edit "qa-monthly"' want='qa-monthly'
+  clicked Confirm delete
+  store after delete: ['qa-once-edited', 'qa-weekly', 'qa-yearly']
+  DELETE OK qa-monthly
+
+== DELETE qa-once-edited ==
+  open_edit attempt=0 n_edit=3 store=['qa-once-edited', 'qa-weekly', 'qa-yearly']
+  try Edit[0] title='Edit "qa-once-edited"' want='qa-once-edited'
+  clicked Confirm delete
+  store after delete: ['qa-weekly', 'qa-yearly']
+  DELETE OK qa-once-edited
+
+== DELETE qa-weekly ==
+  open_edit attempt=0 n_edit=2 store=['qa-weekly', 'qa-yearly']
+  try Edit[0] title='Edit "qa-weekly"' want='qa-weekly'
+  clicked Confirm delete
+  store after delete: ['qa-yearly']
+  DELETE OK qa-weekly
+
+== DELETE qa-yearly ==
+  open_edit attempt=0 n_edit=1 store=['qa-yearly']
+  try Edit[0] title='Edit "qa-yearly"' want='qa-yearly'
+  clicked Confirm delete
+  store after delete: []
+  DELETE OK qa-yearly
+  captured p4b-all-after-delete.png (960, 900) bytes=24420 mean=25.53 stdev=4.9 colors~2315
+
+== layout at 1280x800 ==
+
+== CREATE qa-daily (daily) ==
+  select_kind 'daily' via keyboard (idx=2) combo_name='Occurrence kind'
+    field 'Name' -> 'qa-daily' (want 'qa-daily')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Wall-clock' -> '08:15:00' (want '08:15:00')
+  store names after create: ['qa-daily']
+
+== CREATE qa-weekly (weekly) ==
+  select_kind 'weekly' via keyboard (idx=3) combo_name='Occurrence kind'
+    field 'Name' -> 'qa-weekly' (want 'qa-weekly')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Wall-clock' -> '08:00:00' (want '08:00:00')
+    field 'Weekdays' -> 'mon,wed,fri' (want 'mon,wed,fri')
+  store names after create: ['qa-daily', 'qa-weekly']
+  captured p4b-all-1280x800.png (1280, 800) bytes=41773 mean=27.57 stdev=8.29 colors~4508
+  captured p4b-week-1280x800.png (1280, 800) bytes=43820 mean=28.86 stdev=6.8 colors~3317
+  captured p4b-month-1280x800.png (1280, 800) bytes=67316 mean=32.98 stdev=7.82 colors~3153
+  captured p4b-history-1280x800.png (1280, 800) bytes=38233 mean=26.08 stdev=5.47 colors~2815
+  open_edit attempt=0 n_edit=2 store=['qa-daily', 'qa-weekly']
+  try Edit[0] title='Edit "qa-daily"' want='qa-weekly'
+  try Edit[1] title='Edit "qa-weekly"' want='qa-weekly'
+  captured p4b-dialog-1280x800.png (1280, 800) bytes=82783 mean=21.86 stdev=12.81 colors~6844
+
+DONE {
+  "display": ":0",
+  "data_dir": "/tmp/qa-p4b-session/share/io.bellman.desktop",
+  "cli_bin": "/tmp/bellman-cli-schema3",
+  "screenshots": [
+    "p4b-all-1280x800.png",
+    "p4b-all-after-delete.png",
+    "p4b-all-after-edit.png",
+    "p4b-all-empty.png",
+    "p4b-all.png",
+    "p4b-dialog-1280x800.png",
+    "p4b-dialog-dst-gap.png",
+    "p4b-dialog-once-dialog.png",
+    "p4b-dialog-preview-weekly.png",
+    "p4b-dialog-weekly-dialog.png",
+    "p4b-history-1280x800.png",
+    "p4b-history.png",
+    "p4b-month-1280x800.png",
+    "p4b-month.png",
+    "p4b-week-1280x800.png",
+    "p4b-week.png"
+  ],
+  "meta_json": [
+    "p4b-all-1280x800.meta.json",
+    "p4b-all-after-delete.meta.json",
+    "p4b-all-after-edit.meta.json",
+    "p4b-all-empty.meta.json",
+    "p4b-all.meta.json",
+    "p4b-dialog-1280x800.meta.json",
+    "p4b-dialog-dst-gap.meta.json",
+    "p4b-dialog-once-dialog.meta.json",
+    "p4b-dialog-preview-weekly.meta.json",
+    "p4b-dialog-weekly-dialog.meta.json",
+    "p4b-history-1280x800.meta.json",
+    "p4b-history.meta.json",
+    "p4b-month-1280x800.meta.json",
+    "p4b-month.meta.json",
+    "p4b-week-1280x800.meta.json",
+    "p4b-week.meta.json"
+  ],
+  "timers_final": [
+    "qa-daily",
+    "qa-weekly"
+  ],
+  "webkit": {
+    "WebKitWebProcess": [
+      "722761  722732 252132 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 48"
+    ],
+    "WebKitNetworkProcess": [
+      "722752  722732 49592 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 21"
+    ],
+    "bellman": [
+      "722732  722374 197504 /home/sami/bellman/.train-worktrees/2026-07-27_0012/target/release/bellman"
+    ]
+  },
+  "userAgent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+  "event_log_lines": 4,
+  "delete_failures": []
+}
