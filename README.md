@@ -17,7 +17,24 @@ people before alarm clocks existed: Bellman's job is waking *applications*.
 
 ## Status
 
-Planning / pre-build. See [docs/PLAN.md](docs/PLAN.md) for the full
-specification and decided logic, and
-[docs/research/synthesis.md](docs/research/synthesis.md) for the four-way
-independent research synthesis behind the stack choice (Tauri v2 + Rust core).
+Feature-complete core + GUI through P5; **P6 packaging** ships Linux
+`.deb` / `.AppImage`, Windows NSIS/MSI and macOS dmg CI (unsigned), with the
+`bellman` CLI and `bellman-app` tray shell co-installed. See
+[docs/QA_P6.md](docs/QA_P6.md) for install smoke, [docs/PLAN.md](docs/PLAN.md)
+for the product spec, and [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md) for the
+phase plan.
+
+### Quick package (Linux)
+
+```sh
+cd ui && npm ci && npm run build && cd ..
+bash scripts/stage_cli_sidecar.sh
+cargo tauri build --bundles deb,appimage --ci --no-sign
+# → target/release/bundle/deb/Bellman_*.deb
+# → target/release/bundle/appimage/Bellman_*.AppImage
+scripts/smoke_install_deb.sh                  # host (sudo) or:
+SMOKE_MODE=docker scripts/smoke_install_deb.sh
+```
+
+After deb install: launcher entry **Bellman**, CLI `bellman` on PATH, GUI
+binary `bellman-app`.

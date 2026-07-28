@@ -1,0 +1,112 @@
+# Bellman — macOS CI: unsigned dmg (and .app).
+#
+# Signing + notarization are intentionally STUBBED. Wire these repository
+# secrets when ready to ship signed builds (names are the contract — do not
+# rename without updating this file and docs/QA_P6.md):
+#
+#   TODO secrets (not required for unsigned CI):
+#     APPLE_CERTIFICATE            — base64 .p12 developer ID application cert
+#     APPLE_CERTIFICATE_PASSWORD   — password for the .p12
+#     APPLE_SIGNING_IDENTITY       — e.g. "Developer ID Application: … (TEAMID)"
+#     APPLE_ID                     — Apple ID email for notarytool
+#     APPLE_PASSWORD               — app-specific password for notarytool
+#     APPLE_TEAM_ID                — 10-char team id
+#     APPLE_API_KEY / APPLE_API_KEY_ID / APPLE_API_ISSUER
+#                                  — alternative notarytool API-key auth
+#
+# When secrets are present, replace the package step with a signed flow
+# (tauri-action or `cargo tauri build` without --no-sign) and staple.
+name: macos
+
+on:
+  push:
+    branches: [main, "train/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    name: package (macos dmg, unsigned)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: ui
+        run: npm ci
+
+      - name: Frontend production build
+        working-directory: ui
+        run: npm run build
+
+      - name: Stage CLI sidecar (required by tauri externalBin at compile time)
+        run: bash scripts/stage_cli_sidecar.sh
+
+      - name: Cargo test (workspace)
+        run: cargo test --workspace --all-targets
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --locked --version "^2" --force
+
+      - name: Package dmg + app (unsigned)
+        # Signing/notarization stub: --no-sign keeps CI green without secrets.
+        # To enable signing later, drop --no-sign and export:
+        #   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY
+        #   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID   (or API-key triple)
+        # then run notarytool + staple (see tauri v2 macOS signing docs).
+        run: cargo tauri build --bundles app,dmg --ci --no-sign
+        env:
+          # TODO: set when secrets are provisioned (currently unused with --no-sign)
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+
+      - name: Assert package artifacts exist
+        run: |
+          set -euo pipefail
+          dmg="$(find target/release/bundle/dmg -name '*.dmg' 2>/dev/null | head -1 || true)"
+          app="$(find target/release/bundle/macos -name '*.app' -type d 2>/dev/null | head -1 || true)"
+          if [[ -z "$dmg" ]]; then
+            dmg="$(find target/release/bundle -name '*.dmg' 2>/dev/null | head -1 || true)"
+          fi
+          if [[ -z "$app" ]]; then
+            app="$(find target/release/bundle -name '*.app' -type d 2>/dev/null | head -1 || true)"
+          fi
+          echo "dmg=$dmg"
+          echo "app=$app"
+          test -n "$dmg" -a -f "$dmg"
+          test -n "$app" -a -d "$app"
+
+      - name: Upload macOS packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: bellman-macos-packages
+          path: |
+            target/release/bundle/dmg/**
+            target/release/bundle/macos/**
+          if-no-files-found: error

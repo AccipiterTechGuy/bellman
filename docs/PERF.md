@@ -71,27 +71,49 @@ python3 -c 'import json;print(json.load(open("docs/qa4-evidence/perf-idle/perf_i
 First fire ~`2026-07-28T13:00:30Z`, last fire ~`2026-07-28T13:10:29Z` — a full
 10-minute cadence with no gaps large enough to drop the 60/min average.
 
-## Resident shell (GUI closed) — deferred
+## Resident shell (GUI closed) — packaging measurement (P6)
 
-**Not measured on this run.** Reasons (honest):
-
-1. This worktree never produced a Tauri release binary
-   (`target/release/` has the engine example + `libbellman_core.rlib` only;
-   workspace package `bellman` for the CLI can also land as `target/release/bellman`,
-   which is **not** the tray shell).
-2. Building/running the full Tauri shell needs the WebKitGTK/display stack and
-   is owned by packaging QA (C10 / C11), not the P5 engine harness.
-
-When C10 produces a signed/tray build, re-measure with:
+P6 ships the tray binary as **`bellman-app`** (CLI sidecar is `bellman`).
+Measure after a release package build:
 
 ```bash
-# After `cargo tauri build` (or equivalent) yields the tray binary:
-# close the main window, leave tray, then:
-grep VmRSS /proc/$(pgrep -f 'bellman$')/status
+# Build (or install the deb):
+cargo tauri build --bundles deb --ci --no-sign
+# Run under an isolated data dir so we don't touch the user store:
+env XDG_DATA_HOME=$PWD/target/perf-tray/data \
+    XDG_CONFIG_HOME=$PWD/target/perf-tray/config \
+    HOME=$PWD/target/perf-tray/home \
+    target/release/bellman-app &
+sleep 8
+# Close the main window from the UI (or send a hide via the tray) so only
+# the tray + engine remain; then:
+pid=$(pgrep -n -f 'bellman-app' || true)
+if [[ -n "$pid" ]]; then
+  grep VmRSS /proc/$pid/status
+  # Optional: sample for 60 s
+  for i in $(seq 1 6); do sleep 10; awk '/VmRSS/{print}' /proc/$pid/status; done
+fi
+kill "$pid" 2>/dev/null || true
 ```
 
-Until then the **engine RSS row above is the P5 gate** (idle engine with a
-live 1 s timer and JSONL evidence).
+| Metric | Value | Notes |
+|---|---|---|
+| Engine RSS (P5 gate, above) | **7092 KiB median** | engine-only harness |
+| Tray shell RSS (window open, P6) | **~192 MiB (192100–192536 KiB)** | `target/release/bellman-app`, DISPLAY=:0, 2026-07-28 |
+| Tray shell RSS (GUI closed) | **not isolated this run** | window was left open for the sample; re-measure after hide in C11 |
+
+### P6 headed sample (2026-07-28)
+
+```
+pid=983737  binary=target/release/bellman-app
+VmRSS samples (≈2 s apart, window open): 192536 → 192536 → 192100 KiB
+stderr showed scheduler boot: system.prune ready, year_recalibrate checked=1
+```
+
+WebKitGTK + tray dominates RSS versus the ~7 MiB engine-only harness — expected.
+The **engine RSS row remains the numeric idle gate** for the core scheduler;
+tray RSS is informational packaging evidence for C11 to refine (hide window,
+sample over 10 min).
 
 ## Notes
 

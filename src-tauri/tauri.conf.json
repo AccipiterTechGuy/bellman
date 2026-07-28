@@ -5,7 +5,8 @@
   "identifier": "io.bellman.desktop",
   "build": {
     "beforeDevCommand": "npm run dev -- --port 1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "bash ../scripts/stage_cli_sidecar.sh && npm run build",
+    "beforeBundleCommand": "bash ../scripts/stage_cli_sidecar.sh",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../ui/dist"
   },
@@ -39,13 +40,50 @@
   "bundle": {
     "active": true,
     "targets": ["deb", "appimage", "msi", "nsis", "app", "dmg"],
+    "publisher": "Bellman",
+    "category": "Utility",
+    "shortDescription": "Cross-platform task scheduler — desktop cousin of cron",
+    "longDescription": "Bellman is a cross-platform task scheduler desktop app. Register timers from the GUI or the bellman CLI; fire launch / notify / slot-write actions on a horizon-loaded min-heap engine. Ships as a normal launcher application with tray + optional autostart.",
+    "copyright": "MIT",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "externalBin": [
+      "binaries/bellman"
+    ],
+    "linux": {
+      "deb": {
+        "depends": [],
+        "section": "utils",
+        "priority": "optional",
+        "desktopTemplate": "linux/bellman.desktop"
+      }
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "allowDowngrades": true,
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      },
+      "wix": {
+        "language": "en-US"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": null,
+      "providerShortName": null,
+      "entitlements": null,
+      "hardenedRuntime": true
+    }
   },
   "plugins": {}
 }

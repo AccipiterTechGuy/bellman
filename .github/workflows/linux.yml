@@ -1,0 +1,105 @@
+# Bellman — Linux CI: full test suite + deb/AppImage package (unsigned).
+# Triggered on push/PR. This is the only platform that must go green end-to-end
+# on GitHub for the P6 acceptance gate; Windows/macOS package jobs compile and
+# produce unsigned artifacts without requiring signing secrets.
+name: linux
+
+on:
+  push:
+    branches: [main, "train/**"]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+
+jobs:
+  test-and-package:
+    name: test + package (ubuntu)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system deps (Tauri v2 / WebKitGTK 4.1)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libgtk-3-dev \
+            libxdo-dev \
+            file
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: ui
+        run: npm ci
+
+      - name: Frontend unit tests
+        working-directory: ui
+        run: npm test
+
+      - name: Frontend production build
+        working-directory: ui
+        run: npm run build
+
+      - name: Stage CLI sidecar (required by tauri externalBin at compile time)
+        run: bash scripts/stage_cli_sidecar.sh
+
+      - name: Cargo clippy (workspace)
+        # Pre-existing sources are not rustfmt-clean; packaging card does not reformat C1–C9.
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Cargo test (workspace)
+        run: cargo test --workspace --all-targets
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --locked --version "^2" --force
+
+      - name: Package deb + AppImage (unsigned)
+        # beforeBuildCommand re-stages the CLI + builds the UI; targets are linux-only here.
+        run: cargo tauri build --bundles deb,appimage --ci --no-sign
+
+      - name: Assert package artifacts exist
+        run: |
+          set -euo pipefail
+          deb="$(find target/release/bundle/deb -name '*.deb' | head -1)"
+          appimage="$(find target/release/bundle/appimage -name '*.AppImage' | head -1)"
+          test -n "$deb" && test -f "$deb"
+          test -n "$appimage" && test -f "$appimage"
+          echo "deb=$deb"
+          echo "appimage=$appimage"
+          # Smoke: deb contains launcher desktop entry + both binaries
+          dpkg-deb -c "$deb" | tee /tmp/deb-contents.txt
+          grep -E 'usr/share/applications/.*\.desktop' /tmp/deb-contents.txt
+          grep -E 'usr/bin/bellman-app' /tmp/deb-contents.txt
+          grep -E 'usr/bin/bellman$' /tmp/deb-contents.txt || grep -E 'usr/bin/bellman[[:space:]]' /tmp/deb-contents.txt
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: bellman-linux-packages
+          path: |
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
