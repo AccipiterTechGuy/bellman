@@ -79,17 +79,17 @@ fn occurrence_from_payload(payload: &SlotPayload) -> Result<Occurrence, String> 
                         .or_else(|| payload.time.clone()),
                     every_secs: obj
                         .get("every_secs")
-                        .and_then(|v| v.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .or(payload.every_secs),
                     days: obj.get("days").cloned().or_else(|| payload.days.clone()),
                     day: obj
                         .get("day")
-                        .and_then(|v| v.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .map(|n| n as u8)
                         .or(payload.day),
                     month: obj
                         .get("month")
-                        .and_then(|v| v.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .map(|n| n as u8)
                         .or(payload.month),
                     cron: obj

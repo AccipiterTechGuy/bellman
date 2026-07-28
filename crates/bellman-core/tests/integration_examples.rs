@@ -190,8 +190,7 @@ fn integration_node_example_lands_timer_when_available() {
     let node_ok = Command::new("node")
         .arg("-v")
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+        .is_ok_and(|o| o.status.success());
     if !node_ok {
         eprintln!("skip: node not on PATH");
         return;

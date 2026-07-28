@@ -1,0 +1,150 @@
+== building release perf_idle example ==
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/sami/bellman/.train-worktrees/2026-07-28_0005/src-tauri/Cargo.toml
+workspace: /home/sami/bellman/.train-worktrees/2026-07-28_0005/Cargo.toml
+   Compiling bellman-core v0.1.0 (/home/sami/bellman/.train-worktrees/2026-07-28_0005/crates/bellman-core)
+    Finished `release` profile [optimized] target(s) in 1.10s
+== running 600s idle window (engine + 1s timer + EventLog) ==
+perf_idle data_dir=/home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data
+window_secs=600
+timer id=909c9042-ddbb-4105-bff7-ef3196afb905 next=Some("2026-07-28T13:00:30.809305993+00:00")
+bellman: system.prune ready id=00000000-0000-4000-8000-000000000001 next=Some(2026-08-03T00:17:00Z)
+bellman: prune catch-up: timers=0 archives_removed=0 archived=None
+bellman: year_recalibrate: checked=2 updated=0
+running… pid=887356 rss_start_kb=6956 sample_every=30s
+sample t=30.0s rss_kb=6968
+sample t=60.1s rss_kb=6980
+sample t=90.1s rss_kb=6992
+sample t=120.1s rss_kb=7012
+sample t=150.1s rss_kb=7024
+sample t=180.1s rss_kb=7032
+sample t=210.1s rss_kb=7048
+sample t=240.1s rss_kb=7056
+sample t=270.1s rss_kb=7088
+sample t=300.1s rss_kb=7092
+sample t=330.1s rss_kb=7096
+sample t=360.1s rss_kb=7112
+sample t=390.2s rss_kb=7124
+sample t=420.2s rss_kb=7136
+sample t=450.2s rss_kb=7152
+sample t=480.2s rss_kb=7164
+sample t=510.2s rss_kb=7176
+sample t=540.2s rss_kb=7188
+sample t=570.2s rss_kb=7204
+copied evidence to /home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle
+--- RESULT ---
+rss_median_kib=7092  rss_min_kib=6956  rss_max_kib=7208
+cpu_pct=0.0933  (jiffies=56, hz=100)
+fires=1200  wall_min=10.000  wakeups_per_min=120.00
+event_log=/home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data/logs/events.current.jsonl
+report=/home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data/perf_idle_report.json
+{
+  "clk_tck": 100,
+  "cpu_jiffies": 56,
+  "cpu_pct_over_window": 0.09333332455766749,
+  "data_dir": "/home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data",
+  "event_lines_skipped": 0,
+  "event_lines_total": 1201,
+  "event_log_path": "/home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data/logs/events.current.jsonl",
+  "fired_or_delivered_count": 1200,
+  "host": "Linux sami-System-Product-Name 7.0.0-28-generic #28~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Wed Jul  1 15:50:57 UTC 2 x86_64 x86_64 x86_64 GNU/Linux",
+  "measured_at": "2026-07-28T13:10:29.815137511+00:00",
+  "method": "engine-only SystemClock + ActionRunner + EventLog; one 1s interval Action::None",
+  "pid": 887356,
+  "rss_end_kb": 7208,
+  "rss_max_kb": 7208,
+  "rss_median_kb": 7092,
+  "rss_min_kb": 6956,
+  "rss_samples_kb": [
+    6956,
+    6968,
+    6980,
+    6992,
+    7012,
+    7024,
+    7032,
+    7048,
+    7056,
+    7088,
+    7092,
+    7096,
+    7112,
+    7124,
+    7136,
+    7152,
+    7164,
+    7176,
+    7188,
+    7204,
+    7208
+  ],
+  "rss_start_kb": 6956,
+  "wakeups_per_min": 119.99998871700106,
+  "wall_elapsed_secs": 600.000056415,
+  "window_secs_requested": 600
+}
+== evidence ==
+total 372
+drwxrwxr-x 3 sami sami   4096 Jul 28 16:10 .
+drwxrwxr-x 3 sami sami   4096 Jul 28 16:00 ..
+-rw-rw-r-- 1 sami sami 356044 Jul 28 16:10 events.current.jsonl
+-rw-rw-r-- 1 sami sami   3278 Jul 28 16:10 harness.log
+-rw-rw-r-- 1 sami sami   1211 Jul 28 16:10 perf_idle_report.json
+-rw-rw-r-- 1 sami sami   2519 Jul 28 16:10 perf_idle.stdout
+drwxrwxr-x 3 sami sami   4096 Jul 28 16:10 run-data
+--- report ---
+{
+  "clk_tck": 100,
+  "cpu_jiffies": 56,
+  "cpu_pct_over_window": 0.09333332455766749,
+  "data_dir": "/home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data",
+  "event_lines_skipped": 0,
+  "event_lines_total": 1201,
+  "event_log_path": "/home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data/logs/events.current.jsonl",
+  "fired_or_delivered_count": 1200,
+  "host": "Linux sami-System-Product-Name 7.0.0-28-generic #28~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Wed Jul  1 15:50:57 UTC 2 x86_64 x86_64 x86_64 GNU/Linux",
+  "measured_at": "2026-07-28T13:10:29.815137511+00:00",
+  "method": "engine-only SystemClock + ActionRunner + EventLog; one 1s interval Action::None",
+  "pid": 887356,
+  "rss_end_kb": 7208,
+  "rss_max_kb": 7208,
+  "rss_median_kb": 7092,
+  "rss_min_kb": 6956,
+  "rss_samples_kb": [
+    6956,
+    6968,
+    6980,
+    6992,
+    7012,
+    7024,
+    7032,
+    7048,
+    7056,
+    7088,
+    7092,
+    7096,
+    7112,
+    7124,
+    7136,
+    7152,
+    7164,
+    7176,
+    7188,
+    7204,
+    7208
+  ],
+  "rss_start_kb": 6956,
+  "wakeups_per_min": 119.99998871700106,
+  "wall_elapsed_secs": 600.000056415,
+  "window_secs_requested": 600
+}event_log_lines=1201 fired_or_delivered=1200
+--- first 3 / last 3 event lines ---
+{"ts":"2026-07-28T13:00:29.809964941Z","kind":"year_recalibrate","event_id":"05396cbb-c04c-4310-b750-63fa8c497b51","count":2,"message":"year=2026","detail":{"timers_checked":2,"timers_updated":0,"year":2026,"year_start":"2026-01-01T00:00:00+00:00"}}
+{"ts":"2026-07-28T13:00:30.810744211Z","kind":"fired","event_id":"b74fdb88-bee2-4e48-bfa3-b43adb9f5315","timer_id":"909c9042-ddbb-4105-bff7-ef3196afb905","run_id":"9534aec1-171b-4304-94da-ade54b47138f","timer_name":"perf-1s","scheduled_for":"2026-07-28T13:00:30.809305993Z"}
+{"ts":"2026-07-28T13:00:30.810758691Z","kind":"wake_delivered","event_id":"2713ef59-20d5-454c-9e48-d97d4aabf045","timer_id":"909c9042-ddbb-4105-bff7-ef3196afb905","run_id":"9534aec1-171b-4304-94da-ade54b47138f","timer_name":"perf-1s","scheduled_for":"2026-07-28T13:00:30.809305993Z","count":0,"message":"action=none"}
+...
+{"ts":"2026-07-28T13:10:28.810782802Z","kind":"wake_delivered","event_id":"b5bdf75d-31cb-47d2-a80f-7f4522e9ae90","timer_id":"909c9042-ddbb-4105-bff7-ef3196afb905","run_id":"0d46d659-40ff-491f-8210-af8b1f55dbf4","timer_name":"perf-1s","scheduled_for":"2026-07-28T13:10:28.809305993Z","count":0,"message":"action=none"}
+{"ts":"2026-07-28T13:10:29.810823573Z","kind":"fired","event_id":"93508a93-580a-46c6-8add-9fb5d64edd6d","timer_id":"909c9042-ddbb-4105-bff7-ef3196afb905","run_id":"24dab2ee-81ea-4bc3-88c7-e14fe4c1e1b2","timer_name":"perf-1s","scheduled_for":"2026-07-28T13:10:29.809305993Z"}
+{"ts":"2026-07-28T13:10:29.810840685Z","kind":"wake_delivered","event_id":"9ff2c73d-b19d-4523-bff9-3972d25bae26","timer_id":"909c9042-ddbb-4105-bff7-ef3196afb905","run_id":"24dab2ee-81ea-4bc3-88c7-e14fe4c1e1b2","timer_name":"perf-1s","scheduled_for":"2026-07-28T13:10:29.809305993Z","count":0,"message":"action=none"}
+note: Tauri shell release binary not present; resident-shell RSS deferred (see PERF.md)
+done.

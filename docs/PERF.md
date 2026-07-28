@@ -1,75 +1,104 @@
 # Bellman — idle footprint (P5)
 
-Measured on the development box after the P5 hardening pass. Numbers are
-order-of-magnitude gates, not micro-benchmarks: the product goal is
-**idle CPU ~0%**, **bounded wakeups** with a 1 s timer, and a small
-resident process when the GUI is closed (tray + engine only).
+**Measured** (not estimated) on the development box after the P5 hardening pass.
+Single observed values from a real run; raw evidence is committed under
+`docs/qa4-evidence/perf-idle/`.
 
 ## Environment
 
 | Item | Value |
 |---|---|
-| Host | Linux (x86_64), systemd desktop session |
-| Build | `cargo build -p bellman --release` (Tauri shell) / `cargo build -p bellman-core --release` (engine-only) |
-| Date | 2026-07-28 |
+| Host | Linux 7.0.0-28-generic x86_64 (see report `host`) |
+| Binary measured | `target/release/examples/perf_idle` (engine-only) |
+| Build | `cargo build -p bellman-core --example perf_idle --release` |
+| Measured at | 2026-07-28T13:00:29Z → 13:10:29Z (UTC) |
 | Card | train/2026-07-28_0005 (P5 pruner + hardening) |
+| PID | 887356 |
 
-## Method
+## Method (reproducible)
 
-1. **Engine-only idle (no Tauri webview)** — open a store under a temp data
-   dir, create one 1 s interval timer with `Action::None`, boot the
-   scheduler on `SystemClock`, run for 10 minutes, sample RSS via
-   `/proc/self/status` (`VmRSS`) from a companion watcher and count
-   JSONL fire events as wake evidence.
-2. **Resident shell (GUI closed)** — start the Tauri app, close the main
-   window (tray remains), sample the process RSS after 60 s of calm.
-3. **CPU** — `top` / `/proc/stat` delta over a 10 minute idle window with
-   the 1 s timer armed (engine-only).
+Harness: `scripts/perf_idle.sh` → `examples/perf_idle.rs`.
 
-## Recorded numbers
-
-| Metric | Value | Notes |
-|---|---|---|
-| Engine RSS (1× 1 s timer, GUI never opened) | **~8–15 MiB** | rusqlite + chrono + event log; no webview |
-| Resident shell RSS (window closed, tray up) | **~25–45 MiB** | includes tray / GTK runtime; webview destroyed on close |
-| Wakeups / min (1 s interval, `Action::None`) | **~60** | one fire per second; event-log `fired` lines confirm cadence |
-| Idle CPU over 10 min (engine, 1 s timer) | **~0%** | chunked sleeps (`max_sleep` ≤ 30 s, next-fire-driven); no busy loop |
-| Idle CPU over 10 min (no timers) | **~0%** | heap empty → sleep `max_sleep` (30 s) |
-
-### Event-log evidence (1 s timer)
-
-With a single interval timer (`every_secs = 1`, `Action::None`) the
-JSONL file accumulates one `fired` (or `wake_delivered` when an action
-is attached) line per second. A 60-second window yields ~60 lines; a
-10-minute window yields ~600. No extra wakeups from the weekly prune
-timer outside its Monday 03:17 slot (and startup catch-up, once).
-
-### Concurrency under resume
-
-A simulated 500-timer mass-fire under `max_concurrent_actions = 16`
-keeps peak in-flight ≤ 16 (see
-`actions::concurrency::tests::peak_never_exceeds_cap_under_500_parallel`).
-The overflow queue drains to completion without fork-bombing.
-
-## How to re-measure
+1. Open a fresh store under `docs/qa4-evidence/perf-idle/run-data/`.
+2. Create **one** 1 s interval timer (`Action::None`).
+3. Boot `Scheduler` + `ActionRunner` with a real `EventLog` under
+   `run-data/logs/events.current.jsonl`.
+4. Drive `run_for` for **600 s** wall time (`SystemClock`).
+5. Sample `/proc/<pid>/status` **VmRSS** every 30 s.
+6. Sample `/proc/<pid>/stat` utime+stime (jiffies) at start and end; convert
+   with `CLK_TCK` from `getconf`.
+7. Count JSONL lines with `"kind":"fired"` as fire-rate evidence.
 
 ```bash
-# Engine unit path (no GUI):
-cargo test -p bellman-core --lib actions::concurrency -- --nocapture
+# Full 10-minute acceptance window:
+scripts/perf_idle.sh
 
-# Manual RSS sample of a running release binary (replace PID):
-grep VmRSS /proc/$PID/status
-
-# Count fires in the last minute of the event log:
-tail -n 120 ~/.bellman/logs/events.current.jsonl | grep -c '"kind":"fired"'
+# 60 s smoke:
+PERF_SECS=60 scripts/perf_idle.sh
 ```
 
-## Notes / caveats
+## Measured numbers (this run)
 
-- Numbers drift with glibc/GTK versions and whether AppIndicator is
-  loaded. Treat the table as a gate ("not hundreds of MiB, not spinning
-  the CPU"), not a regression oracle to three significant figures.
+| Metric | Value | Source |
+|---|---|---|
+| Engine RSS (median of 21 samples) | **7092 KiB (6.93 MiB)** | `VmRSS` in `/proc/887356/status` |
+| Engine RSS min → max | 6956 → 7208 KiB | same, samples every 30 s |
+| Wall window | **600.000 s** | harness wall clock |
+| CPU over window | **0.093 %** | 56 jiffies / (600 s × 100 Hz) |
+| `fired` events in JSONL | **600** | `grep -c '"kind":"fired"' events.current.jsonl` |
+| Fires / min (1 s timer) | **60.0** | 600 fires / 10.0 min |
+| `wake_delivered` lines | 600 | one per fire (`Action::None`) |
+| Total JSONL lines | 1201 | +1 `year_recalibrate` at boot |
+
+### Event-log evidence
+
+Committed artifacts:
+
+- `docs/qa4-evidence/perf-idle/perf_idle_report.json` — full machine-readable report
+- `docs/qa4-evidence/perf-idle/events.current.jsonl` — 600× `fired` + 600× `wake_delivered`
+- `docs/qa4-evidence/perf-idle/harness.log` — stdout of the 10 min run (RSS sample stream)
+- `docs/qa4-evidence/perf-idle/perf_idle.stdout` — final report dump
+
+Spot-check:
+
+```bash
+grep -c '"kind":"fired"' docs/qa4-evidence/perf-idle/events.current.jsonl   # → 600
+head -n 3 docs/qa4-evidence/perf-idle/events.current.jsonl
+tail -n 3 docs/qa4-evidence/perf-idle/events.current.jsonl
+python3 -c 'import json;print(json.load(open("docs/qa4-evidence/perf-idle/perf_idle_report.json"))["cpu_pct_over_window"])'
+```
+
+First fire ~`2026-07-28T13:00:30Z`, last fire ~`2026-07-28T13:10:29Z` — a full
+10-minute cadence with no gaps large enough to drop the 60/min average.
+
+## Resident shell (GUI closed) — deferred
+
+**Not measured on this run.** Reasons (honest):
+
+1. This worktree never produced a Tauri release binary
+   (`target/release/` has the engine example + `libbellman_core.rlib` only;
+   workspace package `bellman` for the CLI can also land as `target/release/bellman`,
+   which is **not** the tray shell).
+2. Building/running the full Tauri shell needs the WebKitGTK/display stack and
+   is owned by packaging QA (C10 / C11), not the P5 engine harness.
+
+When C10 produces a signed/tray build, re-measure with:
+
+```bash
+# After `cargo tauri build` (or equivalent) yields the tray binary:
+# close the main window, leave tray, then:
+grep VmRSS /proc/$(pgrep -f 'bellman$')/status
+```
+
+Until then the **engine RSS row above is the P5 gate** (idle engine with a
+live 1 s timer and JSONL evidence).
+
+## Notes
+
 - High-frequency timers stay on the heap (period &lt; 5 min); low-frequency
-  timers are horizon-loaded only. That is the main idle-RAM control.
-- Weekly prune + Jan-1 recalibration run at most once per cadence and
-  are not on the 1 s wake path.
+  timers are horizon-loaded only.
+- Weekly prune + Jan-1 recalibration run at most once per cadence and are not
+  on the 1 s wake path (this run emitted one `year_recalibrate` at boot only).
+- Concurrency cap under mass-fire is covered by
+  `actions::concurrency::tests::peak_never_exceeds_cap_under_500_parallel`
+  (unit), separate from idle footprint.

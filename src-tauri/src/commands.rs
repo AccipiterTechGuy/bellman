@@ -453,9 +453,7 @@ fn preview_fires_from_occurrence(
         .with_timezone(&occ.timezone())
         .naive_utc()
         .and_local_timezone(occ.timezone())
-        .single()
-        .map(|d| d.with_timezone(&occ.timezone()))
-        .unwrap_or_else(|| Utc::now().with_timezone(&occ.timezone()));
+        .single().map_or_else(|| Utc::now().with_timezone(&occ.timezone()), |d| d.with_timezone(&occ.timezone()));
     occ.preview(after, n)
         .into_iter()
         .map(|local_dt| {

@@ -157,8 +157,7 @@ impl SlotLayout {
             // Fall back to copy+remove only for regular files on cross-fs.
             if fs::rename(path, &dest).is_err() {
                 let is_symlink = fs::symlink_metadata(path)
-                    .map(|m| m.file_type().is_symlink())
-                    .unwrap_or(false);
+                    .is_ok_and(|m| m.file_type().is_symlink());
                 if is_symlink {
                     // Cannot copy a dangling link usefully; drop the entry.
                     let _ = fs::remove_file(path);
@@ -242,8 +241,7 @@ fn list_json_files(dir: &Path) -> SlotResult<Vec<PathBuf>> {
 
 fn is_symlink_path(path: &Path) -> bool {
     fs::symlink_metadata(path)
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
+        .is_ok_and(|m| m.file_type().is_symlink())
 }
 
 fn list_free_stubs(layout: &SlotLayout) -> SlotResult<Vec<PathBuf>> {

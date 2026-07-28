@@ -36,7 +36,7 @@ pub const SYSTEM_PRUNE_NAME: &str = "system.prune";
 /// Tag applied to the system prune timer.
 pub const SYSTEM_PRUNE_TAG: &str = "system";
 /// Stable id so restarts re-find the same row (not a second copy).
-pub const SYSTEM_PRUNE_ID: &str = "00000000-0000-4000-8000-00000000p001";
+pub const SYSTEM_PRUNE_ID: &str = "00000000-0000-4000-8000-000000000001";
 
 /// Default prune cadence (7 days).
 pub const DEFAULT_PRUNE_INTERVAL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -109,9 +109,7 @@ pub type PruneResult<T> = Result<T, PruneError>;
 
 /// Parse the stable system.prune timer id.
 pub fn system_prune_id() -> TimerId {
-    // Fixed UUID (version nibble + variant bits valid). The trailing "p001"
-    // hex is not valid UUID hex — use a pure-hex constant instead.
-    Uuid::parse_str("00000000-0000-4000-8000-000000000001").expect("static system.prune uuid")
+    Uuid::parse_str(SYSTEM_PRUNE_ID).expect("static system.prune uuid")
 }
 
 /// True when this timer is the internal weekly prune job.
