@@ -4,11 +4,11 @@
     960,
     640
   ],
-  "bytes": 52765,
+  "bytes": 52805,
   "mean_luma": 30.72,
   "stdev": 12.43,
-  "unique_colors_cap200k": 5065,
-  "window_id": "0x5a00003",
+  "unique_colors_cap200k": 5060,
+  "window_id": "0x4800003",
   "wmctrl_geom": [
     50,
     112,
@@ -19,5 +19,6 @@
     "qa-p4d-keyboard",
     "qa-p4d-once-eu",
     "system.prune"
-  ]
+  ],
+  "method": "Tab+type+Space on Create (no grabFocus/doAction)"
 }

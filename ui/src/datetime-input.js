@@ -262,3 +262,16 @@ export function systemTimeZone() {
     return 'UTC';
   }
 }
+
+/**
+ * Structural cron check (5 or 6 fields, croner charset). Not a full parser —
+ * catches free-text garbage like "not a cron" before Create is enabled.
+ * @param {string} expr
+ * @returns {boolean}
+ */
+export function isPlausibleCron(expr) {
+  if (expr == null || typeof expr !== 'string') return false;
+  const parts = expr.trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 5 || parts.length > 6) return false;
+  return parts.every((p) => /^[\d*,/\-?#LW]+$/i.test(p));
+}

@@ -72,7 +72,7 @@ All PNG evidence is **real WebKitGTK** via `scripts/capture_qa_p4d.py` (AT-SPI +
 |---|---|
 | `p4d-webkit-native-date-time-probe.png` | Standalone WebKitGTK probe: native date / time / datetime-local controls paint and accept values. **Deciding shot for native pickers.** |
 | `p4d-widget-date-time.png` | Once kind: free-text date + native date picker + free-text time + native time picker + echo line. |
-| `p4d-widget-timezone.png` | Timezone text field + scrollable IANA suggestion list (filterable / free-type). |
+| `p4d-widget-timezone.png` | Timezone text field + **unfiltered multi-entry** IANA list. Rows are full height (~23px) with legible names (Europe/Helsinki, Africa/Abidjan, Africa/Accra, …). Rework #1 fixed 9px flex-shrink. |
 | `p4d-widget-weekday-chips.png` | Seven Mon–Sun toggle chips (Mon/Wed/Fri on by default). Also shows red **ERROR** banner for partial tz `Europe` (bonus contrast sample). |
 | `p4d-widget-wall-time.png` | Daily/weekly wall-clock free-text + native time picker. |
 | `p4d-once-echo-24-12-2026.png` | Typed `24.12.2026` + `09:00`, echo **“Thursday 24 December 2026, 09:00 Europe/Helsinki”**, preview row 2026-12-24 09:00 local / 07:00Z. |

@@ -251,15 +251,19 @@ def shot_widgets(app, d):
     time.sleep(0.6)
     p4b.capture(d, "p4d-widget-date-time", {"widgets": ["date", "time", "echo"]})
 
-    # Timezone list (daily still shows tz)
+    # Timezone list — UNFILTERED multi-entry (proves rows are readable, not 9px)
     select_kind_click(app, "daily", d)
     time.sleep(0.3)
-    p4b.focus_entry(app, "Timezone", d)
-    p4b.clear_and_type(d, "Europe")
+    p4b.focus_entry(app, "Name", d)
+    p4b.clear_and_type(d, "qa-widget-tz")
+    # Leave tz at system default so the suggestion list has many entries
     time.sleep(0.4)
-    p4b.capture(d, "p4d-widget-timezone", {"widgets": ["timezone-list"]})
+    p4b.capture(d, "p4d-widget-timezone", {
+        "widgets": ["timezone-list"],
+        "note": "unfiltered multi-entry list; rows must be ≥1.5rem / legible",
+    })
 
-    # Weekday chips
+    # Weekday chips (also shows multi-entry tz list)
     select_kind_click(app, "weekly", d)
     time.sleep(0.35)
     p4b.capture(d, "p4d-widget-weekday-chips", {"widgets": ["weekday-chips"]})
@@ -275,7 +279,7 @@ def shot_widgets(app, d):
 
 def shot_errors_vs_dst(app, d):
     print("\n== ERROR vs DST ADVISORY ==")
-    # Invalid cron → preview error banner
+    # Invalid cron → inline field error + Create disabled (structural gate)
     open_new(app, d)
     select_kind_click(app, "cron", d)
     time.sleep(0.3)
@@ -283,10 +287,10 @@ def shot_errors_vs_dst(app, d):
     p4b.clear_and_type(d, "qa-bad-cron")
     p4b.focus_entry(app, "Cron", d)
     p4b.clear_and_type(d, "not a cron")
-    time.sleep(1.2)
+    time.sleep(0.6)
     p4b.capture(d, "p4d-preview-error-invalid-cron", {
-        "phase": "preview-error",
-        "expect": "Error banner (not DST advisory)",
+        "phase": "field-error-cron",
+        "expect": "inline cron error + Create disabled (not only toast)",
     })
     p4b.close_dialog_if_open(app)
 
@@ -328,69 +332,112 @@ def shot_errors_vs_dst(app, d):
 
 
 def shot_layouts(app, d):
+    """Layouts with UNFILTERED multi-entry timezone list visible (F2)."""
     print("\n== LAYOUT 960 + 1280 ==")
     open_new(app, d)
     select_kind_click(app, "weekly", d)
     time.sleep(0.3)
     p4b.focus_entry(app, "Name", d)
     p4b.clear_and_type(d, "qa-layout")
-    p4b.focus_entry(app, "Timezone", d)
-    p4b.clear_and_type(d, "Europe/Helsinki")
+    # Do NOT filter the timezone field — leave system zone so the suggestion
+    # list has many readable rows (the single-entry filtered state hid F1).
     p4b.focus_entry(app, "Wall-clock", d)
     p4b.clear_and_type(d, "08:00")
-    time.sleep(0.8)
+    time.sleep(0.9)
 
     resize_window(960, 640)
-    p4b.capture(d, "p4d-layout-960x640", {"viewport": [960, 640]})
+    geom960 = None
+    for L in subprocess.check_output(["wmctrl", "-lG"], text=True).splitlines():
+        if L.endswith("Bellman") or " Bellman" in L:
+            parts = L.split()
+            geom960 = list(map(int, parts[2:6]))
+            break
+    p4b.capture(d, "p4d-layout-960x640", {
+        "viewport": [960, 640],
+        "wmctrl_geom": geom960,
+        "tz_list": "unfiltered multi-entry",
+    })
     resize_window(1280, 800)
-    p4b.capture(d, "p4d-layout-1280x800", {"viewport": [1280, 800]})
+    geom1280 = None
+    for L in subprocess.check_output(["wmctrl", "-lG"], text=True).splitlines():
+        if L.endswith("Bellman") or " Bellman" in L:
+            parts = L.split()
+            geom1280 = list(map(int, parts[2:6]))
+            break
+    print(f"  layout capture geoms 960={geom960} 1280={geom1280}")
+    p4b.capture(d, "p4d-layout-1280x800", {
+        "viewport": [1280, 800],
+        "wmctrl_geom": geom1280,
+        "tz_list": "unfiltered multi-entry",
+    })
     resize_window(960, 640)
     p4b.close_dialog_if_open(app)
 
 
 def keyboard_only_create(app, d):
-    """Create a daily timer end-to-end after one click to open the dialog.
+    """Create a daily timer with real key events after one click to open.
 
-    Name autofocus → type name → Tab to kind (leave daily) → Tab to tz → type UTC
-    → a11y grabFocus on wall-clock (no pointer) → type time → a11y Activate Create.
-    Do NOT press Escape — that closes the dialog (backdrop handler).
+    Name autofocus → type name → Tab (kind, leave daily) → Tab (tz) → type UTC
+    → Tab (wall-clock; tz suggestion buttons are tabindex=-1) → type time
+    → Tab until Create is focused → Space/Return to activate.
+    No a11y grabFocus / doAction for field reach or Create (F5).
     """
     print("\n== KEYBOARD-ONLY CREATE ==")
     open_new(app, d)
-    time.sleep(0.45)
+    time.sleep(0.5)
     p4b.type_string(d, "qa-p4d-keyboard")
-    time.sleep(0.08)
+    time.sleep(0.1)
     p4b.key_tap(d, XK.string_to_keysym("Tab"))  # kind
-    time.sleep(0.08)
+    time.sleep(0.1)
     p4b.key_tap(d, XK.string_to_keysym("Tab"))  # timezone
-    time.sleep(0.08)
+    time.sleep(0.1)
     p4b.clear_and_type(d, "UTC")
+    time.sleep(0.15)
+    # Tab to wall-clock (tz-option buttons have tabindex=-1)
+    p4b.key_tap(d, XK.string_to_keysym("Tab"))
     time.sleep(0.12)
-    hits = p4b.walk_find(
-        app,
-        lambda a: a.getRoleName() == "entry" and "Wall-clock" in (a.name or ""),
-    )
-    if hits:
+    p4b.clear_and_type(d, "07:30")
+    time.sleep(0.5)  # preview debounce + canSave
+
+    # Tab forward until Create is focused, then Space
+    focused_create = False
+    for i in range(24):
+        p4b.key_tap(d, XK.string_to_keysym("Tab"))
+        time.sleep(0.07)
+        # Check if Create has focus via AT-SPI STATE_FOCUSED
+        creates = p4b.walk_find(
+            app,
+            lambda a: a.getRoleName() == "push button" and (a.name or "") == "Create",
+        )
+        if not creates:
+            continue
         try:
-            hits[0].queryComponent().grabFocus()
+            import pyatspi
+            st = creates[0].getState()
+            if st.contains(pyatspi.STATE_FOCUSED):
+                print(f"  Create focused after {i + 1} tabs from wall-clock")
+                focused_create = True
+                break
         except Exception:
             pass
-        time.sleep(0.1)
-        p4b.clear_and_type(d, "07:30")
-    time.sleep(0.35)
-    btns = p4b.walk_find(
-        app,
-        lambda a: a.getRoleName() == "push button" and (a.name or "") == "Create",
-    )
-    if not btns:
-        raise RuntimeError("Create button missing")
-    p4b.do_action(btns[0])
-    time.sleep(0.9)
+    if not focused_create:
+        print("  WARNING: Create never reported focused; pressing Space anyway")
+    p4b.key_tap(d, XK.string_to_keysym("space"))
+    time.sleep(0.3)
+    # If still open, try Return
+    dialogs = p4b.walk_find(app, lambda a: a.getRoleName() == "dialog")
+    if dialogs:
+        p4b.key_tap(d, XK.string_to_keysym("Return"))
+        time.sleep(0.5)
+    time.sleep(0.7)
     names = [t.get("name") for t in p4b.list_timers_db()]
     print("  after keyboard create store:", names)
-    p4b.capture(d, "p4d-keyboard-create-result", {"names": names})
+    p4b.capture(d, "p4d-keyboard-create-result", {
+        "names": names,
+        "method": "Tab+type+Space on Create (no grabFocus/doAction)",
+    })
     if "qa-p4d-keyboard" not in names:
-        print("  WARNING: keyboard create may have failed")
+        raise RuntimeError(f"keyboard-only create failed; store={names}")
 
 
 def crud_all_kinds(app, d):

@@ -4,14 +4,14 @@
     960,
     640
   ],
-  "bytes": 53116,
-  "mean_luma": 29.73,
-  "stdev": 11.71,
-  "unique_colors_cap200k": 5060,
-  "window_id": "0x5a00003",
+  "bytes": 72300,
+  "mean_luma": 31.04,
+  "stdev": 13.02,
+  "unique_colors_cap200k": 5181,
+  "window_id": "0x4800003",
   "wmctrl_geom": [
-    60,
-    122,
+    50,
+    112,
     960,
     640
   ],

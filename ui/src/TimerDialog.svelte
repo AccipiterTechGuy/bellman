@@ -9,6 +9,7 @@
   } from './api.js';
   import { buildInput as buildWireInput, weekdaysCsvToMap, weekdaysMapToCsv, WEEKDAY_CHIPS } from './dialog-build.js';
   import {
+    isPlausibleCron,
     listTimeZones,
     parseClockTime,
     parseOnceFields,
@@ -217,7 +218,14 @@
       if (!Number.isInteger(m) || m < 1 || m > 12) e.month = 'Month must be 1–12';
     }
     if (kind === 'cron') {
-      if (!form.occurrence.cronExpr.trim()) e.cron = 'Cron expression is required';
+      const expr = form.occurrence.cronExpr.trim();
+      if (!expr) {
+        e.cron = 'Cron expression is required';
+      } else if (!isPlausibleCron(expr)) {
+        // Structural gate so "not a cron" never reaches Create (server only
+        // parses on next-fire; invalid expr returns zero fires without Err).
+        e.cron = 'Cron expression looks invalid (need 5 or 6 fields)';
+      }
     }
     if (form.actionType === 'launch' && !form.launchCommand.trim()) {
       e.launch = 'Command is required for launch action';
@@ -230,11 +238,21 @@
 
   let saveBlockedReason = $derived.by(() => {
     const keys = Object.keys(fieldErrors);
-    if (keys.length === 0) return '';
-    return fieldErrors[keys[0]];
+    if (keys.length > 0) return fieldErrors[keys[0]];
+    if (previewError) return previewError;
+    if (previewBusy) return 'Waiting for preview…';
+    return '';
   });
 
-  let canSave = $derived(Object.keys(fieldErrors).length === 0 && !saveBusy);
+  // Gate Create on local field errors AND live preview failures (invalid tz,
+  // server reject). While preview is in flight, keep Create disabled so a
+  // stale "ok" window cannot click through between keystrokes.
+  let canSave = $derived(
+    Object.keys(fieldErrors).length === 0 &&
+      !saveBusy &&
+      !previewError &&
+      !(isTauri() && previewBusy),
+  );
 
   // Filtered timezone list for the searchable dropdown under the input.
   // System zone first when unfiltered so the preselected value is visible.
@@ -434,8 +452,11 @@
             </datalist>
             <div class="tz-picker" role="listbox" aria-label="Timezone suggestions">
               {#each filteredZones as z}
+                <!-- tabindex=-1: list is mouse/filter assist; Tab must reach
+                     wall-clock / Create for keyboard-only creation (F5). -->
                 <button type="button" class="tz-option" class:active={z === form.occurrence.tz}
                         role="option" aria-selected={z === form.occurrence.tz}
+                        tabindex="-1"
                         onclick={() => pickZone(z)}>{z}</button>
               {/each}
             </div>

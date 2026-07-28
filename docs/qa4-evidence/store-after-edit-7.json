@@ -1,6 +1,6 @@
 [
   {
-    "id": "0cfbc758-1fb9-45f2-a0ec-692ecd9389a2",
+    "id": "e8d4d433-341d-47e0-bdfb-89e8ea546276",
     "name": "qa-p4d-cron",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"cron\",\"expr\":\"30 9 * * 1-5\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -20,7 +20,7 @@
     "accuracy_slack_secs": null
   },
   {
-    "id": "309fe52c-b666-47d3-a810-f2f77fc7c182",
+    "id": "e0f3de7e-fd43-4ff4-9917-fa20960d783e",
     "name": "qa-p4d-daily",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"daily\",\"at\":\"09:15:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -40,12 +40,12 @@
     "accuracy_slack_secs": null
   },
   {
-    "id": "76302012-3b04-4c10-899a-8ff54be3b9cd",
+    "id": "237ca25e-9ec1-4f4a-b32f-d1091ed98943",
     "name": "qa-p4d-interval",
     "enabled": 1,
-    "occurrence": "{\"kind\":{\"occ\":\"interval\",\"every_secs\":180,\"anchor\":\"2026-07-28T17:35:42.051875532Z\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
+    "occurrence": "{\"kind\":{\"occ\":\"interval\",\"every_secs\":180,\"anchor\":\"2026-07-28T17:56:45.999351780Z\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
     "tz": "Europe/Helsinki",
-    "next_fire_utc": "2026-07-28T17:38:42.051875532Z",
+    "next_fire_utc": "2026-07-28T17:59:45.999351780Z",
     "last_fired": null,
     "misfire_policy": "\"skip\"",
     "overlap_policy": "\"skip\"",
@@ -60,7 +60,7 @@
     "accuracy_slack_secs": null
   },
   {
-    "id": "4550ce12-52fe-4a37-b3e7-dd5387ee165c",
+    "id": "a5359874-e8b2-4f47-8d5b-cf7f9661f626",
     "name": "qa-p4d-keyboard",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"daily\",\"at\":\"07:30:00\"},\"tz\":\"UTC\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -80,7 +80,7 @@
     "accuracy_slack_secs": null
   },
   {
-    "id": "f135b534-d668-42bb-88e6-97c58f5fee05",
+    "id": "92a457c9-8856-4d98-8641-42f2eff2ac22",
     "name": "qa-p4d-monthly",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"monthly\",\"day\":20,\"at\":\"10:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -100,7 +100,7 @@
     "accuracy_slack_secs": null
   },
   {
-    "id": "74dfc09f-b8bc-4a56-8a0e-c560425d9ef1",
+    "id": "c82fe5f5-e283-43a7-ab59-03d38346073f",
     "name": "qa-p4d-once-ed",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"once\",\"at\":\"2027-06-15T14:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -120,7 +120,7 @@
     "accuracy_slack_secs": null
   },
   {
-    "id": "1fd889ad-9a47-487f-a8e7-572a7aa2e813",
+    "id": "ac3fe5db-b6e6-4bdf-9893-8157cbb4978e",
     "name": "qa-p4d-once-eu",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"once\",\"at\":\"2026-12-24T09:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -140,7 +140,7 @@
     "accuracy_slack_secs": null
   },
   {
-    "id": "2f861afd-a74f-4f93-85da-4ae7da295da0",
+    "id": "72433d1a-3d3a-4df8-b990-0770367e917e",
     "name": "qa-p4d-weekly",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"weekly\",\"days\":21,\"at\":\"09:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -160,7 +160,7 @@
     "accuracy_slack_secs": null
   },
   {
-    "id": "d976e6d0-1bb1-4a04-9795-f9da1f78f2b6",
+    "id": "f1eda6ea-02f1-43ba-bf28-c45fa41681ee",
     "name": "qa-p4d-yearly",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"yearly\",\"month\":12,\"day\":28,\"at\":\"12:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",

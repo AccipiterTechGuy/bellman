@@ -4,11 +4,11 @@
     960,
     640
   ],
-  "bytes": 76911,
-  "mean_luma": 31.37,
-  "stdev": 12.83,
-  "unique_colors_cap200k": 5143,
-  "window_id": "0x5a00003",
+  "bytes": 73369,
+  "mean_luma": 30.99,
+  "stdev": 12.66,
+  "unique_colors_cap200k": 5223,
+  "window_id": "0x4800003",
   "wmctrl_geom": [
     50,
     112,
@@ -18,5 +18,6 @@
   "viewport": [
     960,
     640
-  ]
+  ],
+  "tz_list": "unfiltered multi-entry"
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatEcho,
+  isPlausibleCron,
   parseClockTime,
   parseDateOnly,
   parseOnceFields,
@@ -75,6 +76,19 @@ describe('parseOnceFields', () => {
     const r = parseOnceFields('24.12.2026', '', 'UTC');
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/Time is required/);
+  });
+});
+
+describe('isPlausibleCron', () => {
+  it('accepts 5- and 6-field expressions', () => {
+    expect(isPlausibleCron('0 9 * * 1-5')).toBe(true);
+    expect(isPlausibleCron('*/5 * * * *')).toBe(true);
+    expect(isPlausibleCron('0 0 9 * * 1-5')).toBe(true);
+  });
+  it('rejects free-text garbage (Create must stay disabled)', () => {
+    expect(isPlausibleCron('not a cron')).toBe(false);
+    expect(isPlausibleCron('')).toBe(false);
+    expect(isPlausibleCron('only four * * *')).toBe(false);
   });
 });
 

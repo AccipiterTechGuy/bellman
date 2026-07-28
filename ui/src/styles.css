@@ -647,6 +647,9 @@ main {
   background: var(--bg);
 }
 
+/* flex:0 0 auto is required: a column flex container with max-height will
+ * otherwise shrink every item to padding-only once overflow:hidden zeroes
+ * the automatic minimum size (WebKitGTK measured 9px rows without this). */
 .tz-option {
   appearance: none;
   background: transparent;
@@ -660,6 +663,10 @@ main {
   font-family: var(--mono);
   cursor: pointer;
   white-space: nowrap;
+  flex: 0 0 auto;
+  min-height: 1.5rem;
+  line-height: 1.25;
+  box-sizing: border-box;
 }
 
 .tz-option:last-child { border-bottom: 0; }
@@ -904,6 +911,8 @@ main {
 .wizard.timer-dialog .tz-option {
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 0 0 auto;
+  min-height: 1.5rem;
 }
 
 /* Preview values (local + full UTC + offset/tz) must stay readable for

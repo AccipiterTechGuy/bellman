@@ -1,44 +1,240 @@
 engine pids: {
   "WebKitWebProcess": [
-    "1108128 1108101 206228 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 49"
+    "1135009 1134983 204924 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 51"
   ],
   "WebKitNetworkProcess": [
-    "1108119 1108101 49380 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 23"
+    "1135000 1134983 49388 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 22"
   ],
   "bellman": [
-    "1108101       1 190008 /home/sami/bellman/.train-worktrees/2026-07-28_0008/target/release/bellman-app"
+    "1134983       1 187540 /home/sami/bellman/.train-worktrees/2026-07-28_0008/target/release/bellman-app"
   ]
 }
 userAgent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15
+  resize target 960x640 → wmctrl geom ['50', '112', '960', '640']
 native date/time probe exists: True /home/sami/bellman/.train-worktrees/2026-07-28_0008/docs/qa4-screenshots/p4d-webkit-native-date-time-probe.png
 
 == WIDGET SHOTS ==
   select_kind_click 'once'
-  captured p4d-widget-date-time.png (960, 640) bytes=53400 mean=29.55 stdev=11.59 colors~4933
+  captured p4d-widget-date-time.png (960, 640) bytes=59662 mean=29.91 stdev=12.09 colors~5356
   select_kind_click 'daily'
-  captured p4d-widget-timezone.png (960, 640) bytes=50981 mean=29.6 stdev=11.21 colors~4556
+  captured p4d-widget-timezone.png (960, 640) bytes=69871 mean=30.9 stdev=12.57 colors~4690
   select_kind_click 'weekly'
-  captured p4d-widget-weekday-chips.png (960, 640) bytes=53116 mean=29.73 stdev=11.71 colors~5060
-  captured p4d-widget-wall-time.png (960, 640) bytes=53480 mean=29.63 stdev=11.41 colors~5092
+  captured p4d-widget-weekday-chips.png (960, 640) bytes=72300 mean=31.04 stdev=13.02 colors~5181
+  captured p4d-widget-wall-time.png (960, 640) bytes=73327 mean=30.91 stdev=12.7 colors~5217
 
 == CREATE once with 24.12.2026 ==
   select_kind_click 'once'
-  captured p4d-once-echo-24-12-2026.png (960, 640) bytes=62655 mean=30.24 stdev=12.25 colors~5180
+  captured p4d-once-echo-24-12-2026.png (960, 640) bytes=62652 mean=30.22 stdev=12.26 colors~5180
   store: ['qa-p4d-once-eu', 'system.prune']
-  cli list head: {"command":"list","count":0,"ok":true,"timers":[]}
-
+  cli list head: {"command":"list","count":2,"ok":true,"timers":[{"accuracy_slack_secs":null,"action":{"type":"none"},"enabled":true,"id":"ac3fe5db-b6e6-4bdf-9893-8157cbb4978e","jitter_secs":0,"last_fired":null,"max_runs":null,"misfire":{"coalesce":{"grace_secs":3600}},"name":"qa-p4d-once-eu","next_fire_utc":"2026-12-24T07:00:00Z","occurrence":{"dst_fold":"first_occurrence","dst_gap":"first_valid_after_gap","exclu
 
 == ERROR vs DST ADVISORY ==
   select_kind_click 'cron'
-  captured p4d-preview-error-invalid-cron.png (960, 640) bytes=53611 mean=29.49 stdev=11.18 colors~4164
+  captured p4d-preview-error-invalid-cron.png (960, 640) bytes=59425 mean=29.82 stdev=11.54 colors~5409
   select_kind_click 'once'
-  captured p4d-field-error-invalid-date.png (960, 640) bytes=51726 mean=29.62 stdev=11.11 colors~5291
+  captured p4d-field-error-invalid-date.png (960, 640) bytes=58315 mean=29.98 stdev=11.67 colors~5868
   select_kind_click 'once'
-  captured p4d-dst-advisory.png (960, 640) bytes=71484 mean=31.02 stdev=12.39 colors~5831
+  captured p4d-dst-advisory.png (960, 640) bytes=71483 mean=31.0 stdev=12.41 colors~5831
 
 == LAYOUT 960 + 1280 ==
   select_kind_click 'weekly'
-  captured p4d-layout-960x640.png (960, 640) bytes=76875 mean=31.36 stdev=12.83 colors~5149
-  captured p4d-layout-1280x800.png (960, 640) bytes=76859 mean=31.32 stdev=12.84 colors~5149
+  resize target 960x640 → wmctrl geom ['50', '112', '960', '640']
+  captured p4d-layout-960x640.png (960, 640) bytes=73369 mean=30.99 stdev=12.66 colors~5223
+  resize target 1280x800 → wmctrl geom ['50', '112', '1280', '800']
+  layout capture geoms 960=[50, 112, 960, 640] 1280=[50, 112, 1280, 800]
+  captured p4d-layout-1280x800.png (1280, 800) bytes=97099 mean=25.41 stdev=13.13 colors~6728
+  resize target 960x640 → wmctrl geom ['50', '112', '960', '640']
 
 == KEYBOARD-ONLY CREATE ==
+  Create focused after 8 tabs from wall-clock
+  after keyboard create store: ['qa-p4d-keyboard', 'qa-p4d-once-eu', 'system.prune']
+  captured p4d-keyboard-create-result.png (960, 640) bytes=52805 mean=30.72 stdev=12.43 colors~5060
+
+== 7-KIND CRUD ==
+
+-- create qa-p4d-once --
+  select_kind_click 'once'
+    field 'Name' -> 'qa-p4d-once' (want 'qa-p4d-once')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Once date' -> '2027-06-15' (want '2027-06-15')
+    field 'Once time' -> '14:00' (want '14:00')
+  store: ['qa-p4d-keyboard', 'qa-p4d-once', 'qa-p4d-once-eu', 'system.prune']
+
+-- create qa-p4d-interval --
+  select_kind_click 'interval'
+    field 'Name' -> 'qa-p4d-interval' (want 'qa-p4d-interval')
+    field 'Every' -> '120' (want '120')
+  store: ['qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-once', 'qa-p4d-once-eu', 'system.prune']
+
+-- create qa-p4d-daily --
+  select_kind_click 'daily'
+    field 'Name' -> 'qa-p4d-daily' (want 'qa-p4d-daily')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Wall-clock' -> '08:15' (want '08:15')
+  store: ['qa-p4d-daily', 'qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-once', 'qa-p4d-once-eu', 'system.prune']
+
+-- create qa-p4d-weekly --
+  select_kind_click 'weekly'
+    field 'Name' -> 'qa-p4d-weekly' (want 'qa-p4d-weekly')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Wall-clock' -> '08:00' (want '08:00')
+  store: ['qa-p4d-daily', 'qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-once', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'system.prune']
+
+-- create qa-p4d-monthly --
+  select_kind_click 'monthly'
+    field 'Name' -> 'qa-p4d-monthly' (want 'qa-p4d-monthly')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Wall-clock' -> '10:00' (want '10:00')
+    field 'Day of month' -> '15' (want '15')
+  store: ['qa-p4d-daily', 'qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'system.prune']
+
+-- create qa-p4d-yearly --
+  select_kind_click 'yearly'
+    field 'Name' -> 'qa-p4d-yearly' (want 'qa-p4d-yearly')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Wall-clock' -> '12:00' (want '12:00')
+    field 'Month' -> '7' (want '7')
+    field 'Day of month' -> '28' (want '28')
+  store: ['qa-p4d-daily', 'qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+
+-- create qa-p4d-cron --
+  select_kind_click 'cron'
+    field 'Name' -> 'qa-p4d-cron' (want 'qa-p4d-cron')
+    field 'Timezone' -> 'Europe/Helsinki' (want 'Europe/Helsinki')
+    field 'Cron' -> '0 9 * * 1-5' (want '0 9 * * 1-5')
+  store: ['qa-p4d-cron', 'qa-p4d-daily', 'qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+  captured p4d-all-after-create.png (960, 640) bytes=110822 mean=39.33 stdev=16.9 colors~7020
+
+-- edit qa-p4d-once --
+  open_edit attempt=0 n_edit=10 store=['qa-p4d-cron', 'qa-p4d-daily', 'qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+  try Edit[0] title='Edit "qa-p4d-cron"' want='qa-p4d-once'
+  try Edit[1] title='Edit "qa-p4d-daily"' want='qa-p4d-once'
+  try Edit[2] title='Edit "qa-p4d-interval"' want='qa-p4d-once'
+  try Edit[3] title='Edit "qa-p4d-keyboard"' want='qa-p4d-once'
+  try Edit[4] title='Edit "qa-p4d-monthly"' want='qa-p4d-once'
+  try Edit[5] title='Edit "qa-p4d-once"' want='qa-p4d-once'
+    field 'Name' -> 'qa-p4d-once-ed' (want 'qa-p4d-once-ed')
+
+-- edit qa-p4d-interval --
+  open_edit attempt=0 n_edit=10 store=['qa-p4d-cron', 'qa-p4d-daily', 'qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once-ed', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+  try Edit[0] title='Edit "qa-p4d-cron"' want='qa-p4d-interval'
+  try Edit[1] title='Edit "qa-p4d-daily"' want='qa-p4d-interval'
+  try Edit[2] title='Edit "qa-p4d-interval"' want='qa-p4d-interval'
+    field 'Every' -> '180' (want '180')
+
+-- edit qa-p4d-daily --
+  open_edit attempt=0 n_edit=10 store=['qa-p4d-cron', 'qa-p4d-daily', 'qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once-ed', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+  try Edit[0] title='Edit "qa-p4d-cron"' want='qa-p4d-daily'
+  try Edit[1] title='Edit "qa-p4d-daily"' want='qa-p4d-daily'
+    field 'Wall-clock' -> '09:15' (want '09:15')
+
+-- edit qa-p4d-weekly --
+  open_edit attempt=0 n_edit=10 store=['qa-p4d-cron', 'qa-p4d-daily', 'qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once-ed', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+  try Edit[0] title='Edit "qa-p4d-cron"' want='qa-p4d-weekly'
+  try Edit[1] title='Edit "qa-p4d-daily"' want='qa-p4d-weekly'
+  try Edit[2] title='Edit "qa-p4d-interval"' want='qa-p4d-weekly'
+  try Edit[3] title='Edit "qa-p4d-keyboard"' want='qa-p4d-weekly'
+  try Edit[4] title='Edit "qa-p4d-monthly"' want='qa-p4d-weekly'
+  try Edit[5] title='Edit "qa-p4d-once-ed"' want='qa-p4d-weekly'
+  try Edit[6] title='Edit "qa-p4d-once-eu"' want='qa-p4d-weekly'
+  try Edit[7] title='Edit "qa-p4d-weekly"' want='qa-p4d-weekly'
+    field 'Wall-clock' -> '09:00' (want '09:00')
+
+-- edit qa-p4d-monthly --
+  open_edit attempt=0 n_edit=10 store=['qa-p4d-cron', 'qa-p4d-daily', 'qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once-ed', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+  try Edit[0] title='Edit "qa-p4d-cron"' want='qa-p4d-monthly'
+  try Edit[1] title='Edit "qa-p4d-daily"' want='qa-p4d-monthly'
+  try Edit[2] title='Edit "qa-p4d-interval"' want='qa-p4d-monthly'
+  try Edit[3] title='Edit "qa-p4d-keyboard"' want='qa-p4d-monthly'
+  try Edit[4] title='Edit "qa-p4d-monthly"' want='qa-p4d-monthly'
+    field 'Day of month' -> '20' (want '20')
+
+-- edit qa-p4d-yearly --
+  open_edit attempt=0 n_edit=10 store=['qa-p4d-cron', 'qa-p4d-daily', 'qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once-ed', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+  try Edit[0] title='Edit "qa-p4d-cron"' want='qa-p4d-yearly'
+  try Edit[1] title='Edit "qa-p4d-daily"' want='qa-p4d-yearly'
+  try Edit[2] title='Edit "qa-p4d-interval"' want='qa-p4d-yearly'
+  try Edit[3] title='Edit "qa-p4d-keyboard"' want='qa-p4d-yearly'
+  try Edit[4] title='Edit "qa-p4d-monthly"' want='qa-p4d-yearly'
+  try Edit[5] title='Edit "qa-p4d-once-ed"' want='qa-p4d-yearly'
+  try Edit[6] title='Edit "qa-p4d-once-eu"' want='qa-p4d-yearly'
+  try Edit[7] title='Edit "qa-p4d-weekly"' want='qa-p4d-yearly'
+  try Edit[8] title='Edit "qa-p4d-yearly"' want='qa-p4d-yearly'
+    field 'Month' -> '12' (want '12')
+
+-- edit qa-p4d-cron --
+  open_edit attempt=0 n_edit=10 store=['qa-p4d-cron', 'qa-p4d-daily', 'qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once-ed', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+  try Edit[0] title='Edit "qa-p4d-cron"' want='qa-p4d-cron'
+    field 'Cron' -> '30 9 * * 1-5' (want '30 9 * * 1-5')
+  captured p4d-all-after-edit.png (960, 640) bytes=119993 mean=40.57 stdev=16.93 colors~7209
+
+== DELETE qa-p4d-once-ed ==
+  open_edit attempt=0 n_edit=10 store=['qa-p4d-cron', 'qa-p4d-daily', 'qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once-ed', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+  try Edit[0] title='Edit "qa-p4d-cron"' want='qa-p4d-once-ed'
+  try Edit[1] title='Edit "qa-p4d-daily"' want='qa-p4d-once-ed'
+  try Edit[2] title='Edit "qa-p4d-interval"' want='qa-p4d-once-ed'
+  try Edit[3] title='Edit "qa-p4d-keyboard"' want='qa-p4d-once-ed'
+  try Edit[4] title='Edit "qa-p4d-monthly"' want='qa-p4d-once-ed'
+  try Edit[5] title='Edit "qa-p4d-once-ed"' want='qa-p4d-once-ed'
+  clicked Confirm delete
+  store after delete: ['qa-p4d-cron', 'qa-p4d-daily', 'qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+  DELETE OK qa-p4d-once-ed
+
+== DELETE qa-p4d-interval ==
+  open_edit attempt=0 n_edit=9 store=['qa-p4d-cron', 'qa-p4d-daily', 'qa-p4d-interval', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+  try Edit[0] title='Edit "qa-p4d-cron"' want='qa-p4d-interval'
+  try Edit[1] title='Edit "qa-p4d-daily"' want='qa-p4d-interval'
+  try Edit[2] title='Edit "qa-p4d-interval"' want='qa-p4d-interval'
+  clicked Confirm delete
+  store after delete: ['qa-p4d-cron', 'qa-p4d-daily', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+  DELETE OK qa-p4d-interval
+
+== DELETE qa-p4d-daily ==
+  open_edit attempt=0 n_edit=8 store=['qa-p4d-cron', 'qa-p4d-daily', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+  try Edit[0] title='Edit "qa-p4d-cron"' want='qa-p4d-daily'
+  try Edit[1] title='Edit "qa-p4d-daily"' want='qa-p4d-daily'
+  clicked Confirm delete
+  store after delete: ['qa-p4d-cron', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+  DELETE OK qa-p4d-daily
+
+== DELETE qa-p4d-weekly ==
+  open_edit attempt=0 n_edit=7 store=['qa-p4d-cron', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once-eu', 'qa-p4d-weekly', 'qa-p4d-yearly', 'system.prune']
+  try Edit[0] title='Edit "qa-p4d-cron"' want='qa-p4d-weekly'
+  try Edit[1] title='Edit "qa-p4d-keyboard"' want='qa-p4d-weekly'
+  try Edit[2] title='Edit "qa-p4d-monthly"' want='qa-p4d-weekly'
+  try Edit[3] title='Edit "qa-p4d-once-eu"' want='qa-p4d-weekly'
+  try Edit[4] title='Edit "qa-p4d-weekly"' want='qa-p4d-weekly'
+  clicked Confirm delete
+  store after delete: ['qa-p4d-cron', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once-eu', 'qa-p4d-yearly', 'system.prune']
+  DELETE OK qa-p4d-weekly
+
+== DELETE qa-p4d-monthly ==
+  open_edit attempt=0 n_edit=6 store=['qa-p4d-cron', 'qa-p4d-keyboard', 'qa-p4d-monthly', 'qa-p4d-once-eu', 'qa-p4d-yearly', 'system.prune']
+  try Edit[0] title='Edit "qa-p4d-cron"' want='qa-p4d-monthly'
+  try Edit[1] title='Edit "qa-p4d-keyboard"' want='qa-p4d-monthly'
+  try Edit[2] title='Edit "qa-p4d-monthly"' want='qa-p4d-monthly'
+  clicked Confirm delete
+  store after delete: ['qa-p4d-cron', 'qa-p4d-keyboard', 'qa-p4d-once-eu', 'qa-p4d-yearly', 'system.prune']
+  DELETE OK qa-p4d-monthly
+
+== DELETE qa-p4d-yearly ==
+  open_edit attempt=0 n_edit=5 store=['qa-p4d-cron', 'qa-p4d-keyboard', 'qa-p4d-once-eu', 'qa-p4d-yearly', 'system.prune']
+  try Edit[0] title='Edit "qa-p4d-cron"' want='qa-p4d-yearly'
+  try Edit[1] title='Edit "qa-p4d-keyboard"' want='qa-p4d-yearly'
+  try Edit[2] title='Edit "qa-p4d-once-eu"' want='qa-p4d-yearly'
+  try Edit[3] title='Edit "qa-p4d-yearly"' want='qa-p4d-yearly'
+  clicked Confirm delete
+  store after delete: ['qa-p4d-cron', 'qa-p4d-keyboard', 'qa-p4d-once-eu', 'system.prune']
+  DELETE OK qa-p4d-yearly
+
+== DELETE qa-p4d-cron ==
+  open_edit attempt=0 n_edit=4 store=['qa-p4d-cron', 'qa-p4d-keyboard', 'qa-p4d-once-eu', 'system.prune']
+  try Edit[0] title='Edit "qa-p4d-cron"' want='qa-p4d-cron'
+  clicked Confirm delete
+  store after delete: ['qa-p4d-keyboard', 'qa-p4d-once-eu', 'system.prune']
+  DELETE OK qa-p4d-cron
+  captured p4d-all-after-delete.png (960, 640) bytes=62820 mean=31.81 stdev=13.39 colors~5199
+7-kind CRUD complete
+  captured p4d-all-final.png (960, 640) bytes=52901 mean=30.73 stdev=12.43 colors~5047
+
+P4d capture complete.

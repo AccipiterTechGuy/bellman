@@ -1,6 +1,6 @@
 [
   {
-    "id": "4550ce12-52fe-4a37-b3e7-dd5387ee165c",
+    "id": "a5359874-e8b2-4f47-8d5b-cf7f9661f626",
     "name": "qa-p4d-keyboard",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"daily\",\"at\":\"07:30:00\"},\"tz\":\"UTC\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -20,7 +20,7 @@
     "accuracy_slack_secs": null
   },
   {
-    "id": "1fd889ad-9a47-487f-a8e7-572a7aa2e813",
+    "id": "ac3fe5db-b6e6-4bdf-9893-8157cbb4978e",
     "name": "qa-p4d-once-eu",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"once\",\"at\":\"2026-12-24T09:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
