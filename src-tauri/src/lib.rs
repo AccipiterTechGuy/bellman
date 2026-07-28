@@ -16,6 +16,7 @@
 pub mod commands;
 pub mod config;
 pub mod first_run;
+pub mod neighbours;
 pub mod notify_sink;
 pub mod occurrence_input;
 pub mod state;
@@ -196,6 +197,7 @@ fn register_commands(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<taur
         commands::update_timer,
         commands::delete_timer,
         commands::preview_fires,
+        commands::query_neighbours,
         commands::get_pause_all,
         commands::set_pause_all,
         commands::wizard_status,

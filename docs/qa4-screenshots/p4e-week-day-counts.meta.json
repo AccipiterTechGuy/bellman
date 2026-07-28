@@ -1,0 +1,19 @@
+{
+  "file": "p4e-week-day-counts.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 73772,
+  "mean_luma": 40.86,
+  "stdev": 13.51,
+  "unique_colors_cap200k": 2937,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "expect": "day counts + empty + New"
+}

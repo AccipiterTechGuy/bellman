@@ -1,0 +1,20 @@
+{
+  "file": "p4e-list-filter-search.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 70648,
+  "mean_luma": 34.68,
+  "stdev": 13.88,
+  "unique_colors_cap200k": 5890,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "filter": "qa-collide",
+  "expect": "only collision timers visible"
+}

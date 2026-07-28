@@ -1,0 +1,38 @@
+{
+  "qa-collide-alpha-backup": {
+    "command": "next",
+    "fires": [
+      "2026-07-29T09:00:00+00:00",
+      "2026-07-30T09:00:00+00:00",
+      "2026-07-31T09:00:00+00:00"
+    ],
+    "id": "2f89082c-1a02-4129-96ec-c9f159a5588e",
+    "n": 3,
+    "name": "qa-collide-alpha-backup",
+    "ok": true
+  },
+  "qa-collide-beta-launch-heavy-workload": {
+    "command": "next",
+    "fires": [
+      "2026-07-29T09:00:00+00:00",
+      "2026-07-30T09:00:00+00:00",
+      "2026-07-31T09:00:00+00:00"
+    ],
+    "id": "c73b2db5-99da-42f2-b515-89ed80f68c19",
+    "n": 3,
+    "name": "qa-collide-beta-launch-heavy-workload",
+    "ok": true
+  },
+  "qa-collide-gamma-notify": {
+    "command": "next",
+    "fires": [
+      "2026-07-29T09:00:00+00:00",
+      "2026-07-30T09:00:00+00:00",
+      "2026-07-31T09:00:00+00:00"
+    ],
+    "id": "ca13a838-2f20-4f69-8254-e8448406d8dc",
+    "n": 3,
+    "name": "qa-collide-gamma-notify",
+    "ok": true
+  }
+}
