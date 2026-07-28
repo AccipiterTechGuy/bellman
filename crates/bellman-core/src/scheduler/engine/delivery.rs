@@ -254,6 +254,24 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         let ctx = FireContext::from_claim(timer, claim, kind.clone());
         let action_res = self.action.on_fire(&ctx);
 
+        // Dogfood: when the internal system.prune timer fires, run the prune
+        // pass (JSONL rotate/retain + terminal one-shot cleanup).
+        if crate::pruner::is_system_prune_timer(timer) {
+            if let Some(data_dir) = self.config.data_dir.clone() {
+                let prune_cfg = crate::pruner::PruneConfig {
+                    retention: self.config.retention,
+                    interval: self.config.prune_interval,
+                    ack_grace: self.config.ack_grace,
+                };
+                let now = self.clock.wall_now();
+                if let Err(e) =
+                    crate::pruner::run_prune_under(&mut self.store, &data_dir, &prune_cfg, now, true)
+                {
+                    eprintln!("bellman: system.prune fire failed: {e}");
+                }
+            }
+        }
+
         // Complete even when the action fails so recovery does not infinite-loop;
         // action errors still surface to the caller.
         if claim.status == ClaimStatus::Claimed {

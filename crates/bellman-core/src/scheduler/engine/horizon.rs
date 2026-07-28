@@ -6,11 +6,10 @@
 
 use super::types::{HeapEntry, SchedulerError, SchedulerResult};
 use super::Scheduler;
-use crate::occurrence::OccurrenceKind;
 use crate::scheduler::action::FireAction;
 use crate::scheduler::clock::Clock;
-use crate::scheduler::config::HIGH_FREQ_PERIOD_SECS;
-use crate::store::{Timer, TimerId, TimerPatch, TimerUpdate};
+use crate::scheduler::jitter::{apply_execution_jitter, is_high_frequency};
+use crate::store::{TimerId, TimerPatch, TimerUpdate};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::cmp::Reverse;
 
@@ -28,8 +27,10 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         let mut seen = std::collections::HashSet::new();
         for t in due {
             if let Some(nf) = t.next_fire_utc {
+                // Heap uses execution time (with jitter); display stays clean.
+                let exec_at = apply_execution_jitter(t.id, nf, t.jitter_secs);
                 self.heap.push(Reverse(HeapEntry {
-                    fire_at: nf,
+                    fire_at: exec_at,
                     timer_id: t.id,
                 }));
                 seen.insert(t.id);
@@ -45,8 +46,9 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 continue;
             }
             if let Some(nf) = t.next_fire_utc {
+                let exec_at = apply_execution_jitter(t.id, nf, t.jitter_secs);
                 self.heap.push(Reverse(HeapEntry {
-                    fire_at: nf,
+                    fire_at: exec_at,
                     timer_id: t.id,
                 }));
             }
@@ -171,27 +173,18 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
 
     pub(super) fn push_if_in_horizon(&mut self, fire_at: DateTime<Utc>, timer_id: TimerId) {
         let now = self.clock.wall_now();
+        let timer = self.store.get_timer(timer_id).ok().flatten();
+        let jitter = timer.as_ref().map_or(0, |t| t.jitter_secs);
+        let exec_at = apply_execution_jitter(timer_id, fire_at, jitter);
         let horizon_ok = ChronoDuration::from_std(self.config.horizon)
             .ok()
-            .is_none_or(|h| fire_at <= now + h);
-        let force = self
-            .store
-            .get_timer(timer_id)
-            .ok()
-            .flatten()
-            .is_some_and(|t| is_high_frequency(&t));
+            .is_none_or(|h| exec_at <= now + h);
+        let force = timer.as_ref().is_some_and(is_high_frequency);
         if horizon_ok || force {
             self.heap.push(Reverse(HeapEntry {
-                fire_at,
+                fire_at: exec_at,
                 timer_id,
             }));
         }
-    }
-}
-
-fn is_high_frequency(timer: &Timer) -> bool {
-    match timer.occurrence.kind() {
-        OccurrenceKind::Interval { every_secs, .. } => *every_secs < HIGH_FREQ_PERIOD_SECS,
-        _ => false,
     }
 }

@@ -153,6 +153,14 @@ pub struct Timer {
     pub action: Action,
     /// Optimistic concurrency token; starts at 1 on insert.
     pub revision: i64,
+    /// Execution jitter amplitude in seconds (`±jitter_secs`). Applied to
+    /// heap execution time only — displayed `next_fire_utc` stays clean.
+    #[serde(default)]
+    pub jitter_secs: u32,
+    /// Optional per-timer accuracy slack (seconds) for high-frequency firing.
+    /// `None` → use the global config default for high-freq timers.
+    #[serde(default)]
+    pub accuracy_slack_secs: Option<u32>,
 }
 
 /// Input for [`super::Store::create_timer`].
@@ -170,6 +178,10 @@ pub struct NewTimer {
     pub action: Action,
     /// Seed last_fired (usually `None` for new timers).
     pub last_fired: Option<DateTime<Utc>>,
+    /// Execution jitter amplitude in seconds (default 0).
+    pub jitter_secs: u32,
+    /// Optional per-timer accuracy slack override.
+    pub accuracy_slack_secs: Option<u32>,
 }
 
 impl NewTimer {
@@ -188,7 +200,14 @@ impl NewTimer {
             tags: Vec::new(),
             action: Action::default(),
             last_fired: None,
+            jitter_secs: 0,
+            accuracy_slack_secs: None,
         }
+    }
+
+    pub fn with_jitter(mut self, jitter_secs: u32) -> Self {
+        self.jitter_secs = jitter_secs;
+        self
     }
 }
 
@@ -204,6 +223,8 @@ pub struct TimerPatch {
     pub tags: Option<Vec<String>>,
     pub action: Option<Action>,
     pub last_fired: Option<Option<DateTime<Utc>>>,
+    pub jitter_secs: Option<u32>,
+    pub accuracy_slack_secs: Option<Option<u32>>,
 }
 
 /// Optimistic update envelope.

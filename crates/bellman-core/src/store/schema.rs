@@ -4,7 +4,7 @@ use super::error::{StoreError, StoreResult};
 use rusqlite::Connection;
 
 /// Current on-disk schema version (also stored in `PRAGMA user_version` and `meta`).
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
 
 /// Apply pending migrations. Safe to call on every open.
 pub fn migrate(conn: &Connection) -> StoreResult<()> {
@@ -26,6 +26,9 @@ pub fn migrate(conn: &Connection) -> StoreResult<()> {
     }
     if current < 3 {
         migrate_v3(conn)?;
+    }
+    if current < 4 {
+        migrate_v4(conn)?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
@@ -166,6 +169,25 @@ fn migrate_v3(conn: &Connection) -> StoreResult<()> {
         ",
     )
     .map_err(|e| StoreError::Sqlite(format!("migrate v3 backfill: {e}")))?;
+    Ok(())
+}
+
+/// P5: per-timer jitter + accuracy slack columns.
+fn migrate_v4(conn: &Connection) -> StoreResult<()> {
+    if !table_has_column(conn, "timers", "jitter_secs")? {
+        conn.execute(
+            "ALTER TABLE timers ADD COLUMN jitter_secs INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|e| StoreError::Sqlite(format!("migrate v4 add jitter_secs: {e}")))?;
+    }
+    if !table_has_column(conn, "timers", "accuracy_slack_secs")? {
+        conn.execute(
+            "ALTER TABLE timers ADD COLUMN accuracy_slack_secs INTEGER",
+            [],
+        )
+        .map_err(|e| StoreError::Sqlite(format!("migrate v4 add accuracy_slack_secs: {e}")))?;
+    }
     Ok(())
 }
 

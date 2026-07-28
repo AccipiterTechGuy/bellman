@@ -1,5 +1,6 @@
 //! [`ActionRunner`]: [`FireAction`] impl with overlap, retry, and event logging.
 
+use super::concurrency::{ActionLimiter, DEFAULT_MAX_CONCURRENT_ACTIONS};
 use super::launch::{run_launch, LaunchConfig, DEFAULT_OUTPUT_CAP_BYTES, DEFAULT_TIMEOUT};
 use super::notify_sink::{NotifySink, StubNotifySink};
 use super::write_slot::{write_output_slot, WriteSlotPayload};
@@ -28,6 +29,9 @@ pub struct ActionRunnerConfig {
     /// When true (tests), sleep for retry delay is skipped — only the retry
     /// *count* is honored. Production leaves this false.
     pub skip_retry_sleep: bool,
+    /// Global concurrent wake-action cap (default 16). Launch work runs under
+    /// an [`ActionLimiter`] so a mass-fire cannot fork-bomb the host.
+    pub max_concurrent_actions: usize,
 }
 
 impl Default for ActionRunnerConfig {
@@ -38,6 +42,7 @@ impl Default for ActionRunnerConfig {
             write_slot_dir: None,
             write_slot_file: None,
             skip_retry_sleep: false,
+            max_concurrent_actions: DEFAULT_MAX_CONCURRENT_ACTIONS,
         }
     }
 }
@@ -73,17 +78,26 @@ pub struct ActionRunner {
     /// Pluggable desktop-notification sink. C6 leaves it as the stub; C7 wires
     /// the Tauri plugin so notification timers surface a real toast.
     notify_sink: Arc<dyn NotifySink>,
+    /// Global concurrency gate for wake actions.
+    limiter: Arc<ActionLimiter>,
 }
 
 impl ActionRunner {
     pub fn new(config: ActionRunnerConfig) -> Self {
+        let limiter = Arc::new(ActionLimiter::new(config.max_concurrent_actions));
         Self {
             config,
             event_log: None,
             in_flight: HashSet::new(),
             last_message: None,
             notify_sink: Arc::new(StubNotifySink),
+            limiter,
         }
+    }
+
+    /// Shared concurrency limiter (tests inspect peak / completed counts).
+    pub fn limiter(&self) -> &ActionLimiter {
+        &self.limiter
     }
 
     /// Install a custom notification sink (real toast in the Tauri shell).
@@ -111,6 +125,8 @@ impl ActionRunner {
         self.event_log.take()
     }
 
+    /// Builder sink: takes ownership so call sites can chain `EventRecord::new…`.
+    #[allow(clippy::needless_pass_by_value)]
     fn emit(&mut self, rec: EventRecord) {
         if let Some(log) = self.event_log.as_mut() {
             let _ = log.append(&rec);
@@ -166,50 +182,62 @@ impl ActionRunner {
     }
 
     fn execute_once(&mut self, ctx: &FireContext<'_>) -> Result<String, String> {
-        let primary = match &ctx.timer.action {
-            Action::None => Ok("action=none".into()),
-            Action::Launch {
-                command,
-                args,
-                workdir,
-            } => {
-                let cfg = LaunchConfig {
-                    command: command.clone(),
-                    args: args.clone(),
-                    workdir: workdir.clone(),
-                    timeout: self.config.launch_timeout,
-                    output_cap: self.config.output_cap,
-                    run_id: ctx.run_id,
-                };
-                let outcome = run_launch(&cfg).map_err(|e| e.to_string())?;
-                if outcome.timed_out {
-                    return Err(format!(
-                        "launch timed out after {:?} (killed={})",
-                        self.config.launch_timeout, outcome.killed
-                    ));
+        // All wake work takes a concurrency permit so multi-threaded mass-fire
+        // paths cannot fork-bomb. Sequential scheduler ticks still peak at 1.
+        let limiter = Arc::clone(&self.limiter);
+        let launch_timeout = self.config.launch_timeout;
+        let output_cap = self.config.output_cap;
+        let notify_sink = Arc::clone(&self.notify_sink);
+        let action = ctx.timer.action.clone();
+        let run_id = ctx.run_id;
+
+        let primary = limiter.run(|| -> Result<String, String> {
+            match &action {
+                Action::None => Ok("action=none".into()),
+                Action::Launch {
+                    command,
+                    args,
+                    workdir,
+                } => {
+                    let cfg = LaunchConfig {
+                        command: command.clone(),
+                        args: args.clone(),
+                        workdir: workdir.clone(),
+                        timeout: launch_timeout,
+                        output_cap,
+                        run_id,
+                    };
+                    // Timeout + output cap are enforced inside run_launch.
+                    let outcome = run_launch(&cfg).map_err(|e| e.to_string())?;
+                    if outcome.timed_out {
+                        return Err(format!(
+                            "launch timed out after {launch_timeout:?} (killed={})",
+                            outcome.killed
+                        ));
+                    }
+                    match outcome.exit_code {
+                        Some(0) => Ok(format!(
+                            "launch ok exit=0 duration={:?}",
+                            outcome.duration
+                        )),
+                        None => Err("launch exited by signal".into()),
+                        Some(code) => Err(format!(
+                            "launch exit={code} output={}",
+                            truncate_utf8(&outcome.output, 200)
+                        )),
+                    }
                 }
-                match outcome.exit_code {
-                    Some(0) => Ok(format!(
-                        "launch ok exit=0 duration={:?}",
-                        outcome.duration
-                    )),
-                    None => Err("launch exited by signal".into()),
-                    Some(code) => Err(format!(
-                        "launch exit={code} output={}",
-                        truncate_utf8(&outcome.output, 200)
-                    )),
+                Action::Notify { title, body } => {
+                    let out = notify_sink.show(title, body);
+                    let label = if notify_sink.is_stub() {
+                        "notify stub"
+                    } else {
+                        "notify"
+                    };
+                    Ok(format!("{label} title={:?}", out.title))
                 }
             }
-            Action::Notify { title, body } => {
-                let out = self.notify_sink.show(title, body);
-                let label = if self.notify_sink.is_stub() {
-                    "notify stub"
-                } else {
-                    "notify"
-                };
-                Ok(format!("{label} title={:?}", out.title))
-            }
-        }?;
+        })?;
 
         // PLAN: launch + write JSON — always write the fire notification when a
         // slots/output dir is configured, for every successful wake path.
