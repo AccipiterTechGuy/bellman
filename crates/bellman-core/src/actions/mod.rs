@@ -8,12 +8,16 @@
 //! Overlap policy default is **skip**. Retry: product default 1× after 30 s,
 //! then emit `wake_failed` (`FAILED` path) to the event log.
 
+mod concurrency;
 mod launch;
 mod notify;
 mod notify_sink;
 mod runner;
 mod write_slot;
 
+pub use concurrency::{
+    run_parallel_under_cap, ActionLimiter, LimiterStats, DEFAULT_MAX_CONCURRENT_ACTIONS,
+};
 pub use launch::{run_launch, LaunchConfig, LaunchError, LaunchOutcome, DEFAULT_OUTPUT_CAP_BYTES};
 pub use notify::{notify_stub, NotifyOutcome};
 pub use notify_sink::{NotifySink, StubNotifySink};

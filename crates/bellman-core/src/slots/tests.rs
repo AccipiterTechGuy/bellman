@@ -207,7 +207,7 @@ fn malformed_input_quarantined_to_bad() {
     let _ = name;
     service.poll(&mut store).unwrap();
     let bad = service.layout().bad_dir();
-    let entries: Vec<_> = fs::read_dir(&bad).unwrap().filter_map(|e| e.ok()).collect();
+    let entries: Vec<_> = fs::read_dir(&bad).unwrap().filter_map(std::result::Result::ok).collect();
     assert!(
         !entries.is_empty(),
         "expected quarantine files in bad/, got none"
@@ -235,7 +235,7 @@ fn oversized_input_quarantined() {
     service.poll(&mut store).unwrap();
     let bad_count = fs::read_dir(service.layout().bad_dir())
         .unwrap()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .count();
     assert!(bad_count > 0, "oversized must quarantine");
     assert!(free_stub_count(&service) >= MIN_FREE_SLOTS);
@@ -272,7 +272,7 @@ fn symlink_input_quarantined() {
     assert!(outside.exists(), "quarantine must not delete the link target");
     let bad_entries: Vec<_> = fs::read_dir(service.layout().bad_dir())
         .unwrap()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     assert!(
@@ -312,7 +312,7 @@ fn dangling_symlink_input_quarantined() {
     );
     let bad_entries: Vec<_> = fs::read_dir(service.layout().bad_dir())
         .unwrap()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     assert!(
@@ -574,8 +574,7 @@ fn concurrent_duplicate_request_id_single_side_effect() {
             .find(|p| {
                 let b = read_capped(p, DEFAULT_MAX_READ_BYTES).unwrap();
                 serde_json::from_slice::<SlotRequest>(&b)
-                    .map(|r| r.is_free_stub())
-                    .unwrap_or(false)
+                    .is_ok_and(|r| r.is_free_stub())
             })
             .unwrap()
             .clone();
@@ -861,7 +860,7 @@ fn slot_id_path_traversal_quarantined_no_escape_write() {
     // it should be in bad/.
     let bad: Vec<_> = fs::read_dir(service.layout().bad_dir())
         .unwrap()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     assert!(
@@ -896,8 +895,7 @@ fn cross_slot_id_forge_cannot_overwrite_foreign_done() {
         .find(|p| {
             let b = read_capped(p, DEFAULT_MAX_READ_BYTES).unwrap();
             serde_json::from_slice::<SlotRequest>(&b)
-                .map(|r| r.is_free_stub() && r.slot_id != victim_id)
-                .unwrap_or(false)
+                .is_ok_and(|r| r.is_free_stub() && r.slot_id != victim_id)
         })
         .expect("another free stub")
         .clone();

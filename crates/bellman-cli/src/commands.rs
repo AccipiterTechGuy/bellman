@@ -603,8 +603,7 @@ pub fn slot_submit(
     if request
         .request_id
         .as_ref()
-        .map(|s| s.is_empty())
-        .unwrap_or(true)
+        .is_none_or(std::string::String::is_empty)
     {
         request.request_id = Some(Uuid::new_v4().to_string());
     }
@@ -695,7 +694,5 @@ fn resolve_logs_dir(db: &Path) -> PathBuf {
             return PathBuf::from(p);
         }
     }
-    db.parent()
-        .map(|p| p.join("logs"))
-        .unwrap_or_else(|| PathBuf::from("logs"))
+    db.parent().map_or_else(|| PathBuf::from("logs"), |p| p.join("logs"))
 }

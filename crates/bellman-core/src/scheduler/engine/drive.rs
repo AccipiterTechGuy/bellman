@@ -17,15 +17,50 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
     /// Startup: recover pending claims, misfire pass, rebuild horizon.
     ///
     /// Recovery order matches BUILD_PLAN: pending run-claim recovery → misfire
-    /// scan → horizon rebuild. Returns all fires delivered during boot.
+    /// scan → horizon rebuild. Also runs P5 maintenance (system.prune ensure +
+    /// catch-up, Jan-1 year recalibration) when `config.data_dir` is set.
+    /// Returns all fires delivered during boot.
     pub fn boot(&mut self) -> SchedulerResult<Vec<DeliveredFire>> {
         self.last_wall = self.clock.wall_now();
         self.last_mono = self.clock.mono_now();
+
+        // P5: ensure system.prune, catch-up prune, Jan-1 recalibrate.
+        self.run_startup_maintenance()?;
+
         let mut fires = self.recover_pending_claims()?;
         fires.extend(self.misfire_pass()?);
         self.rebuild_horizon()?;
         self.booted = true;
         Ok(fires)
+    }
+
+    /// Ensure `system.prune`, catch-up prune if due, Jan-1 pass if needed.
+    ///
+    /// No-ops when `config.data_dir` is unset (unit tests keep a pure store).
+    fn run_startup_maintenance(&mut self) -> SchedulerResult<()> {
+        let Some(data_dir) = self.config.data_dir.clone() else {
+            return Ok(());
+        };
+        let prune_cfg = crate::pruner::PruneConfig {
+            retention: self.config.retention,
+            interval: self.config.prune_interval,
+            ack_grace: self.config.ack_grace,
+        };
+        let now = self.clock.wall_now();
+        match crate::pruner::startup_maintenance(&mut self.store, &data_dir, &prune_cfg, now) {
+            Ok(notes) => {
+                for n in notes {
+                    // No tracing dep required — best-effort stderr for ops.
+                    eprintln!("bellman: {n}");
+                }
+                Ok(())
+            }
+            Err(e) => {
+                // Maintenance failure must not brick the scheduler; log and continue.
+                eprintln!("bellman: startup maintenance error: {e}");
+                Ok(())
+            }
+        }
     }
 
     /// One loop iteration: control msgs, clock-jump check, drain due timers.

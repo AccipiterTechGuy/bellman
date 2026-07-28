@@ -8,6 +8,7 @@ mod action;
 mod clock;
 mod config;
 mod engine;
+pub mod jitter;
 
 pub use action::{FireAction, FireContext, FireKind, NopAction, RecordedFire, RecordingAction};
 pub use clock::{Clock, MonoTime, SimulatedClock, SystemClock};
@@ -16,6 +17,7 @@ pub use engine::{
     ControlHandle, ControlMsg, DeliveredFire, Scheduler, SchedulerError, SchedulerResult,
     TickResult,
 };
+pub use jitter::{apply_execution_jitter, jitter_offset_secs};
 
 #[cfg(test)]
 mod tests;

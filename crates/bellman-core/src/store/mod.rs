@@ -17,13 +17,12 @@ mod schema;
 
 pub use error::{StoreError, StoreResult};
 pub use models::{
-    Action, ClaimStatus, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy, RunClaim,
+    Action, ClaimStatus, Meta, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy, RunClaim,
     SlotRequestRecord, Timer, TimerId, TimerPatch, TimerUpdate,
 };
 
 use crate::occurrence::Occurrence;
 use chrono::{DateTime, Utc};
-use models::Meta;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use schema::{migrate, SCHEMA_VERSION};
 use std::path::{Path, PathBuf};
@@ -125,6 +124,24 @@ impl Store {
         })
     }
 
+    /// Stamp `meta.last_prune` (weekly prune bookkeeping).
+    pub fn set_last_prune(&mut self, when: DateTime<Utc>) -> StoreResult<()> {
+        self.conn.execute(
+            "UPDATE meta SET last_prune = ?1 WHERE id = 1",
+            params![fmt_dt(when)],
+        )?;
+        Ok(())
+    }
+
+    /// Stamp `meta.last_recalibration` (Jan-1 consistency pass).
+    pub fn set_last_recalibration(&mut self, when: DateTime<Utc>) -> StoreResult<()> {
+        self.conn.execute(
+            "UPDATE meta SET last_recalibration = ?1 WHERE id = 1",
+            params![fmt_dt(when)],
+        )?;
+        Ok(())
+    }
+
     // ── Timer CRUD ──────────────────────────────────────────────────────
 
     /// Insert a new timer. Computes `next_fire_utc` in the same transaction.
@@ -140,7 +157,8 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, enabled, occurrence, tz, next_fire_utc, last_fired,
                     misfire_policy, overlap_policy, retry_policy,
-                    valid_from, valid_until, max_runs, tags, action, revision
+                    valid_from, valid_until, max_runs, tags, action, revision,
+                    COALESCE(jitter_secs, 0), accuracy_slack_secs
              FROM timers WHERE id = ?1",
         )?;
         let row = stmt
@@ -154,7 +172,8 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, enabled, occurrence, tz, next_fire_utc, last_fired,
                     misfire_policy, overlap_policy, retry_policy,
-                    valid_from, valid_until, max_runs, tags, action, revision
+                    valid_from, valid_until, max_runs, tags, action, revision,
+                    COALESCE(jitter_secs, 0), accuracy_slack_secs
              FROM timers ORDER BY name, id",
         )?;
         let rows = stmt.query_map([], row_to_timer)?;
@@ -192,7 +211,8 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, enabled, occurrence, tz, next_fire_utc, last_fired,
                     misfire_policy, overlap_policy, retry_policy,
-                    valid_from, valid_until, max_runs, tags, action, revision
+                    valid_from, valid_until, max_runs, tags, action, revision,
+                    COALESCE(jitter_secs, 0), accuracy_slack_secs
              FROM timers
              WHERE enabled = 1
                AND next_fire_utc IS NOT NULL
@@ -707,6 +727,12 @@ fn apply_patch(timer: &mut Timer, patch: TimerPatch) -> StoreResult<()> {
     if let Some(lf) = patch.last_fired {
         timer.last_fired = lf;
     }
+    if let Some(j) = patch.jitter_secs {
+        timer.jitter_secs = j;
+    }
+    if let Some(a) = patch.accuracy_slack_secs {
+        timer.accuracy_slack_secs = a;
+    }
     Ok(())
 }
 
@@ -736,11 +762,13 @@ fn create_timer_tx(tx: &Transaction<'_>, new: NewTimer) -> StoreResult<Timer> {
         "INSERT INTO timers (
             id, name, enabled, occurrence, tz, next_fire_utc, last_fired,
             misfire_policy, overlap_policy, retry_policy,
-            valid_from, valid_until, max_runs, tags, action, revision
+            valid_from, valid_until, max_runs, tags, action, revision,
+            jitter_secs, accuracy_slack_secs
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7,
             ?8, ?9, ?10,
-            ?11, ?12, ?13, ?14, ?15, ?16
+            ?11, ?12, ?13, ?14, ?15, ?16,
+            ?17, ?18
          )",
         params![
             id.to_string(),
@@ -759,6 +787,8 @@ fn create_timer_tx(tx: &Transaction<'_>, new: NewTimer) -> StoreResult<Timer> {
             tags_json,
             action_json,
             revision,
+            i64::from(new.jitter_secs),
+            new.accuracy_slack_secs.map(i64::from),
         ],
     )?;
     get_timer_tx(tx, id)?.ok_or_else(|| StoreError::Internal("timer missing after insert".into()))
@@ -794,8 +824,9 @@ fn update_timer_tx(tx: &Transaction<'_>, update: TimerUpdate) -> StoreResult<Tim
             next_fire_utc = ?5, last_fired = ?6,
             misfire_policy = ?7, overlap_policy = ?8, retry_policy = ?9,
             valid_from = ?10, valid_until = ?11, max_runs = ?12,
-            tags = ?13, action = ?14, revision = ?15
-         WHERE id = ?16 AND revision = ?17",
+            tags = ?13, action = ?14, revision = ?15,
+            jitter_secs = ?16, accuracy_slack_secs = ?17
+         WHERE id = ?18 AND revision = ?19",
         params![
             next.name,
             i64::from(next.enabled),
@@ -812,6 +843,8 @@ fn update_timer_tx(tx: &Transaction<'_>, update: TimerUpdate) -> StoreResult<Tim
             serde_json::to_string(&next.tags)?,
             serde_json::to_string(&next.action)?,
             next.revision,
+            i64::from(next.jitter_secs),
+            next.accuracy_slack_secs.map(i64::from),
             next.id.to_string(),
             update.expected_revision,
         ],
@@ -831,7 +864,8 @@ fn get_timer_tx(tx: &Transaction<'_>, id: TimerId) -> StoreResult<Option<Timer>>
     let mut stmt = tx.prepare(
         "SELECT id, name, enabled, occurrence, tz, next_fire_utc, last_fired,
                 misfire_policy, overlap_policy, retry_policy,
-                valid_from, valid_until, max_runs, tags, action, revision
+                valid_from, valid_until, max_runs, tags, action, revision,
+                COALESCE(jitter_secs, 0), accuracy_slack_secs
          FROM timers WHERE id = ?1",
     )?;
     let row = stmt
@@ -929,6 +963,8 @@ fn row_to_timer(r: &rusqlite::Row<'_>) -> rusqlite::Result<Timer> {
     let tags_json: String = r.get(13)?;
     let action_json: String = r.get(14)?;
     let revision: i64 = r.get(15)?;
+    let jitter_secs_i: i64 = r.get(16)?;
+    let accuracy_slack_i: Option<i64> = r.get(17)?;
 
     let occurrence: Occurrence = serde_json::from_str(&occ_json).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e))
@@ -948,6 +984,15 @@ fn row_to_timer(r: &rusqlite::Row<'_>) -> rusqlite::Result<Timer> {
     let action: Action = serde_json::from_str(&action_json).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(14, rusqlite::types::Type::Text, Box::new(e))
     })?;
+
+    let jitter_secs = u32::try_from(jitter_secs_i.max(0)).unwrap_or(u32::MAX);
+    let accuracy_slack_secs = accuracy_slack_i.and_then(|n| {
+        if n < 0 {
+            None
+        } else {
+            u32::try_from(n).ok()
+        }
+    });
 
     Ok(Timer {
         id,
@@ -1002,6 +1047,8 @@ fn row_to_timer(r: &rusqlite::Row<'_>) -> rusqlite::Result<Timer> {
         tags,
         action,
         revision,
+        jitter_secs,
+        accuracy_slack_secs,
     })
 }
 

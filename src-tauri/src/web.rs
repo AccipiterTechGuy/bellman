@@ -41,7 +41,7 @@ use bellman_core::occurrence::{OccurrenceKind, Weekdays};
 use bellman_core::store::{
     Action, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy, Timer, TimerPatch,
 };
-use chrono::{DateTime, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDateTime, NaiveTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -141,12 +141,8 @@ impl WebTimerPatchDto {
             name: self.name,
             enabled: self.enabled,
             occurrence,
-            misfire: None,
-            overlap: None,
-            retry: None,
-            tags: None,
             action,
-            last_fired: None,
+            ..Default::default()
         })
     }
 }
@@ -256,7 +252,7 @@ impl WebOccurrenceDto {
                 ))
             }
         };
-        let mut occ = bellman_core::Occurrence::new(kind, tz_name)?;
+        let occ = bellman_core::Occurrence::new(kind, tz_name)?;
         // GUI never sends policies; defaults are already applied.
         Ok(occ)
     }
@@ -531,7 +527,6 @@ impl TimerSummaryExt for Timer {
 mod tests {
     use super::*;
     use bellman_core::occurrence::OccurrenceKind;
-    use chrono::Datelike;
 
     #[test]
     fn weekly_dto_matches_pinned_json_fixture() {
@@ -569,6 +564,8 @@ mod tests {
                 body: "world".into(),
             },
             revision: 1,
+            jitter_secs: 0,
+            accuracy_slack_secs: None,
         };
         let dto: WebTimerDto = timer.into();
         let json = serde_json::to_string_pretty(&dto).unwrap();

@@ -37,6 +37,8 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
     }
 
     pub(super) fn drain_due(&mut self, now: DateTime<Utc>) -> SchedulerResult<Vec<DeliveredFire>> {
+        use crate::scheduler::jitter::apply_execution_jitter;
+
         let mut out = Vec::new();
         // Timers fully resolved this drain (next_fire > now or exhausted). Stale
         // duplicate heap entries for the same id are dropped on sight.
@@ -49,6 +51,9 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             let Some(Reverse(entry)) = self.heap.pop() else {
                 break;
             };
+            // Heap `fire_at` is the *execution* instant (clean next_fire + jitter).
+            // Accuracy slack is a late-coalesce tolerance (see FireKind::Late), not
+            // an early-fire window — never deliver before the jittered exec time.
             if entry.fire_at > now {
                 self.heap.push(Reverse(entry));
                 break;
@@ -69,21 +74,31 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 resolved.insert(entry.timer_id);
                 continue;
             };
-            if nf > now {
-                // Stale heap slot — requeue the authoritative future next once.
-                self.push_if_in_horizon(nf, timer.id);
+            let exec_at = apply_execution_jitter(timer.id, nf, timer.jitter_secs);
+            if exec_at > now {
+                // Positive jitter still in the future — requeue at exec time.
+                self.heap.push(Reverse(super::types::HeapEntry {
+                    fire_at: exec_at,
+                    timer_id: timer.id,
+                }));
                 resolved.insert(timer.id);
                 continue;
             }
-            // Authoritative next is due (ignore heap fire_at; it may be stale).
+            // For negative jitter, exec_at can be before nf. handle_due still
+            // requires nf <= now to deliver; if only jitter is past, wait for nf.
+            if nf > now {
+                self.heap.push(Reverse(super::types::HeapEntry {
+                    fire_at: nf,
+                    timer_id: timer.id,
+                }));
+                resolved.insert(timer.id);
+                continue;
+            }
             let delivered = self.handle_due_timer(timer.id, nf, now)?;
             out.extend(delivered);
             // handle_due must leave the timer not-due (or exhausted). Mark
             // resolved so any further heap dups for this id are discarded.
             resolved.insert(timer.id);
-            // If policy only advanced one step and another fire is still due
-            // within grace, process it now before leaving the id resolved.
-            // (Catch-up / multi-period within grace is handled inside handle_due.)
         }
         Ok(out)
     }
@@ -191,6 +206,8 @@ mod tests {
             tags: Vec::new(),
             action: Action::default(),
             revision: 1,
+            jitter_secs: 0,
+            accuracy_slack_secs: None,
         }
     }
 

@@ -124,7 +124,8 @@ impl EventLog {
         Ok(())
     }
 
-    /// Builder-style append (moves the record).
+    /// Builder-style append (moves the record so call sites can chain builders).
+    #[allow(clippy::needless_pass_by_value)]
     pub fn emit(&mut self, record: EventRecord) -> EventLogResult<()> {
         self.append(&record)
     }

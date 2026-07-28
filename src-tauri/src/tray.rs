@@ -82,7 +82,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                 let next = !state.pause_all();
                 state.set_pause_all(next);
                 let tray_item = state.tray_pause_check.lock().clone();
-                drop(state);
                 if let Some(item) = tray_item {
                     let _ = item.set_checked(next);
                 }
@@ -110,7 +109,6 @@ pub fn set_tray_pause_check(app: &AppHandle, paused: bool) {
         return;
     };
     let item = state.tray_pause_check.lock().clone();
-    drop(state);
     if let Some(item) = item {
         let _ = item.set_checked(paused);
     }

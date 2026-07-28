@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// camelCase at the IPC boundary so `choice.startMinimized` (JS) lines up
 /// with `start_minimized` (Rust) without a hand-written rename.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WizardChoice {
     /// "Launch Bellman automatically when I log in?" (XDG autostart / macOS
@@ -19,16 +19,6 @@ pub struct WizardChoice {
     /// "Try to wake this machine from sleep so timers fire on time?"
     /// Stored for C11; C7 itself does not implement wake yet.
     pub wake_enabled: bool,
-}
-
-impl Default for WizardChoice {
-    fn default() -> Self {
-        Self {
-            autostart: false,
-            start_minimized: false,
-            wake_enabled: false,
-        }
-    }
 }
 
 /// What the webview asks for at startup.

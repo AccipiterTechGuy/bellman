@@ -20,15 +20,13 @@ use bellman_core::{
     Timer,
 };
 use chrono::{NaiveTime, TimeZone, Utc};
-use chrono_tz::Tz;
-use std::str::FromStr;
 
 use crate::commands::{
     AppInfo, CreateTimerInput, LogTailDto, PreviewFireDto, PreviewResponseDto, TimerDto,
 };
 use crate::first_run::{WizardChoice, WizardStatus};
 use crate::state::RunNowResponse;
-use crate::web::{WebActionDto, WebTimerDto, WebTimerPatchDto};
+use crate::web::{WebActionDto, WebTimerPatchDto};
 
 fn sample_timer() -> Timer {
     let anchor = Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap();
@@ -57,6 +55,8 @@ fn sample_timer() -> Timer {
         tags: Vec::new(),
         action: Action::None,
         revision: 1,
+        jitter_secs: 0,
+        accuracy_slack_secs: None,
     }
 }
 
@@ -133,6 +133,8 @@ fn timer_dto_round_trips_occurrence_and_action() {
             body: "world".into(),
         },
         revision: 7,
+        jitter_secs: 0,
+        accuracy_slack_secs: None,
     };
     let dto = TimerDto::from(timer);
     assert_eq!(dto.name, "weekly-mwf");
@@ -417,14 +419,14 @@ fn visit_rs_files(dir: &std::path::Path, visit: &mut dyn FnMut(&std::path::Path)
         if p.is_dir() {
             // Only recurse into the regular source tree; skip any
             // test-only subdirectory if it ever appears.
-            if p.file_name().map_or(false, |n| n == "tests") {
+            if p.file_name().is_some_and(|n| n == "tests") {
                 continue;
             }
             visit_rs_files(&p, visit);
-        } else if p.extension().map_or(false, |e| e == "rs")
+        } else if p.extension().is_some_and(|e| e == "rs")
                         // Skip the test file itself (it contains the bad-pattern
                         // strings as r#"…"# literals, which would self-match).
-                        && p.file_name().map_or(true, |n| n != "dto_serde_tests.rs")
+                        && p.file_name().is_none_or(|n| n != "dto_serde_tests.rs")
         {
             visit(&p);
         }

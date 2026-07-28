@@ -179,9 +179,7 @@ pub fn resolve_logs_dir(db_path: &Path) -> PathBuf {
         }
     }
     db_path
-        .parent()
-        .map(|p| p.join("logs"))
-        .unwrap_or_else(|| PathBuf::from("logs"))
+        .parent().map_or_else(|| PathBuf::from("logs"), |p| p.join("logs"))
 }
 
 /// Optional slots root for fire-trigger JSON writes.

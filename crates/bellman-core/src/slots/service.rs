@@ -79,8 +79,7 @@ impl SlotService {
         if request
             .request_id
             .as_ref()
-            .map(|s| s.is_empty())
-            .unwrap_or(true)
+            .is_none_or(std::string::String::is_empty)
         {
             request.request_id = Some(Uuid::new_v4().to_string());
         }
