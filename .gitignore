@@ -9,6 +9,10 @@ ui/node_modules/
 ui/dist/
 ui/.svelte-kit/
 
+# Python capture helpers
+**/__pycache__/
+*.py[cod]
+
 # ---------------------------------------------------------------- local / private
 # Bellman's RUNTIME data never lives here — timers.db, logs/, slots/ and config.json
 # live in the per-OS data dir (~/.bellman on Linux). Nothing you schedule, and no

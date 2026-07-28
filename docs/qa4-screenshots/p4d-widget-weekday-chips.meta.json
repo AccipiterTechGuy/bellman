@@ -1,0 +1,21 @@
+{
+  "file": "p4d-widget-weekday-chips.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 72300,
+  "mean_luma": 31.04,
+  "stdev": 13.02,
+  "unique_colors_cap200k": 5181,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "widgets": [
+    "weekday-chips"
+  ]
+}

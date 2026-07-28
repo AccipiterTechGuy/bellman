@@ -502,10 +502,19 @@ main {
   display: grid;
   grid-template-columns: 1fr 1.6fr;
   gap: 8px;
-  align-items: center;
+  align-items: start;
 }
 
-.form-row label { font-size: 12px; color: var(--fg-dim); }
+.form-row label,
+.form-row .row-label {
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.35;
+  padding-top: 6px;
+  white-space: normal;
+  overflow: visible;
+  word-break: break-word;
+}
 
 .form-row input,
 .form-row select {
@@ -515,6 +524,8 @@ main {
   border-radius: 4px;
   padding: 5px 8px;
   font: inherit;
+  min-width: 0;
+  width: 100%;
 }
 
 .form-row input:focus,
@@ -523,9 +534,156 @@ main {
   border-color: var(--accent);
 }
 
+.form-row.has-error input,
+.form-row.has-error select {
+  border-color: var(--err);
+}
+
 .form-row.checkbox-row {
   grid-template-columns: 1fr;
   justify-items: start;
+}
+
+/* Stacked: label above controls (chips, multi-picker rows). */
+.form-row.stacked {
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
+.form-row.stacked > label,
+.form-row.stacked > .row-label {
+  padding-top: 0;
+}
+
+.field-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+}
+
+.field-hint {
+  font-size: 11px;
+  color: var(--fg-dim);
+  line-height: 1.35;
+}
+
+.field-echo {
+  font-size: 11px;
+  color: var(--accent);
+  line-height: 1.35;
+  font-style: normal;
+}
+
+.field-echo.muted { color: var(--fg-dim); }
+
+.field-error {
+  font-size: 11px;
+  color: var(--err);
+  border-left: 3px solid var(--err);
+  background: rgba(248, 81, 73, 0.08);
+  padding: 3px 8px;
+  border-radius: 0 4px 4px 0;
+  line-height: 1.35;
+}
+
+.picker-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.picker-row .grow { flex: 1 1 8rem; min-width: 7rem; }
+.picker-row .time-text { flex: 0 1 5.5rem; min-width: 4.5rem; width: auto; }
+
+.native-picker {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 7.5rem;
+  max-width: 11rem;
+  padding: 4px 6px;
+}
+
+.weekday-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.weekday-chip {
+  appearance: none;
+  background: var(--bg-row);
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  min-width: 2.75rem;
+  text-align: center;
+}
+
+.weekday-chip:hover { border-color: var(--accent); color: var(--fg); }
+
+.weekday-chip.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tz-picker {
+  display: flex;
+  flex-direction: column;
+  max-height: 7.5rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+/* flex:0 0 auto is required: a column flex container with max-height will
+ * otherwise shrink every item to padding-only once overflow:hidden zeroes
+ * the automatic minimum size (WebKitGTK measured 9px rows without this). */
+.tz-option {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+  text-align: left;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11px;
+  font-family: var(--mono);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  min-height: 1.5rem;
+  line-height: 1.25;
+  box-sizing: border-box;
+}
+
+.tz-option:last-child { border-bottom: 0; }
+.tz-option:hover { background: var(--row-hover); }
+.tz-option.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.action-none-hint { margin: 0 0 4px 1.4rem; }
+
+.save-reason {
+  font-size: 11px;
+  color: var(--err);
+  max-width: 14rem;
+  line-height: 1.3;
+  text-align: right;
 }
 
 .action-set {
@@ -576,6 +734,7 @@ main {
 
 .preview-pane .muted { color: var(--fg-dim); font-size: 11px; }
 
+/* DST gap/fold advisory — keep amber treatment; distinct from errors. */
 .dst-warning {
   border-left: 3px solid var(--warn);
   background: rgba(210, 153, 34, 0.08);
@@ -587,6 +746,45 @@ main {
   flex-direction: column;
   gap: 4px;
 }
+
+/* Preview / server failures — shape + label differ from DST advisory
+ * (not colour-only: left border + "Error" badge vs "Advisory" badge). */
+.preview-error {
+  border-left: 3px solid var(--err);
+  background: rgba(248, 81, 73, 0.08);
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--err);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.banner-kind {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 3px;
+  width: fit-content;
+}
+
+.preview-error .banner-kind {
+  background: rgba(248, 81, 73, 0.2);
+  color: var(--err);
+  border: 1px solid var(--err);
+}
+
+.dst-warning .banner-kind {
+  background: rgba(210, 153, 34, 0.2);
+  color: var(--warn);
+  border: 1px solid var(--warn);
+}
+
+.banner-body { line-height: 1.35; }
 
 .preview-table {
   width: 100%;
@@ -655,13 +853,18 @@ main {
  * width: 460px overrides `.timer-dialog` width: 760px (same specificity,
  * source order) and collapses the "Next 5 fires" pane to a ~20px sliver.
  * Flex + minmax(0, …) keeps the Enabled row and preview table inside the
- * 960×640 window without clipping or a horizontal scrollbar (P4b F4). */
+ * 960×640 window without clipping or a horizontal scrollbar (P4b F4).
+ *
+ * C8d revisited max-height: chips + tz list + date/time pickers need more
+ * vertical room than C8b's 600px cap; body still scrolls, nothing clips. */
 .wizard.timer-dialog {
   /* 860px leaves room for full ISO UTC + offset/tz on one line at 960 viewport */
   width: 860px;
   max-width: min(96vw, 940px);
-  max-height: min(92vh, 600px);
+  max-height: min(94vh, 720px);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .wizard.timer-dialog .dialog-body {
@@ -675,14 +878,41 @@ main {
   max-height: none;
 }
 
-.wizard.timer-dialog .form-row {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+.wizard.timer-dialog .form-row:not(.stacked):not(.checkbox-row) {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.7fr);
 }
 
 .wizard.timer-dialog .form-row input,
 .wizard.timer-dialog .form-row select {
   min-width: 0;
   width: 100%;
+}
+
+.wizard.timer-dialog .picker-row .time-text,
+.wizard.timer-dialog .native-picker {
+  width: auto;
+}
+
+/* Labels and chips must never ellipsis — C8d layout proof. */
+.wizard.timer-dialog .form-row label,
+.wizard.timer-dialog .form-row .row-label,
+.wizard.timer-dialog .weekday-chip,
+.wizard.timer-dialog .field-echo,
+.wizard.timer-dialog .field-hint {
+  text-overflow: unset;
+  overflow: visible;
+  white-space: normal;
+}
+
+.wizard.timer-dialog .weekday-chip {
+  white-space: nowrap;
+}
+
+.wizard.timer-dialog .tz-option {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 0 auto;
+  min-height: 1.5rem;
 }
 
 /* Preview values (local + full UTC + offset/tz) must stay readable for

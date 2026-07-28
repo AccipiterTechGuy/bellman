@@ -1,25 +1,5 @@
 [
   {
-    "id": "a5359874-e8b2-4f47-8d5b-cf7f9661f626",
-    "name": "qa-p4d-keyboard",
-    "enabled": 1,
-    "occurrence": "{\"kind\":{\"occ\":\"daily\",\"at\":\"07:30:00\"},\"tz\":\"UTC\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
-    "tz": "UTC",
-    "next_fire_utc": "2026-07-29T07:30:00.000000000Z",
-    "last_fired": null,
-    "misfire_policy": "{\"coalesce\":{\"grace_secs\":3600}}",
-    "overlap_policy": "\"skip\"",
-    "retry_policy": "{\"max_retries\":1,\"delay_secs\":30}",
-    "valid_from": null,
-    "valid_until": null,
-    "max_runs": null,
-    "tags": "[]",
-    "action": "{\"type\":\"none\"}",
-    "revision": 1,
-    "jitter_secs": 0,
-    "accuracy_slack_secs": null
-  },
-  {
     "id": "ac3fe5db-b6e6-4bdf-9893-8157cbb4978e",
     "name": "qa-p4d-once-eu",
     "enabled": 1,

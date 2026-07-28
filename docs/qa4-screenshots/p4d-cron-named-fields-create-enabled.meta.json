@@ -1,0 +1,21 @@
+{
+  "file": "p4d-cron-named-fields-create-enabled.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 76962,
+  "mean_luma": 31.4,
+  "stdev": 12.61,
+  "unique_colors_cap200k": 4988,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "phase": "named-cron-ok",
+  "expr": "0 9 * * MON-FRI",
+  "create_sensitive": true
+}

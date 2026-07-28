@@ -1,0 +1,20 @@
+{
+  "file": "p4d-preview-error-invalid-cron.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 58126,
+  "mean_luma": 29.74,
+  "stdev": 11.61,
+  "unique_colors_cap200k": 5298,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "expr": "not a cron",
+  "create_sensitive": false
+}

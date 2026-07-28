@@ -1,0 +1,19 @@
+{
+  "file": "p4d-all-after-delete.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 62820,
+  "mean_luma": 31.81,
+  "stdev": 13.39,
+  "unique_colors_cap200k": 5199,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "phase": "after-7-delete"
+}

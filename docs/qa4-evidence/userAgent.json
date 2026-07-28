@@ -14,13 +14,13 @@
   ],
   "webkit_pids": {
     "WebKitWebProcess": [
-      "781487  781459 187692 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 54"
+      "1135009 1134983 204924 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 51"
     ],
     "WebKitNetworkProcess": [
-      "781478  781459 49220 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 25"
+      "1135000 1134983 49388 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 22"
     ],
     "bellman": [
-      "781459  781455 189920 /home/sami/bellman/.train-worktrees/2026-07-28_0002/target/release/bellman"
+      "1134983       1 187540 /home/sami/bellman/.train-worktrees/2026-07-28_0008/target/release/bellman-app"
     ]
   },
   "note": "WebKit2.Settings.get_user_agent() is the default UA string the running libwebkit2gtk-4.1 WebKitWebProcess inherits when the app does not call set_user_agent. App does not override (grep: no set_user_agent in src-tauri)."
