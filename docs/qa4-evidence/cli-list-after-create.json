@@ -8,7 +8,7 @@
         "type": "none"
       },
       "enabled": true,
-      "id": "78331bea-6bba-41bc-9894-f05c8000e2a8",
+      "id": "eaab3b6d-37e4-4bbe-b951-7a0f81a21256",
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -50,7 +50,7 @@
         "type": "none"
       },
       "enabled": true,
-      "id": "66513729-80a0-46d7-ae01-e34bbc00b923",
+      "id": "14456d28-6b82-4073-acc5-fcf453253810",
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -92,7 +92,7 @@
         "type": "none"
       },
       "enabled": true,
-      "id": "c4d0fdee-a2c0-4f3b-be83-7b20e7a0af9f",
+      "id": "e6b0d812-ef58-4e2a-b101-8593c2c19870",
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -134,19 +134,19 @@
         "type": "none"
       },
       "enabled": true,
-      "id": "caff918d-0f55-4d14-963c-05da835ba460",
+      "id": "d3956c37-15d4-4c82-8e83-67c33ef3058c",
       "last_fired": null,
       "max_runs": null,
       "misfire": "skip",
       "name": "qa-interval",
-      "next_fire_utc": "2026-07-28T08:34:52.201188405Z",
+      "next_fire_utc": "2026-07-28T09:50:22.734251388Z",
       "occurrence": {
         "dst_fold": "first_occurrence",
         "dst_gap": "first_valid_after_gap",
         "exclusions": [],
         "invalid_monthday": "clamp",
         "kind": {
-          "anchor": "2026-07-28T08:32:52.201188405Z",
+          "anchor": "2026-07-28T09:48:22.734251388Z",
           "every_secs": 120,
           "occ": "interval"
         },
@@ -173,7 +173,7 @@
         "type": "none"
       },
       "enabled": true,
-      "id": "853466df-2bd9-417f-8e31-a330ba998323",
+      "id": "5d0443e6-1f37-4787-aa97-c4b1487ab317",
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -216,7 +216,7 @@
         "type": "none"
       },
       "enabled": true,
-      "id": "1e6e6601-d1ab-4b75-8003-f8debd178b97",
+      "id": "a93b762c-cdbf-471f-af05-120546b713fa",
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -258,7 +258,7 @@
         "type": "none"
       },
       "enabled": true,
-      "id": "215a2b3c-1605-4977-9a74-97e4c0fb1ebe",
+      "id": "dc44d162-9792-48e4-82ed-1ca710562cf4",
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -301,7 +301,7 @@
         "type": "none"
       },
       "enabled": true,
-      "id": "42c10b8e-d1f1-476e-ae79-0185a3c3b171",
+      "id": "04f59f70-ed03-486c-a44b-13cb5d813f3e",
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -310,7 +310,7 @@
         }
       },
       "name": "qa-yearly",
-      "next_fire_utc": "2026-07-28T09:00:00Z",
+      "next_fire_utc": "2027-07-28T09:00:00Z",
       "occurrence": {
         "dst_fold": "first_occurrence",
         "dst_gap": "first_valid_after_gap",

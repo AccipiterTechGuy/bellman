@@ -1,12 +1,12 @@
 [
   {
-    "id": "78331bea-6bba-41bc-9894-f05c8000e2a8",
+    "id": "eaab3b6d-37e4-4bbe-b951-7a0f81a21256",
     "name": "qa-cron",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"cron\",\"expr\":\"30 9 * * 1-5\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
     "tz": "Europe/Helsinki",
     "next_fire_utc": "2026-07-29T06:30:00.000000000Z",
-    "last_fired": "2026-07-28T08:33:33.502037869Z",
+    "last_fired": "2026-07-28T09:49:03.844162491Z",
     "misfire_policy": "{\"coalesce\":{\"grace_secs\":3600}}",
     "overlap_policy": "\"skip\"",
     "retry_policy": "{\"max_retries\":1,\"delay_secs\":30}",
@@ -18,13 +18,13 @@
     "revision": 3
   },
   {
-    "id": "66513729-80a0-46d7-ae01-e34bbc00b923",
+    "id": "14456d28-6b82-4073-acc5-fcf453253810",
     "name": "qa-daily",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"daily\",\"at\":\"09:15:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
     "tz": "Europe/Helsinki",
     "next_fire_utc": "2026-07-29T06:15:00.000000000Z",
-    "last_fired": "2026-07-28T08:33:35.551222315Z",
+    "last_fired": "2026-07-28T09:49:05.887014423Z",
     "misfire_policy": "{\"coalesce\":{\"grace_secs\":3600}}",
     "overlap_policy": "\"skip\"",
     "retry_policy": "{\"max_retries\":1,\"delay_secs\":30}",
@@ -36,7 +36,7 @@
     "revision": 3
   },
   {
-    "id": "c4d0fdee-a2c0-4f3b-be83-7b20e7a0af9f",
+    "id": "e6b0d812-ef58-4e2a-b101-8593c2c19870",
     "name": "qa-dst-gap",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"once\",\"at\":\"2027-03-28T03:30:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -54,12 +54,12 @@
     "revision": 1
   },
   {
-    "id": "caff918d-0f55-4d14-963c-05da835ba460",
+    "id": "d3956c37-15d4-4c82-8e83-67c33ef3058c",
     "name": "qa-interval",
     "enabled": 1,
-    "occurrence": "{\"kind\":{\"occ\":\"interval\",\"every_secs\":180,\"anchor\":\"2026-07-28T08:32:52.201188405Z\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
+    "occurrence": "{\"kind\":{\"occ\":\"interval\",\"every_secs\":180,\"anchor\":\"2026-07-28T09:48:22.734251388Z\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
     "tz": "Europe/Helsinki",
-    "next_fire_utc": "2026-07-28T08:35:52.201188405Z",
+    "next_fire_utc": "2026-07-28T09:51:22.734251388Z",
     "last_fired": null,
     "misfire_policy": "\"skip\"",
     "overlap_policy": "\"skip\"",
@@ -72,7 +72,7 @@
     "revision": 2
   },
   {
-    "id": "853466df-2bd9-417f-8e31-a330ba998323",
+    "id": "5d0443e6-1f37-4787-aa97-c4b1487ab317",
     "name": "qa-monthly",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"monthly\",\"day\":20,\"at\":\"10:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -90,7 +90,7 @@
     "revision": 2
   },
   {
-    "id": "1e6e6601-d1ab-4b75-8003-f8debd178b97",
+    "id": "a93b762c-cdbf-471f-af05-120546b713fa",
     "name": "qa-once-edited",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"once\",\"at\":\"2027-03-28T03:30:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -108,7 +108,7 @@
     "revision": 2
   },
   {
-    "id": "215a2b3c-1605-4977-9a74-97e4c0fb1ebe",
+    "id": "dc44d162-9792-48e4-82ed-1ca710562cf4",
     "name": "qa-weekly",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"weekly\",\"days\":10,\"at\":\"08:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -126,7 +126,7 @@
     "revision": 2
   },
   {
-    "id": "42c10b8e-d1f1-476e-ae79-0185a3c3b171",
+    "id": "04f59f70-ed03-486c-a44b-13cb5d813f3e",
     "name": "qa-yearly",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"yearly\",\"month\":12,\"day\":28,\"at\":\"12:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",

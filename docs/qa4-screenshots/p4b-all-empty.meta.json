@@ -8,7 +8,7 @@
   "mean_luma": 25.85,
   "stdev": 5.65,
   "unique_colors_cap200k": 2018,
-  "window_id": "0x4800003",
+  "window_id": "0x5a00003",
   "wmctrl_geom": [
     50,
     112,
@@ -18,13 +18,13 @@
   "phase": "baseline",
   "webkit": {
     "WebKitWebProcess": [
-      "722761  722732 187560 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 48"
+      "781487  781459 187148 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 54"
     ],
     "WebKitNetworkProcess": [
-      "722752  722732 49272 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 21"
+      "781478  781459 49220 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 25"
     ],
     "bellman": [
-      "722732  722374 189760 /home/sami/bellman/.train-worktrees/2026-07-27_0012/target/release/bellman"
+      "781459  781455 189920 /home/sami/bellman/.train-worktrees/2026-07-28_0002/target/release/bellman"
     ]
   }
 }
