@@ -71,27 +71,52 @@ python3 -c 'import json;print(json.load(open("docs/qa4-evidence/perf-idle/perf_i
 First fire ~`2026-07-28T13:00:30Z`, last fire ~`2026-07-28T13:10:29Z` — a full
 10-minute cadence with no gaps large enough to drop the 60/min average.
 
-## Resident shell (GUI closed) — deferred
+## Resident shell (GUI closed) — packaging measurement (P6)
 
-**Not measured on this run.** Reasons (honest):
-
-1. This worktree never produced a Tauri release binary
-   (`target/release/` has the engine example + `libbellman_core.rlib` only;
-   workspace package `bellman` for the CLI can also land as `target/release/bellman`,
-   which is **not** the tray shell).
-2. Building/running the full Tauri shell needs the WebKitGTK/display stack and
-   is owned by packaging QA (C10 / C11), not the P5 engine harness.
-
-When C10 produces a signed/tray build, re-measure with:
+P6 ships the tray binary as **`bellman-app`** (CLI sidecar is `bellman`).
+BUILD_PLAN gate: *GUI closed ⇒ webview destroyed, measured RSS of the resident
+process recorded.* Method below matches that gate.
 
 ```bash
-# After `cargo tauri build` (or equivalent) yields the tray binary:
-# close the main window, leave tray, then:
-grep VmRSS /proc/$(pgrep -f 'bellman$')/status
+# After a release build:
+cargo tauri build --bundles deb --ci --no-sign   # or reuse target/release/bellman-app
+rm -rf target/perf-tray-closed && mkdir -p target/perf-tray-closed/{data,config,home}
+env XDG_DATA_HOME=$PWD/target/perf-tray-closed/data \
+    XDG_CONFIG_HOME=$PWD/target/perf-tray-closed/config \
+    HOME=$PWD/target/perf-tray-closed/home \
+    ./target/release/bellman-app &
+pid=$!
+sleep 8
+grep VmRSS /proc/$pid/status          # window-open baseline
+wmctrl -c Bellman                     # destroy main window (title match)
+# confirm gone:  wmctrl -l | grep -i bellman  → empty
+for i in 1 2 3 4 5; do sleep 5; awk '/VmRSS/{print}' /proc/$pid/status; done
+kill $pid
 ```
 
-Until then the **engine RSS row above is the P5 gate** (idle engine with a
-live 1 s timer and JSONL evidence).
+| Metric | Value | Notes |
+|---|---|---|
+| Engine RSS (P5 gate, above) | **7092 KiB median** | engine-only harness |
+| Tray shell RSS (window open) | **187024 KiB (~183 MiB)** | `target/release/bellman-app`, DISPLAY=:0, isolated HOME/XDG |
+| Tray shell RSS (**GUI closed**, BUILD_PLAN gate) | **184544–184600 KiB (~180 MiB)** | after `wmctrl -c Bellman`; five samples over ~25 s |
+
+### P6 headed sample (2026-07-28) — GUI closed
+
+```
+binary = target/release/bellman-app
+env    = isolated HOME + XDG_* under target/perf-tray-closed/, DISPLAY=:0
+close  = wmctrl -c Bellman  (window no longer listed by wmctrl -l)
+
+window open:            VmRSS 187024 kB
+after window destroyed: 184596 / 184596 / 184596 / 184600 / 184544 kB
+delta open → closed:    ~2.4 MiB only
+```
+
+**Finding:** closing the main window (hide-on-close / destroy path) frees only
+about **2.4 MiB**. WebKitGTK stays resident in the process; the tray + engine
+idle footprint is essentially the full shell RSS, not the ~7 MiB engine-only
+number. The engine row above remains the core-scheduler gate; the GUI-closed
+row is the BUILD_PLAN **resident shell** gate for packaging.
 
 ## Notes
 

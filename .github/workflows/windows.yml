@@ -1,0 +1,85 @@
+# Bellman — Windows CI: NSIS + MSI packages with WebView2 evergreen bootstrapper.
+# Unsigned artifacts only. Code signing is intentionally not wired here.
+name: windows
+
+on:
+  push:
+    branches: [main, "train/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    name: package (windows NSIS + MSI)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: ui
+        run: npm ci
+
+      - name: Frontend production build
+        working-directory: ui
+        run: npm run build
+
+      - name: Stage CLI sidecar (required by tauri externalBin at compile time)
+        shell: bash
+        run: bash scripts/stage_cli_sidecar.sh
+
+      - name: Cargo test (workspace, no GUI)
+        run: cargo test --workspace --all-targets
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --locked --version "^2" --force
+
+      - name: Package NSIS + MSI (unsigned, WebView2 evergreen bootstrapper)
+        # webviewInstallMode.downloadBootstrapper is set in tauri.conf.json
+        # (evergreen bootstrapper — downloads at install time when needed).
+        run: cargo tauri build --bundles nsis,msi --ci --no-sign
+
+      - name: Assert package artifacts exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          nsis="$(find target/release/bundle/nsis -type f \( -name '*.exe' -o -name '*.nsis' \) 2>/dev/null | head -1 || true)"
+          msi="$(find target/release/bundle/msi -name '*.msi' 2>/dev/null | head -1 || true)"
+          # Also accept broader layout variants from tauri-bundler versions
+          if [[ -z "$nsis" ]]; then
+            nsis="$(find target/release/bundle -iname '*setup*.exe' -o -iname '*.nsis.zip' 2>/dev/null | head -1 || true)"
+          fi
+          if [[ -z "$msi" ]]; then
+            msi="$(find target/release/bundle -name '*.msi' 2>/dev/null | head -1 || true)"
+          fi
+          echo "nsis=$nsis"
+          echo "msi=$msi"
+          test -n "$nsis" -a -f "$nsis"
+          test -n "$msi" -a -f "$msi"
+
+      - name: Upload Windows packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: bellman-windows-packages
+          path: |
+            target/release/bundle/nsis/**
+            target/release/bundle/msi/**
+          if-no-files-found: error
