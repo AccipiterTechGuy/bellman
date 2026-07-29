@@ -1,4 +1,103 @@
-Macro recorder GUI + the security model that gates it — design research
+Macro recorder GUI + the security model that gates it
+
+# SETTLED DECISIONS (operator, 2026-07-29) — build to these
+
+The four-way research below has completed; both syntheses are in
+`Research_from_Crew/macro-recorder-gui-the-security-model-th_research_2026-07-29_195350/`.
+The decisions in this section are the operator's and are **not open for re-litigation** by
+an implementing crew. Everything after them is the original research brief, kept for
+context.
+
+## D-1. The gate sits on RUNNING, not on the page
+
+A human at the GUI records freely — recording only writes a file, nothing touches the
+machine. Replaying a macro, and letting a timer trigger one, is the dangerous act, and that
+is what the master password gates.
+
+## D-2. Capability tokens, not passwords
+
+Alongside the master password, Bellman issues **capability tokens**. They are called tokens
+deliberately: calling them passwords invites password-shaped implementation mistakes.
+
+- Setting the master password mints **one list of 10 tokens, displayed exactly once**
+  (the familiar 2FA backup-code pattern).
+- Expiry is configurable in Settings. Each token is **single-use**.
+- A token authorises **recording only. Never running.** This must be enforced by the type
+  system, not by a comment — a token that can start a replay is a hole straight through the
+  gate.
+- Minting more tokens, or regenerating the list, requires the master password.
+- Revocation: one action burns every outstanding token.
+
+## D-3. The skill documents the procedure; the human supplies the credential
+
+An agent is given a **skill** describing how macro recording works and in what order to do
+it. **The skill never contains a token.** The operator pastes a token into the conversation
+at the moment of use.
+
+This is the load-bearing property of the whole design: an agent that reads the skill file
+learns *how* and gains no *capability*. Do not "improve" this by having the tool fetch a
+token for itself — that would collapse documentation and credential back into one thing.
+
+Accepted consequence: a token pasted into a chat is in that transcript on disk forever.
+That is exactly why single-use matters. Treat every token as public the moment it is used.
+
+## D-4. Agent-authored macros are UNREVIEWED until a human blesses them
+
+Granting a token authorises a recording *session* — it is not approval of what the session
+produced. A macro recorded under a token is stamped **agent-authored, unreviewed**, and in
+that state:
+
+- it cannot be run, and
+- it cannot be attached to a timer,
+
+until the operator opens it and explicitly approves it. Recording and blessing are two
+separate human acts. Without this, a token grant silently becomes consent to whatever the
+agent chose to write, which is the exact risk the token system exists to remove.
+
+Each macro carries its provenance: who recorded it, under which token, when, and whether it
+has been reviewed.
+
+## D-5. Each token is stored in TWO forms
+
+They serve different jobs and one form cannot do both:
+
+| form | purpose | must work when |
+|---|---|---|
+| **hash** | verifying a presented token | the store is **locked** — an agent uses a token when nobody is present to unlock anything |
+| **encrypted copy** | re-displaying the list to the operator | after master-password unlock, in Settings |
+
+Hash-only would mean the list is shown once and gone forever. Encrypted-only would mean a
+token cannot be checked unless the master is already unlocked, which defeats the point.
+
+Stored beside each token, as non-secret metadata: scope, expiry, and a **used-flag that
+survives a restart** — otherwise a crash lets a spent token replay. Expiry must not trust
+the wall clock alone; reuse the scheduler's existing clock-jump detector.
+
+## D-6. No arbitrary typing primitive for agents in v1
+
+`bellman type "..."` is the most dangerous primitive in the feature — arbitrary command
+execution, one focused terminal away. In v1 it is **not exposed to agents**. Humans type;
+agents replay macros a human recorded and approved.
+
+This is capability minimisation, and it is the real control the operator was reaching for
+when the virtual-keyboard overlay was first proposed. The overlay was dropped (3-1 in
+research) because a drawn keyboard is no harder for an attacker to read than a real one —
+it adds friction to the honest path and none to the attack path. The gate is what provides
+the safety, not the picture.
+
+## D-7. Honest scope of what this protects
+
+This is **agent containment**, not anti-malware. An attacker who already has code execution
+as this user can act directly and none of the above stops them. What it does buy:
+
+- an agent cannot compose novel input, only trigger approved macros;
+- an agent cannot arm a schedule without a human review step;
+- every action is attributable to a token and a timestamp.
+
+Those are real and worth building. Do not describe them in the UI as more than they are.
+
+---
+
 
 # What we want to build
 
