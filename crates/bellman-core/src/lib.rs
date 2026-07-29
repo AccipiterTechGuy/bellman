@@ -7,6 +7,7 @@
 
 pub mod actions;
 pub mod app_config;
+pub mod calendar;
 pub mod events;
 pub mod occurrence;
 pub mod platform;
@@ -69,4 +70,10 @@ pub use visible::{
     find_task, load_snapshot, new_cron_task, outcome_to_last_result, platform_name, refuse_system_write,
     run_task, save_snapshot, scan, timer_logs, DiscoveredTask, LastResult, RunOutcome, ScanDiff,
     ScanResult, SourceFilter, SourceKind, TaskChange, TaskId, WritePlan,
+};
+pub use calendar::{
+    build_snapshot, local_date, month_bounds, parse_date, parse_tz, render_svg, resolve_day_phrase,
+    resolve_month, snapshot_month_from_store, svg_to_png, system_tz_name, tasks_from_store,
+    CalendarBuildOptions, CalendarCaps, CalendarDay, CalendarEntry, CalendarFormat,
+    CalendarSnapshot, CalendarStatus, ExpandableTask, WeekStart, MONTH_NAMES,
 };
