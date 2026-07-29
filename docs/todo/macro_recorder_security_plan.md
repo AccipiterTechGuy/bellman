@@ -194,6 +194,80 @@ inherent, not a defect — so run duration is a **usability** limit, not only a 
   synthetic events, and must not be triggered by them. Prove it with a test; the research
   notes `enigo`'s event-marking is documented only on Windows and macOS.
 
+## D-11. Safe caps live in Settings; a macro may ask for less, never more
+
+The limits are **policy**, not per-macro content. They sit in Settings behind the execution
+password: max runtime, max steps, max repeat count, minimum delay between actions. Defaults
+are deliberately tight — runtime in **seconds**.
+
+- A macro carries its own budget, which must be **≤ the Settings ceiling**. It may ask for
+  less. It can never ask for more.
+- Raising a ceiling is an authenticated act at the Settings page. Nothing else can raise it:
+  not a macro, not a slot, not the CLI, not an agent holding a token.
+- At run time the **lower of the two wins**.
+
+The property this buys: an agent-authored macro cannot grant itself more of the operator's
+machine. Combined with D-4 (unreviewed until blessed) and D-9 (count is reviewed content),
+there is no path by which anything but a human at Settings extends how long the machine can
+be taken away.
+
+Enforcement is two-sided, because an estimate is not a guarantee:
+
+- **Pre-flight**: refuse to start if the estimated duration exceeds the budget.
+- **Mid-run**: hard-abort the moment actual elapsed time exceeds it — a single step can hang
+  and no estimate catches that.
+
+On a cap abort: release every held modifier, stop the loop entirely, and log the run as
+**aborted-on-cap**, never as completed. A half-run macro that reads as successful in the
+audit log is worse than one that reads as failed.
+
+Cap changes are themselves audited — "the runtime ceiling was raised to 10 minutes" is
+exactly the line an operator wants to find when reconstructing what their machine did.
+
+## D-12. Two ways to author a macro: COMPOSE (default) and CAPTURE (where permitted)
+
+The research assumed authoring means capturing live desktop input. It does not have to, and
+the alternative is both safer and more portable.
+
+**Compose — the default, available everywhere.**
+Screenshot the desktop → the operator clicks *on the screenshot, inside Bellman's own
+window* to pick a target → types text into a Bellman field. Clicking inside one's own window
+and typing into one's own text box requires **no permission on any operating system**.
+
+What this deletes outright:
+
+- The global input capture requirement — and with it the `input`-group / evdev grant that
+  reads all system input. Bellman is not keylogger-shaped in this mode.
+- **The entire secret-capture problem (A5).** If Bellman never watches global keystrokes it
+  can never accidentally record a password. Password-field detection, Windows UIA
+  `IsPassword`, macOS `AXSecureTextField` — all unnecessary here, and with them the
+  `IsPassword` factual conflict that blocked M6.
+- The dependency on a capture crate on the most security-sensitive path (risk 5), and with
+  it the unresolved question of whether `rdev` is maintained.
+- The Wayland blocker **for authoring**. Screenshots go through the portal with consent;
+  everything else happens inside Bellman's window.
+
+**Capture — faster, only where the OS allows it.**
+Record what the operator actually does. Far quicker for a real workflow, and it stays
+worth having on X11, Windows and macOS. It carries every cost above, so it is opt-in and
+never the default.
+
+**Compose is the universal floor. Capture is the convenience where the platform permits.**
+Same shape the grid research landed on, and for the same reason.
+
+**Unchanged: replay.** Running a macro still injects input into other windows, and Wayland
+restricts that however the macro was authored. Composing solves authoring, not execution.
+The sanctioned consent-prompt route used by remote-desktop tools is unverified — check it
+before claiming Wayland support of any kind for replay.
+
+### Effect on the card ladder
+
+- **M2 (capture)** shrinks: compose ships first and needs no per-OS capture layer at all.
+  Capture becomes the second, optional half.
+- **M6 (secrets / password-field awareness)** mostly disappears for the compose path. It is
+  only needed once capture ships, and only on the platforms capture supports.
+- Compose depends on the screenshot work in the grid card — build them in that order.
+
 ## D-7. Honest scope of what this protects
 
 This is **agent containment**, not anti-malware. An attacker who already has code execution
