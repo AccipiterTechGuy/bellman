@@ -98,9 +98,26 @@ fn display_unset_svg_and_png() {
     )
     .unwrap();
     let svg = render_svg(&snap);
-    let png = svg_to_png(&svg).expect("png without DISPLAY");
+    let pixmap = svg_to_pixmap(&svg).expect("pixmap without DISPLAY");
+    let png = pixmap.encode_png().expect("encode");
     assert!(png.starts_with(b"\x89PNG"));
     assert!(std::env::var_os("DISPLAY").is_none());
+    // Glyphs must actually rasterise — magic-only checks pass on blank images.
+    let dark = count_dark_pixels(&pixmap, 200);
+    assert!(
+        dark > 200,
+        "PNG has no text ink (dark pixels={dark}); fontdb empty?"
+    );
+    let title = count_pixels_near(&pixmap, (0x11, 0x18, 0x27), 48);
+    assert!(
+        title > 50,
+        "PNG missing title/day colour #111827 (near={title})"
+    );
+    let labels = count_pixels_near(&pixmap, (0x37, 0x41, 0x51), 48);
+    assert!(
+        labels > 20,
+        "PNG missing entry label colour #374151 (near={labels})"
+    );
 }
 
 #[test]
