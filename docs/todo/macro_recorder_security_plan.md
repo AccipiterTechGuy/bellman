@@ -85,6 +85,66 @@ research) because a drawn keyboard is no harder for an attacker to read than a r
 it adds friction to the honest path and none to the attack path. The gate is what provides
 the safety, not the picture.
 
+## D-8. Answers to the research's operator questions (2026-07-29)
+
+**Q2 — may the slot channel trigger macros? YES, but only ALREADY-RECORDED ones.**
+A slot may fire an existing, human-approved macro. It may **never create, record or modify**
+one. Two controls make this safe enough to hold:
+- a **per-macro `allow_slot_trigger` flag**, off by default — a macro is slot-triggerable
+  only because the operator said so for that macro;
+- the **target-window check** must pass before any input is sent. A local app can otherwise
+  fire an approved macro at a moment of its choosing, with the wrong window focused, and
+  approved-content-at-the-wrong-time is the residual risk of allowing this at all.
+
+**Q3 — may the CLI unlock? NO. It presents an execution token instead.**
+The master password never reaches the CLI, so it can never end up in a shell script.
+
+This creates a token scope the earlier decisions did not have, so it is bounded here:
+
+| scope | what it permits | limits |
+|---|---|---|
+| `record` | start/stop a recording session | single-use, expiry from Settings |
+| `run:<macro-id>` | run **one named macro**, once | single-use, short TTL, names exactly one macro |
+
+**There is no `run:*` token, ever.** A blanket run token is the master password with a
+shorter life. If a caller wants to run three macros it presents three tokens.
+
+**Q4 — no recovery code.** Accepted, with one correction the operator's reasoning invites:
+modifying the code can remove the *gate*, but it cannot decrypt *data* — no code change
+recovers a store whose key is gone.
+
+That is less alarming than it sounds here, because the DEK's home is the OS keyring: losing
+the master password does **not** lose the macros while the keyring is intact. It bites on
+migration or restore to a new machine, which is exactly where the backup wrap would have
+been used. So: no recovery code, and the setup wizard must say plainly that the password is
+needed to move macros to another machine.
+
+**Q5 — naming.** `execution password` (the master) and `execution token` (the temporary,
+scoped, single-use ones). Reserve the "execution" prefix so a second gated feature later
+does not force a rename.
+
+**Q7 — audit Bellman's existing interfaces first. YES.** Confirm the real JSONL schema,
+timer ownership, single-instance policy, app-data paths and the Tauri capability set before
+any file or module name is fixed in code.
+
+**Q8 — independent pre-ship security review. YES.** File format, atomic replace and
+rollback, the feature guards, the private-capability pattern, plus property/fuzz tests.
+Before M8 ships.
+
+### Scheduling (operator)
+
+**Finish the current Bellman work before any macro card is trained.** Macro and grid cards
+are to be **created only** — minted and specced, never sealed onto the rails — until the
+cards already on the board have shipped.
+
+### Still open
+
+- **Q1 — Wayland.** Superseded in part: see the compose/capture split (D-9, pending). Replay
+  on Wayland is still unresolved.
+- **Q6 — will macros ever have loops and conditionals?** Unanswered. If yes, the security
+  model needs revisiting from first principles: review, step caps and audit hashes all stop
+  meaning anything once a macro can branch.
+
 ## D-7. Honest scope of what this protects
 
 This is **agent containment**, not anti-malware. An attacker who already has code execution
