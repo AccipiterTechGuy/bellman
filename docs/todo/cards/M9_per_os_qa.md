@@ -9,7 +9,7 @@ semantics, macOS TCC, and Windows UIPI on:
 
 - Windows 11
 - macOS 13+
-- Ubuntu GNOME/Wayland
+- Ubuntu GNOME/Wayland — **authoring only**; replay is expected to report `Unavailable` (D-16)
 - KDE / X11
 
 Plus the destructive matrix in disposable VMs: screen lock, suspend/resume, reboot, changed

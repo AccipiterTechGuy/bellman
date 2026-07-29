@@ -394,6 +394,52 @@ can spam aborts and prevent macros from ever completing. That is a denial of ser
 the operator's own macros — real, and far less severe than an unstoppable one. Accept it, and
 **log who or what issued every abort** so a pattern of them is visible in the audit trail.
 
+## D-16. Wayland: authoring yes, replay Unavailable in v1 (answers Q1)
+
+**Decision:** on Wayland, Bellman may **author** macros (compose, per D-12 — no permission
+needed) and may **not run** them. `bellman macro run` reports `Unavailable` with the reason,
+never a silent no-op and never a partial run.
+
+Unaffected: X11, Windows, macOS — including the operator's own Mint/Cinnamon machine.
+
+### Why not just require the permission
+
+Two different Linux permissions were conflated in the original question, and they are not
+equally severe:
+
+| | what it grants | needed for |
+|---|---|---|
+| `input` group | **read** every input device — keylogger-grade | capture — **made unnecessary by D-12** |
+| `/dev/uinput` | **write** a virtual device: inject, cannot read | replay |
+
+So the replay permission is much milder than first stated — it can fake input but cannot spy
+on the operator. It is still a per-machine admin step, and it is not the blocker.
+
+**The blocker is keyboard layout.** `enigo`'s Wayland/libei backend is experimental and
+**US-keyboard-only**. On a Finnish layout — the operator's — it can type **silently wrong
+characters**. A macro that quietly types the wrong thing is worse than one that refuses, and
+it would pass any test written in English. That risk, not the permission, is why this waits.
+
+### How close is the second option
+
+Not a switch, not a rebuild. The protocol pieces already exist (libei, and the RemoteDesktop
+portal for consented injection). What is missing is **non-US layout support in the injection
+crate** — upstream work, not ours.
+
+So: keep the injection adapter behind the `pub(crate)` trait boundary M4 already requires,
+and adding Wayland later is a small card rather than a redesign. Re-check `enigo`'s layout
+support periodically; also verify the RemoteDesktop portal route then, which nobody has
+tested.
+
+One thing to remember when it is revisited: the research found **no panic-key path on
+wlroots/Wayland portals**. Per D-14, no stop key means execution stays `Unavailable`
+regardless of whether injection starts working. Both problems must be solved, not one.
+
+### Testing
+
+The operator has a VM available. M9's Wayland leg (Ubuntu GNOME/Wayland) is therefore
+testable without extra hardware whenever this is revisited.
+
 ## D-7. Honest scope of what this protects
 
 This is **agent containment**, not anti-malware. An attacker who already has code execution
