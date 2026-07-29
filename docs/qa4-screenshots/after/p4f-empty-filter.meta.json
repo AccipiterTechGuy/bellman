@@ -1,0 +1,19 @@
+{
+  "file": "p4f-empty-filter.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 24841,
+  "mean_luma": 27.5,
+  "stdev": 8.2,
+  "unique_colors_cap200k": 2816,
+  "window_id": "0x5c00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ],
+  "expect": "Zero-result empty filter state showing 0 of 7 timers"
+}

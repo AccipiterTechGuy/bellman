@@ -1,0 +1,19 @@
+{
+  "file": "p4f-list-after.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 100264,
+  "mean_luma": 40.38,
+  "stdev": 13.69,
+  "unique_colors_cap200k": 6344,
+  "window_id": "0x5c00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ],
+  "expect": "All timers surface with design tokens, hit targets, tabular numbers"
+}

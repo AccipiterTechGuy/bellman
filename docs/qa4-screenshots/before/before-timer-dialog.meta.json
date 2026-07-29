@@ -1,0 +1,18 @@
+{
+  "file": "before-timer-dialog.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 63758,
+  "mean_luma": 31.73,
+  "stdev": 10.01,
+  "unique_colors_cap200k": 5341,
+  "window_id": "0x5c00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ]
+}

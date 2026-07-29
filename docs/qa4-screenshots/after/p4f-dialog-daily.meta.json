@@ -1,0 +1,19 @@
+{
+  "file": "p4f-dialog-daily.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 63022,
+  "mean_luma": 31.63,
+  "stdev": 10.06,
+  "unique_colors_cap200k": 5313,
+  "window_id": "0x5c00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ],
+  "expect": "Timer Dialog showing daily occurrence kind fields"
+}

@@ -1,0 +1,19 @@
+{
+  "file": "p4f-month-after.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 107591,
+  "mean_luma": 40.19,
+  "stdev": 10.92,
+  "unique_colors_cap200k": 3887,
+  "window_id": "0x5c00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ],
+  "expect": "Month grid surface with WCAG AA compliant out-of-month contrast"
+}

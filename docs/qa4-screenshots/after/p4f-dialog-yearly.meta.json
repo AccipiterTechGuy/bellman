@@ -1,0 +1,19 @@
+{
+  "file": "p4f-dialog-yearly.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 55934,
+  "mean_luma": 31.31,
+  "stdev": 9.75,
+  "unique_colors_cap200k": 5273,
+  "window_id": "0x5c00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ],
+  "expect": "Timer Dialog showing yearly occurrence kind fields"
+}

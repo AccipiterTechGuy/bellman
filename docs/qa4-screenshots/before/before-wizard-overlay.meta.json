@@ -1,0 +1,18 @@
+{
+  "file": "before-wizard-overlay.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 77020,
+  "mean_luma": 18.82,
+  "stdev": 13.66,
+  "unique_colors_cap200k": 4652,
+  "window_id": "0x5c00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "file": "p4f-settings-below-fold.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 88191,
+  "mean_luma": 31.52,
+  "stdev": 14.74,
+  "unique_colors_cap200k": 4779,
+  "window_id": "0x5c00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ],
+  "expect": "Settings page scrolled to bottom showing misfire defaults and engine settings"
+}

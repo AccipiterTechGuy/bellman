@@ -1,0 +1,19 @@
+{
+  "file": "p4f-week-after.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 74355,
+  "mean_luma": 40.83,
+  "stdev": 13.6,
+  "unique_colors_cap200k": 3004,
+  "window_id": "0x5c00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ],
+  "expect": "Week calendar surface with day headers and fire count badges"
+}

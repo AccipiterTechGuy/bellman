@@ -1,0 +1,18 @@
+{
+  "file": "before-all-timers.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 101092,
+  "mean_luma": 40.4,
+  "stdev": 13.86,
+  "unique_colors_cap200k": 6479,
+  "window_id": "0x5c00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ]
+}
