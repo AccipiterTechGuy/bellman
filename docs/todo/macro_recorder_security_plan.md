@@ -370,6 +370,30 @@ So the stop paths, in order of reliability:
 3. **Quitting Bellman** — always available, aborts the run (D-13).
 4. **Pointer failsafe** — optional fourth, if M4 finds it workable.
 
+## D-15. Stopping is never gated
+
+Every control in this document restricts **starting** a macro. **Nothing restricts stopping
+one.** Aborting can only reduce harm, so it requires no authorisation of any kind:
+
+- no execution password,
+- no execution token,
+- no unlocked store,
+- no reviewed/trusted state on the macro.
+
+The stop key, the stop button, quitting the app, `bellman macro stop`, and an abort arriving
+over the slot channel or from an agent must **all** work unconditionally, including while
+the store is locked and including for a macro the caller could not have started.
+
+This is deliberately the inverse of the rest of the design, and it is the single easiest rule
+to get wrong: an implementation that reasons "all macro operations require authorisation"
+produces a running macro that a locked Bellman cannot stop. That is the worst state this
+feature can reach.
+
+**Mitigation for the obvious abuse:** an unauthenticated stop means a hostile local process
+can spam aborts and prevent macros from ever completing. That is a denial of service against
+the operator's own macros — real, and far less severe than an unstoppable one. Accept it, and
+**log who or what issued every abort** so a pattern of them is visible in the audit trail.
+
 ## D-7. Honest scope of what this protects
 
 This is **agent containment**, not anti-malware. An attacker who already has code execution

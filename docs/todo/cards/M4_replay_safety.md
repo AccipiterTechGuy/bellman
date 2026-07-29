@@ -33,6 +33,8 @@ By now it has shipped and been exercised for three cards.
 
 ## Do NOT
 
+- **Do not put the abort path behind the gate** (D-15). Stopping needs no password, no token
+  and no unlocked store. `replay()` takes a `RunToken`; `abort()` takes nothing.
 - No conditionals. Ever. A fixed count only (D-9).
 - No caller-supplied repeat count — it is reviewed macro content.
 
@@ -50,5 +52,7 @@ By now it has shipped and been exercised for three cards.
 - An injected click whose coordinates fall on the stop control does **not** stop the run and
   does **not** get swallowed — whichever mechanism is chosen, prove this case.
 - Quitting Bellman mid-run aborts cleanly with no stuck modifiers.
+- **A macro can be stopped while the store is LOCKED**, and by a caller that holds no token —
+  asserted by test. Every abort is attributed in the audit log.
 - A remapped stop key works; a stop key that cannot be registered downgrades execution to
   `Unavailable` rather than running unstoppably.
