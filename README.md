@@ -65,6 +65,7 @@ real suspend/resume hardware QA is still part of full-system validation.
 
 ```sh
 ./launch.sh                    # prefers target/release/bellman-app, else tauri dev
+./restart_bellman.sh           # safely restart only this checkout's Bellman GUI
 # desktop entry: ~/.local/share/applications/Bellman.desktop → this script
 ```
 
