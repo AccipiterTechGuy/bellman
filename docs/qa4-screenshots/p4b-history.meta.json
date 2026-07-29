@@ -1,0 +1,19 @@
+{
+  "file": "p4b-history.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 75247,
+  "mean_luma": 28.89,
+  "stdev": 9.33,
+  "unique_colors_cap200k": 3676,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "phase": "with-run-now-events"
+}

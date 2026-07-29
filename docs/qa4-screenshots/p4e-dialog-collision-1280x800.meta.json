@@ -1,0 +1,19 @@
+{
+  "file": "p4e-dialog-collision-1280x800.png",
+  "size": [
+    1280,
+    800
+  ],
+  "bytes": 134738,
+  "mean_luma": 34.73,
+  "stdev": 18.12,
+  "unique_colors_cap200k": 2901,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    1280,
+    800
+  ],
+  "viewport": "1280x800"
+}

@@ -1,0 +1,21 @@
+{
+  "file": "p4e-dialog-collision-names-three.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 89014,
+  "mean_luma": 41.75,
+  "stdev": 14.24,
+  "unique_colors_cap200k": 2603,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "phase": "collision",
+  "expect": "Also firing names the three qa-collide-* timers",
+  "neighbour_wait_ms": 1800
+}

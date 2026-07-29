@@ -1,0 +1,19 @@
+{
+  "file": "p4e-list-long-name-readable.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 39294,
+  "mean_luma": 30.68,
+  "stdev": 15.04,
+  "unique_colors_cap200k": 1760,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "expect": "full long timer name visible, no silent ellipsis"
+}

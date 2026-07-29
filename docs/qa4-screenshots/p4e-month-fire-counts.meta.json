@@ -1,0 +1,19 @@
+{
+  "file": "p4e-month-fire-counts.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 99236,
+  "mean_luma": 41.7,
+  "stdev": 13.85,
+  "unique_colors_cap200k": 1738,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "expect": "day cells show fire counts"
+}

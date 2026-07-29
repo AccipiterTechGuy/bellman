@@ -1,0 +1,20 @@
+{
+  "file": "p4e-dialog-nearby-not-collision.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 93014,
+  "mean_luma": 37.56,
+  "stdev": 12.66,
+  "unique_colors_cap200k": 2163,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "phase": "nearby",
+  "expect": "nearby list shows \u00b160s to collide timers; no same-second badge if none"
+}

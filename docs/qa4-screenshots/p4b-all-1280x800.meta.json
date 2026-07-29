@@ -1,0 +1,19 @@
+{
+  "file": "p4b-all-1280x800.png",
+  "size": [
+    1280,
+    800
+  ],
+  "bytes": 41725,
+  "mean_luma": 27.56,
+  "stdev": 8.27,
+  "unique_colors_cap200k": 4484,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    30,
+    92,
+    1280,
+    800
+  ],
+  "phase": "layout-large"
+}

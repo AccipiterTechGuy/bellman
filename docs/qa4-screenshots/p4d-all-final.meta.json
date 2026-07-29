@@ -1,0 +1,19 @@
+{
+  "file": "p4d-all-final.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 52901,
+  "mean_luma": 30.73,
+  "stdev": 12.43,
+  "unique_colors_cap200k": 5047,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "phase": "final"
+}

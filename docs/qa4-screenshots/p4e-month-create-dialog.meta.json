@@ -1,0 +1,19 @@
+{
+  "file": "p4e-month-create-dialog.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 65660,
+  "mean_luma": 35.46,
+  "stdev": 11.62,
+  "unique_colors_cap200k": 2152,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "name": "qa-from-month-cell"
+}

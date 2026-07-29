@@ -1,0 +1,20 @@
+{
+  "file": "p4b-dialog-weekly-dialog.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 68149,
+  "mean_luma": 27.96,
+  "stdev": 13.42,
+  "unique_colors_cap200k": 5183,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    50,
+    112,
+    960,
+    640
+  ],
+  "kind": "weekly",
+  "phase": "create"
+}
