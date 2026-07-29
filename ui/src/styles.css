@@ -27,7 +27,8 @@
   /* --- Foregrounds & Text (Contrast >= 4.5:1 on dark surfaces) --- */
   --fg-primary: #e6edf3;       /* Contrast ~ 14.8:1 */
   --fg-secondary: #919eab;     /* Contrast ~ 5.8:1 */
-  --fg-muted: #6e7a88;         /* Contrast ~ 4.6:1 */
+  --fg-muted: #8c97a5;         /* Contrast ~ 5.8:1 */
+  --fg-placeholder: #8c97a5;   /* Contrast ~ 5.8:1 */
 
   /* Backward compatibility aliases */
   --fg: var(--fg-primary);
@@ -227,6 +228,14 @@ html, body {
 }
 
 /* --- Form Controls & Inputs --------------------------------------- */
+::placeholder,
+input::placeholder,
+select::placeholder,
+textarea::placeholder {
+  color: var(--fg-placeholder) !important;
+  opacity: 1 !important;
+}
+
 input[type="text"],
 input[type="number"],
 input[type="search"],
@@ -234,15 +243,111 @@ input[type="date"],
 input[type="time"],
 select {
   min-height: var(--target-min);
-  background: var(--bg-input);
+  background-color: var(--bg-input) !important;
   color: var(--fg-primary);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  padding: var(--space-1) var(--space-2);
+  padding: var(--space-1) var(--space-3);
   font-family: inherit;
   font-size: var(--text-sm);
   line-height: 1.4;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  box-sizing: border-box;
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23919eab' d='M6 8.5L2 4.5h8z'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 10px center !important;
+  padding-right: var(--space-7) !important;
+  cursor: pointer;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  margin: 0;
+  cursor: pointer;
+  background-color: var(--bg-input) !important;
+  border: 1px solid var(--border-default);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+label:has(input[type="checkbox"]),
+label:has(input[type="radio"]),
+.settings-row label {
+  min-height: var(--target-min);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+
+input[type="checkbox"] {
+  border-radius: var(--radius-sm);
+}
+
+input[type="radio"] {
+  border-radius: var(--radius-full);
+}
+
+input[type="checkbox"]:checked {
+  background-color: var(--accent-primary) !important;
+  border-color: var(--accent-primary) !important;
+}
+
+input[type="checkbox"]:checked::after {
+  content: "";
+  width: 5px;
+  height: 9px;
+  border: solid var(--bg-base);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  margin-bottom: 2px;
+}
+
+input[type="radio"]:checked {
+  border-color: var(--accent-primary) !important;
+}
+
+input[type="radio"]:checked::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background-color: var(--accent-primary);
+}
+
+.input-narrow {
+  width: 6rem;
+}
+
+.subtitle-meta {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--fg-secondary);
+}
+
+.header-actions {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
 }
 
 input[type="text"]:focus,
@@ -250,7 +355,9 @@ input[type="number"]:focus,
 input[type="search"]:focus,
 input[type="date"]:focus,
 input[type="time"]:focus,
-select:focus {
+select:focus,
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
   outline: none;
   border-color: var(--border-focus);
 }
@@ -695,8 +802,21 @@ main {
 }
 
 .month-cell.out {
-  opacity: 0.45;
   background: var(--bg-base);
+  border-color: var(--border-subtle);
+}
+
+.month-cell.out .day-num {
+  color: var(--fg-secondary);
+}
+
+.month-cell.out .day-month {
+  color: var(--fg-secondary);
+}
+
+.month-cell.out .month-chip {
+  color: var(--fg-secondary);
+  background: var(--bg-surface);
 }
 
 .month-cell.today {
@@ -735,7 +855,7 @@ main {
   color: var(--fg-primary);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
-  padding: 2px 4px;
+  padding: 2px 6px;
   font-family: inherit;
   font-size: var(--text-xs);
   text-align: left;
@@ -743,7 +863,9 @@ main {
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
-  min-height: 24px;
+  min-height: var(--target-min);
+  display: flex;
+  align-items: center;
 }
 
 .month-chip.kind-monthly {
@@ -1084,7 +1206,7 @@ main {
 
 .banner-kind {
   display: inline-block;
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: var(--weight-bold);
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1123,7 +1245,7 @@ main {
 }
 
 .preview-table th { color: var(--fg-secondary); font-weight: var(--weight-semibold); }
-.preview-table .mono { font-family: var(--font-mono); font-size: 10px; white-space: nowrap; }
+.preview-table .mono { font-family: var(--font-mono); font-size: var(--text-xs); white-space: nowrap; }
 
 .timer-dialog footer {
   display: flex;
@@ -1239,7 +1361,7 @@ main {
 }
 
 .toolbar-label {
-  font-size: 10px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--fg-secondary);
@@ -1268,7 +1390,7 @@ main {
 
 .density-badge {
   display: inline-block;
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: var(--weight-bold);
   letter-spacing: 0.03em;
   padding: 1px 6px;
@@ -1310,7 +1432,7 @@ main {
 
 .collision-badge {
   display: inline-block;
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: var(--weight-bold);
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1485,7 +1607,7 @@ main {
   display: inline-block;
   min-width: 1.2rem;
   text-align: center;
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: var(--weight-bold);
   font-family: var(--font-mono);
   color: #12161b;
@@ -1508,7 +1630,7 @@ main {
   color: var(--fg-secondary);
   cursor: pointer;
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
   margin-top: auto;
   padding: var(--space-1) 2px;

@@ -331,7 +331,7 @@
         min="0"
         bind:value={misfireGrace}
         disabled={busy}
-        style="width: 6rem"
+        class="input-narrow"
       />
       <button class="btn" onclick={saveMisfire} disabled={busy}>Save</button>
     </div>
@@ -352,7 +352,7 @@
         max="256"
         bind:value={maxConcurrent}
         disabled={busy}
-        style="width: 5rem"
+        class="input-narrow"
       />
       <button class="btn" onclick={saveMaxConcurrent} disabled={busy}>Save</button>
     </div>

@@ -1,0 +1,19 @@
+{
+  "file": "p4f-empty-filter.png",
+  "size": [
+    876,
+    569
+  ],
+  "bytes": 63302,
+  "mean_luma": 38.68,
+  "stdev": 16.52,
+  "unique_colors_cap200k": 2124,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    20,
+    83,
+    876,
+    569
+  ],
+  "expect": "Empty state when search filter returns no matching timers"
+}

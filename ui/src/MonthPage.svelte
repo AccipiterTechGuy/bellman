@@ -131,7 +131,7 @@
 
 <section class="section-title">
   <span>Month</span>
-  <span style="font-weight: 400; text-transform: none; letter-spacing: 0;">{monthLabel}</span>
+  <span class="subtitle-meta">{monthLabel}</span>
 </section>
 
 <div class="month-toolbar">
