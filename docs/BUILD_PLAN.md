@@ -89,7 +89,8 @@ bellman/                                (one Cargo workspace)
 │                   wake-enabled timers, rearm() on store mutation / pre-suspend
 │                   / resume / start, arm at wake_utc − 45 s; the wake event
 │                   NEVER fires actions (normal loop + misfire pass do).
-├─ crates/bellman-cli/   bellman add|list|edit|rm|next|run-now|pause|slot-submit
+├─ crates/bellman-cli/   timer CRUD/run-now + slot-submit + scan/task +
+│                        calendar/agenda (stable --json envelopes)
 ├─ helpers/macos-wake-daemon/  tiny root daemon (SMAppService, macOS 13+):
 │                   XPC schedule_wake/cancel_my_wakes, client code-sig check,
 │                   IOPMSchedulePowerEvent one-shots tagged "com.bellman.wake";
@@ -254,7 +255,7 @@ install on Mint: `metacity` and `muffin` ship with the desktop. Use
 Entry point: `scripts/run_gui_qa.sh p4b` (isolated Xvfb + private D-Bus +
 tauri-driver). See `docs/QA_P4b.md`. Do **not** point the harness at the
 operator session — that path is what this prerequisite block exists to replace.
-See `docs/todo/qa_isolated_display_no_input_hijack.md`.
+See `docs/archive/qa_isolated_display_no_input_hijack.md` (shipped).
 
 ## Build phases (each = one crew card; exit gate before the next departs)
 

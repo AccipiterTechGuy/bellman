@@ -44,20 +44,29 @@ keeping private integrations out of git.
 | Occurrence engine (once/interval/daily/weekly/monthly/yearly/cron, DST + clamp policies) | ✅ built |
 | SQLite store — timers / runs / claim ledger, WAL | ✅ built |
 | Scheduler — horizon heap, chunked sleeps, clock-jump detector, misfire pass | ✅ built |
-| CLI (`bellman add\|list\|edit\|rm\|next\|run-now\|pause`, `--json`) | ✅ built |
+| CLI (timer CRUD/run-now, slots, machine scan/task control, calendar/agenda; `--json`) | ✅ built |
 | Slot IPC layer + JSONL event log | ✅ built |
 | Tauri shell + tray | ✅ built |
 | Calendar UI (week / month) | ✅ built |
 | Pruner, hardening, perf gates | ✅ built |
 | Packaging — deb / AppImage (Linux); NSIS, MSI, dmg unsigned in CI | ✅ built |
-| Wake-from-sleep (RTC) + Settings + first-run wizard | ✅ P7 (platform::wake + Settings + wizard) |
+| Wake-from-sleep (RTC) + Settings + first-run wizard | ✅ P7 (`platform::wake` + Settings + wizard) |
+| Visible Scheduler (`bellman scan` / `task`) — machine-wide schedule inventory | ✅ built (Linux) |
+| Calendar Snapshot (`bellman calendar` / `agenda`) — headless SVG/PNG/JSON | ✅ built |
 | Full-system validation | ⬜ not started |
 
 Linux `.deb` and `.AppImage` build and install today: the deb puts **Bellman** in
 the app launcher and the `bellman` CLI on `PATH`. Windows (NSIS + MSI) and macOS
 (dmg) packages build unsigned in CI and have **not** been validated on real
-hardware. Wake-from-sleep is not implemented yet, so timers only fire while the
-machine is awake.
+hardware. Wake-from-sleep is implemented (platform probes + Settings + wizard);
+real suspend/resume hardware QA is still part of full-system validation.
+
+### Dev launch (this tree)
+
+```sh
+./launch.sh                    # prefers target/release/bellman-app, else tauri dev
+# desktop entry: ~/.local/share/applications/Bellman.desktop → this script
+```
 
 ### Quick package (Linux)
 

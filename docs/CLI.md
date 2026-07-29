@@ -317,12 +317,16 @@ apply the same way as live `next_fire`, but pending skips are **not** consumed.
 Execute the timer's action **immediately** through the core fire path:
 
 1. `claim_run(timer_id, now)` on the store claim ledger  
-2. invoke the [`FireAction`] callback  
+2. invoke the production action runner
 3. `complete_run`  
 4. advance `last_fired` + `record_run` (same bookkeeping as the scheduler)
 
-Until C6 ships real launch/notify actions, the injected action is a **stub**:
-one log line on stderr, also returned in the JSON `message` field.
+The action runner executes launch actions with the configured timeout, output
+cap, retry, and concurrency policy; writes trigger JSON to the mapped output
+slot when one exists; and appends lifecycle events to the JSONL log. The
+headless CLI reports notification actions through its stub sink, while the
+Tauri application supplies the real desktop-notification sink. The JSON
+`message` describes the actual path taken.
 
 ```text
 bellman run-now <name-or-id> [--json]
@@ -338,7 +342,7 @@ bellman run-now <name-or-id> [--json]
   "name": "<name>",
   "run_id": "<uuid>",
   "scheduled_for": "<RFC3339 UTC>",
-  "message": "bellman: run-now stub action …",
+  "message": "action=none",
   "timer": { /* Timer after advance */ }
 }
 ```

@@ -1,9 +1,12 @@
 # Bellman — cross-platform task scheduler (plan)
 
-Status: RESEARCH RUNNING — R2 crew `2026-07-27_0001` (kimi/claude/opencode/codex + SY)
-validating design choices; architecture drafting proceeds in parallel.
-Project home: `~/bellman/` (standalone git repo, will get its own GitHub project).
-Date: 2026-07-27
+Status: SPEC LOCKED — research synthesis adopted; implementation tracks
+`docs/BUILD_PLAN.md` and the status table in `README.md`. Historical research
+lives under `docs/research/`. Shipped post-P7 add-ons (Visible Scheduler,
+Calendar Snapshot) are documented in `docs/CLI.md` and archived goal cards in
+`docs/archive/`.
+Project home: `~/bellman/` (standalone git repo).
+Date: 2026-07-27 (status header refreshed 2026-07-29)
 
 ## What it is
 A **task scheduler** (the desktop cousin of cron / Windows Task Scheduler) for
