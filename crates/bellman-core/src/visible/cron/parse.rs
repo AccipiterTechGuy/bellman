@@ -440,7 +440,10 @@ fn split_ws_preserving(s: &str) -> Vec<&str> {
 /// Cron `%` rule: first unescaped `%` starts stdin; remaining `%` → newlines
 /// in the stdin payload. Backslash-escaped `\%` is a literal percent.
 ///
-/// Returns (command_without_percent_tail, optional_stdin).
+/// Returns (command with literal `%` chars, optional stdin).
+///
+/// Pair with [`join_percent`] when writing a crontab line so literal `%` is
+/// re-escaped as `\%` and is not misread as a stdin separator.
 pub fn split_percent(cmd: &str) -> (String, Option<String>) {
     let chars: Vec<char> = cmd.chars().collect();
     let mut i = 0;
@@ -461,6 +464,33 @@ pub fn split_percent(cmd: &str) -> (String, Option<String>) {
         i += 1;
     }
     (cmd_out, None)
+}
+
+/// Inverse of [`split_percent`]: encode a shell command (+ optional stdin) for
+/// a crontab line. Every literal `%` in `command` becomes `\%`; stdin is
+/// appended after an unescaped `%`, with newlines turned into `%`.
+pub fn join_percent(command: &str, stdin: Option<&str>) -> String {
+    let mut out = String::with_capacity(command.len() + 8);
+    for ch in command.chars() {
+        if ch == '%' {
+            out.push('\\');
+            out.push('%');
+        } else {
+            out.push(ch);
+        }
+    }
+    if let Some(payload) = stdin {
+        out.push('%');
+        // Cron: unescaped % in the stdin region → newline on delivery.
+        for ch in payload.chars() {
+            if ch == '\n' {
+                out.push('%');
+            } else {
+                out.push(ch);
+            }
+        }
+    }
+    out
 }
 
 /// Effective CRON_TZ walking lines top-to-bottom (last wins before a job).
@@ -526,6 +556,24 @@ mod tests {
         let (cmd, stdin) = split_percent(r"echo 100\% done");
         assert_eq!(cmd, "echo 100% done");
         assert!(stdin.is_none());
+    }
+
+    #[test]
+    fn join_percent_reescapes_literal_percent() {
+        let encoded = join_percent("echo 100% pure", None);
+        assert_eq!(encoded, r"echo 100\% pure");
+        let (cmd, stdin) = split_percent(&encoded);
+        assert_eq!(cmd, "echo 100% pure");
+        assert!(stdin.is_none());
+    }
+
+    #[test]
+    fn join_split_roundtrip_with_stdin() {
+        let encoded = join_percent("cat ", Some("hello\nworld"));
+        assert_eq!(encoded, "cat %hello%world");
+        let (cmd, stdin) = split_percent(&encoded);
+        assert_eq!(cmd, "cat ");
+        assert_eq!(stdin.as_deref(), Some("hello\nworld"));
     }
 
     #[test]

@@ -106,6 +106,7 @@ fn parse_timer_line(line: &str, user: bool) -> Option<DiscoveredTask> {
         } else {
             format!("{unit} → {activates}")
         },
+        stdin_payload: None,
         schedule_expr: unit.to_string(),
         human_explanation: explain_systemd(unit),
         next_run,
@@ -136,8 +137,9 @@ fn parse_next_from_line(line: &str) -> Option<DateTime<Utc>> {
 }
 
 fn parse_last_from_line(line: &str) -> Option<DateTime<Utc>> {
-    // After LEFT column there is LAST. Heuristic: find second date-like token.
-    // Simpler: look for all "YYYY-MM-DD HH:MM:SS" occurrences.
+    // Collect all "YYYY-MM-DD HH:MM:SS" wall times from the line.
+    // Normal: NEXT then LAST → two timestamps, LAST is the second.
+    // When NEXT is `n/a`, only LAST remains → one timestamp is LAST.
     let mut found = Vec::new();
     let bytes = line.as_bytes();
     let mut i = 0;
@@ -155,9 +157,11 @@ fn parse_last_from_line(line: &str) -> Option<DateTime<Utc>> {
         }
         i += 1;
     }
-    // first = NEXT, second = LAST
+    let next_missing = line.trim_start().starts_with("n/a");
     if found.len() >= 2 {
         Some(found[1])
+    } else if next_missing && found.len() == 1 {
+        Some(found[0])
     } else {
         None
     }
@@ -308,6 +312,18 @@ mod tests {
         let t = parse_timer_line(line, false).expect("parse");
         assert_eq!(t.schedule_expr, "oom-protect.timer");
         assert!(t.next_run.is_some(), "next_run");
+        assert!(t.last_run.is_some(), "last_run");
         assert!(t.source.contains("oom-protect.timer"));
+    }
+
+    #[test]
+    fn last_run_when_next_is_na() {
+        // Auditor REPRO: NEXT = n/a but LAST is present.
+        let line = "n/a                         n/a Wed 2026-07-29 15:37:55 EEST      14s ago foo.timer                    foo.service";
+        let t = parse_timer_line(line, false).expect("parse");
+        assert!(t.next_run.is_none(), "next should be None for n/a");
+        let last = t.last_run.expect("last_run must be extracted when NEXT is n/a");
+        // Local EEST (UTC+3) 15:37:55 → 12:37:55Z
+        assert_eq!(last.to_rfc3339(), "2026-07-29T12:37:55+00:00");
     }
 }

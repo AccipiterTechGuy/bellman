@@ -66,6 +66,7 @@ fn parse_atq_line(line: &str) -> Option<DiscoveredTask> {
         source,
         owner: user,
         command,
+        stdin_payload: None,
         schedule_expr: when_str.clone(),
         human_explanation: explain_at(&when_str),
         next_run: next,

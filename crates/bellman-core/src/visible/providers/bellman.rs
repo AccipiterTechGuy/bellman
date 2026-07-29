@@ -59,6 +59,7 @@ pub fn discover_bellman(db_path: &Path) -> (Vec<DiscoveredTask>, Vec<String>) {
             source,
             owner: owner.clone(),
             command,
+            stdin_payload: None,
             schedule_expr: expr,
             human_explanation: human,
             next_run: t.next_fire_utc,

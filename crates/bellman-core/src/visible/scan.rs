@@ -231,6 +231,7 @@ fn scan_stub(
         source: native.into(),
         owner: String::new(),
         command: String::new(),
+        stdin_payload: None,
         schedule_expr: String::new(),
         human_explanation: message.into(),
         next_run: None,

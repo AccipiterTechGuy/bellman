@@ -8,8 +8,8 @@
 //! - Default is dry-run (no change). `--apply` required to write.
 
 use crate::visible::cron::parse::{
-    had_trailing_newline, join_lines, parse_crontab, split_lines, CrontabLine, CrontabMode,
-    DISABLE_PREFIX, FENCE_BEGIN, FENCE_END,
+    had_trailing_newline, join_lines, join_percent, parse_crontab, split_lines, CrontabLine,
+    CrontabMode, DISABLE_PREFIX, FENCE_BEGIN, FENCE_END,
 };
 use crate::visible::cron::{read_user_crontab, tasks_from_crontab_text};
 use crate::visible::id::{short_hash, task_id};
@@ -226,8 +226,8 @@ pub fn new_cron_task(
     if cron_expr.trim().is_empty() {
         return Err("cron expression must not be empty".into());
     }
-    // Validate schedule by parsing a synthetic line
-    let probe = format!("{cron_expr} {command}");
+    // Validate schedule by parsing a synthetic line (with % re-escaped).
+    let probe = format!("{cron_expr} {}", join_percent(command, None));
     let parsed = parse_crontab(&probe, CrontabMode::User);
     let is_job = matches!(parsed.first(), Some(CrontabLine::Job { .. }));
     if !is_job {
@@ -239,7 +239,9 @@ pub fn new_cron_task(
     let user = current_username();
     let before = read_user_crontab().unwrap_or_default();
     let entry_id = short_hash(&format!("{cron_expr}|{command}|{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)));
-    let new_line = format!("{cron_expr} {command}");
+    // Escape literal % so crontab does not treat them as stdin separators.
+    let encoded_cmd = join_percent(command, None);
+    let new_line = format!("{cron_expr} {encoded_cmd}");
     let after = insert_into_fence(&before, &entry_id, &new_line);
 
     let plan = finish_write_raw("new", None, "crontab:user", &before, &after, apply, backup_dir)?;
@@ -468,17 +470,12 @@ fn transform_edit(
     // but preserve surrounding lines.
     let cron = new_cron.unwrap_or(&task.schedule_expr);
     let command = new_command.unwrap_or(&task.command);
-    // Preserve any `%…` stdin from original if command unchanged and had percent
+    // Re-escape literal % (and re-attach stdin) so rewrite cannot corrupt crontab.
+    let encoded = join_percent(command, task.stdin_payload.as_deref());
     let new_line = if current.trim_start().starts_with(DISABLE_PREFIX) {
-        // editing a disabled line: update the embedded original
-        let orig = current
-            .trim_start()
-            .strip_prefix(DISABLE_PREFIX)
-            .unwrap_or(&current);
-        let _ = orig;
-        format!("{DISABLE_PREFIX}{cron} {command}")
+        format!("{DISABLE_PREFIX}{cron} {encoded}")
     } else {
-        format!("{cron} {command}")
+        format!("{cron} {encoded}")
     };
     // Validate
     let probe_body = new_line
@@ -639,6 +636,7 @@ mod tests {
             source: "/etc/crontab".into(),
             owner: "root".into(),
             command: "true".into(),
+            stdin_payload: None,
             schedule_expr: "0 * * * *".into(),
             human_explanation: String::new(),
             next_run: None,
@@ -656,5 +654,45 @@ mod tests {
         let plan = disable_task(&task, true, Path::new("/tmp")).unwrap();
         assert!(plan.refused.is_some());
         assert!(!plan.applied);
+    }
+
+    #[test]
+    fn edit_preserves_escaped_percent() {
+        // Auditor REPRO: edit schedule only must keep \% in the crontab line.
+        let original = r"0 0 * * * echo 100\% pure
+";
+        let tasks = tasks_from_crontab_text(
+            original,
+            CrontabMode::User,
+            SourceKind::CronUser,
+            "crontab:me",
+            "me",
+            true,
+            None,
+        );
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].command, "echo 100% pure");
+        assert!(tasks[0].stdin_payload.is_none());
+        let edited = transform_edit(original, &tasks[0], None, Some("0 1 * * *")).unwrap();
+        assert!(
+            edited.contains(r"echo 100\% pure"),
+            "expected re-escaped % in rewritten line, got: {edited:?}"
+        );
+        assert!(
+            !edited.contains("echo 100% pure"),
+            "unescaped % would corrupt cron stdin semantics: {edited:?}"
+        );
+        // Round-trip parse must still see a literal percent command.
+        let again = tasks_from_crontab_text(
+            &edited,
+            CrontabMode::User,
+            SourceKind::CronUser,
+            "crontab:me",
+            "me",
+            true,
+            None,
+        );
+        assert_eq!(again[0].command, "echo 100% pure");
+        assert_eq!(again[0].schedule_expr, "0 1 * * *");
     }
 }

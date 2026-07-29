@@ -172,6 +172,7 @@ pub fn discover_run_parts() -> (Vec<DiscoveredTask>, Vec<String>) {
                 source: source.clone(),
                 owner: "root".into(),
                 command: source.clone(),
+                stdin_payload: None,
                 schedule_expr: format!("run-parts {label}"),
                 human_explanation: format!(
                     "run-parts script in {dir} (typically {label} via /etc/crontab)"
@@ -237,6 +238,7 @@ pub fn discover_anacron() -> (Vec<DiscoveredTask>, Vec<String>) {
             source: source.clone(),
             owner: "root".into(),
             command,
+            stdin_payload: None,
             schedule_expr: format!("anacron period={period} delay={delay} id={job_id}"),
             human_explanation: format!(
                 "anacron job {job_id}: every {period} day(s), delay {delay} min"
@@ -324,10 +326,8 @@ pub fn tasks_from_crontab_text(
         let next = next_from_schedule(schedule, &tz, Utc::now())
             .ok()
             .flatten();
-        let mut cmd_display = command.clone();
-        if let Some(stdin) = stdin_payload {
-            cmd_display = format!("{cmd_display}%{stdin}");
-        }
+        // Keep command as shell-executable form (literal %). Stdin stays separate
+        // so rewrites can re-escape via join_percent and run_task is not confused.
         let id_key_cmd = original_line.as_deref().unwrap_or(raw.as_str());
         let id = task_id(
             kind,
@@ -340,7 +340,8 @@ pub fn tasks_from_crontab_text(
             source_kind: kind,
             source: source.to_string(),
             owner,
-            command: cmd_display,
+            command: command.clone(),
+            stdin_payload: stdin_payload.clone(),
             schedule_expr: expr,
             human_explanation: human,
             next_run: next,

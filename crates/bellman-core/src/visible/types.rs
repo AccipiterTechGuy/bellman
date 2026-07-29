@@ -141,7 +141,13 @@ pub struct DiscoveredTask {
     /// Exact file path, unit name, or Bellman timer id origin.
     pub source: String,
     pub owner: String,
+    /// Shell-executable command with **literal** `%` characters (already
+    /// unescaped from crontab `\%`). Never includes the cron stdin region.
     pub command: String,
+    /// Cron stdin payload (text after the first unescaped `%` on the line).
+    /// Newlines are real newlines here; rewritten via [`crate::visible::cron::parse::join_percent`].
+    #[serde(default)]
+    pub stdin_payload: Option<String>,
     /// Raw schedule expression (cron fields, OnCalendar, at time, etc.).
     pub schedule_expr: String,
     pub human_explanation: String,

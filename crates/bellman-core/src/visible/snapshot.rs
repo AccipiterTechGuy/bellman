@@ -133,6 +133,7 @@ mod tests {
             source: "crontab:t".into(),
             owner: "t".into(),
             command: cmd.into(),
+            stdin_payload: None,
             schedule_expr: "0 * * * *".into(),
             human_explanation: String::new(),
             next_run: None,
