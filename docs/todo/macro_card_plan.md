@@ -42,6 +42,7 @@ none are sealed or railed until the cards already on the board have shipped.
 | **M7** | **Execution password** — setup, lockout, audit | **Yes** | The gate becomes real here. |
 | **M8** | **Execution tokens** + review gate + agent skill | **Yes** | |
 | **M9** | Per-OS QA on real hardware + ship guard | Yes | |
+| **M10** | Wayland replay — **DEFERRED**, operator validates in a VM | Yes | Blocked on upstream. Human sign-off required. |
 
 M1–M6 are testable end to end with no password anywhere.
 
