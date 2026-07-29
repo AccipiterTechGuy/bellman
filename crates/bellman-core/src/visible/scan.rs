@@ -130,21 +130,27 @@ fn scan_linux(
     let want = |k: SourceKind| k.matches_filter(filter);
 
     if want(SourceKind::CronUser) {
-        let user = user_filter
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| std::env::var("USER").unwrap_or_else(|_| "user".into()));
-        // Only current user's crontab via crontab -l (no reading other users' spool without root)
-        if user_filter.is_none()
-            || user_filter == Some(user.as_str())
-            || user_filter == std::env::var("USER").ok().as_deref()
-        {
-            let (t, w) = cron::discover_user_crontab(&user);
-            tasks.extend(filter_user(t, user_filter));
-            warnings.extend(w);
-        } else {
-            warnings.push(format!(
-                "cannot read crontab for other user '{user}' without root; skipped"
-            ));
+        // Only the invoking user's crontab is readable via `crontab -l` without
+        // root. Never re-label those rows as a different --user.
+        let invoking = std::env::var("USER")
+            .or_else(|_| std::env::var("LOGNAME"))
+            .unwrap_or_else(|_| "user".into());
+        match user_filter {
+            None => {
+                let (t, w) = cron::discover_user_crontab(&invoking);
+                tasks.extend(t);
+                warnings.extend(w);
+            }
+            Some(u) if u == invoking.as_str() => {
+                let (t, w) = cron::discover_user_crontab(&invoking);
+                tasks.extend(t);
+                warnings.extend(w);
+            }
+            Some(u) => {
+                warnings.push(format!(
+                    "cannot read crontab for other user '{u}' without root; skipped"
+                ));
+            }
         }
     }
 

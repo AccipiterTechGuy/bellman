@@ -27,13 +27,7 @@ fn list_timers(user: bool) -> Result<Vec<DiscoveredTask>, String> {
     if user {
         cmd.arg("--user");
     }
-    // JSON is ideal when available (systemd ≥ 248-ish); fall back to parseable plain.
-    cmd.args([
-        "list-timers",
-        "--all",
-        "--no-pager",
-        "--no-legend",
-    ]);
+    cmd.args(["list-timers", "--all", "--no-pager", "--no-legend"]);
     let out = cmd
         .output()
         .map_err(|e| format!("spawn systemctl: {e}"))?;
@@ -55,26 +49,24 @@ fn list_timers(user: bool) -> Result<Vec<DiscoveredTask>, String> {
         }
     }
 
-    // Enrich with ExecMainStatus / unit details where possible
     for task in &mut tasks {
         enrich_timer(task, user);
     }
     Ok(tasks)
 }
 
+/// Extract unit name from `source` (`systemd:{scope}:{unit}`).
+fn unit_from_source(source: &str) -> &str {
+    source.rsplit(':').next().unwrap_or(source)
+}
+
 /// Parse a `systemctl list-timers --all --no-legend` line.
-///
-/// Columns (when both NEXT and LEFT present):
-/// NEXT LEFT LAST PASSED UNIT ACTIVATES
-///
-/// Times may be `n/a`. Unit is the first `*.timer` token.
 fn parse_timer_line(line: &str, user: bool) -> Option<DiscoveredTask> {
     let kind = if user {
         SourceKind::SystemdUser
     } else {
         SourceKind::SystemdSystem
     };
-    // Find *.timer token
     let parts: Vec<&str> = line.split_whitespace().collect();
     let unit = parts.iter().copied().find(|p| p.ends_with(".timer"))?;
     let activates = parts
@@ -83,8 +75,6 @@ fn parse_timer_line(line: &str, user: bool) -> Option<DiscoveredTask> {
         .find(|p| p.ends_with(".service"))
         .unwrap_or("");
 
-    // NEXT is first timestamp-ish field(s). systemctl prints:
-    // "Wed 2026-07-29 15:38:10 EEST" or "n/a"
     let next_run = parse_next_from_line(line);
     let last_run = parse_last_from_line(line);
 
@@ -92,6 +82,7 @@ fn parse_timer_line(line: &str, user: bool) -> Option<DiscoveredTask> {
     let source = format!("systemd:{scope}:{unit}");
     let id = task_id(kind, &[&source]);
 
+    // schedule_expr / explanation filled in enrich_timer from OnCalendar etc.
     Some(DiscoveredTask {
         id,
         source_kind: kind,
@@ -107,11 +98,15 @@ fn parse_timer_line(line: &str, user: bool) -> Option<DiscoveredTask> {
             format!("{unit} → {activates}")
         },
         stdin_payload: None,
-        schedule_expr: unit.to_string(),
-        human_explanation: explain_systemd(unit),
+        schedule_expr: unit.to_string(), // placeholder until enrich
+        human_explanation: format!("systemd timer {unit}"),
         next_run,
         last_run,
-        last_result: LastResult::Unknown, // filled by enrich
+        last_result: if last_run.is_none() {
+            LastResult::Never
+        } else {
+            LastResult::Unknown
+        },
         enabled: true,
         writable: false,
         write_block_reason: Some(if user {
@@ -132,14 +127,10 @@ fn parse_next_from_line(line: &str) -> Option<DateTime<Utc>> {
     if line.trim_start().starts_with("n/a") {
         return None;
     }
-    // Take leading "Day YYYY-MM-DD HH:MM:SS TZ"
     parse_systemctl_timestamp(line)
 }
 
 fn parse_last_from_line(line: &str) -> Option<DateTime<Utc>> {
-    // Collect all "YYYY-MM-DD HH:MM:SS" wall times from the line.
-    // Normal: NEXT then LAST → two timestamps, LAST is the second.
-    // When NEXT is `n/a`, only LAST remains → one timestamp is LAST.
     let mut found = Vec::new();
     let bytes = line.as_bytes();
     let mut i = 0;
@@ -168,7 +159,6 @@ fn parse_last_from_line(line: &str) -> Option<DateTime<Utc>> {
 }
 
 fn parse_systemctl_timestamp(line: &str) -> Option<DateTime<Utc>> {
-    // Skip weekday if present
     let s = line.trim_start();
     let s = if s.len() > 4 && s.as_bytes()[3] == b' ' && s.as_bytes()[0].is_ascii_alphabetic() {
         &s[4..]
@@ -179,38 +169,151 @@ fn parse_systemctl_timestamp(line: &str) -> Option<DateTime<Utc>> {
 }
 
 fn parse_ymd_hms_prefix(s: &str) -> Option<DateTime<Utc>> {
-    // "2026-07-29 15:38:10 EEST" or without tz
     let s = s.trim_start();
     if s.len() < 19 {
         return None;
     }
     let naive = NaiveDateTime::parse_from_str(&s[..19], "%Y-%m-%d %H:%M:%S").ok()?;
-    // Interpret in local timezone (systemctl prints local wall time)
     let local = Local.from_local_datetime(&naive).single()?;
     Some(local.with_timezone(&Utc))
 }
 
+/// Whether UnitFileState means the timer is armed / participating.
+pub fn unit_file_state_enabled(state: &str) -> bool {
+    matches!(
+        state,
+        "enabled"
+            | "enabled-runtime"
+            | "static"
+            | "linked"
+            | "linked-runtime"
+            | "transient" // systemd-run --on-* armed timers
+            | "generated"
+    )
+}
+
+/// Derive last_result honestly from systemd properties.
+///
+/// Empty `ExecMainStartTimestamp` means the unit has **never** run — do not
+/// treat Result=success / ExecMainStatus=0 (systemd defaults) as evidence.
+pub fn last_result_from_props(
+    start_timestamp: &str,
+    result: &str,
+    exec_main_status: Option<i32>,
+    list_timers_last: Option<DateTime<Utc>>,
+) -> LastResult {
+    let started = !start_timestamp.trim().is_empty()
+        && !start_timestamp.eq_ignore_ascii_case("n/a")
+        && start_timestamp != "-";
+    if !started {
+        // list-timers LAST is secondary; if service never started, prefer Never
+        // even when list-timers showed something odd.
+        if list_timers_last.is_none() {
+            return LastResult::Never;
+        }
+        // Had a LAST column but no start timestamp — still no real exit evidence.
+        return LastResult::Unknown;
+    }
+    match exec_main_status {
+        Some(code) if result == "success" || code == 0 => LastResult::Ok { exit_code: code },
+        Some(code) if !result.is_empty() && result != "success" => {
+            LastResult::Failed { exit_code: code }
+        }
+        Some(code) => LastResult::Ok { exit_code: code },
+        None => LastResult::Unknown,
+    }
+}
+
+/// Parse `TimersCalendar` / `TimersMonotonic` property blobs into a schedule expr.
+///
+/// Monotonic keys appear as `OnActiveUSec=50min` (human-friendly duration) in
+/// modern systemd, not only the `OnActiveSec=` form.
+pub fn parse_timer_schedule(calendar: &str, monotonic: &str) -> (String, String) {
+    let mut parts: Vec<String> = Vec::new();
+    // TimersCalendar={ OnCalendar=*-*-* 06:00:00 ; next_elapse=... }
+    for token in calendar.split(['{', '}', ';', '\n']) {
+        let t = token.trim();
+        if let Some(v) = t.strip_prefix("OnCalendar=") {
+            let v = v.trim();
+            if !v.is_empty() {
+                parts.push(format!("OnCalendar={v}"));
+            }
+        }
+    }
+    for token in monotonic.split(['{', '}', ';', '\n']) {
+        let t = token.trim();
+        // Accept both *Sec= and *USec= (systemd show uses USec for wall form).
+        for key in [
+            "OnActiveUSec=",
+            "OnActiveSec=",
+            "OnBootUSec=",
+            "OnBootSec=",
+            "OnStartupUSec=",
+            "OnStartupSec=",
+            "OnUnitActiveUSec=",
+            "OnUnitActiveSec=",
+            "OnUnitInactiveUSec=",
+            "OnUnitInactiveSec=",
+        ] {
+            if let Some(v) = t.strip_prefix(key) {
+                let v = v.trim();
+                if !v.is_empty() && v != "0" {
+                    // Normalize USec label to Sec for a stable short expression.
+                    let label = key
+                        .trim_end_matches('=')
+                        .trim_end_matches("USec")
+                        .trim_end_matches("Sec");
+                    parts.push(format!("{label}Sec={v}"));
+                }
+            }
+        }
+    }
+    if parts.is_empty() {
+        (
+            String::new(),
+            "systemd timer (no OnCalendar/On*Sec found)".into(),
+        )
+    } else {
+        let expr = parts.join("; ");
+        let human = explain_systemd(&expr);
+        (expr, human)
+    }
+}
+
 fn enrich_timer(task: &mut DiscoveredTask, user: bool) {
-    let unit = task
-        .schedule_expr
-        .clone();
-    // Active state
+    let unit = unit_from_source(&task.source).to_string();
+
+    // Unit file / active state + calendar schedule
     let mut cmd = Command::new("systemctl");
     if user {
         cmd.arg("--user");
     }
-    cmd.args(["show", &unit, "-p", "ActiveState", "-p", "UnitFileState", "-p", "Triggers"]);
+    cmd.args([
+        "show",
+        &unit,
+        "-p",
+        "ActiveState",
+        "-p",
+        "UnitFileState",
+        "-p",
+        "Triggers",
+        "-p",
+        "TimersCalendar",
+        "-p",
+        "TimersMonotonic",
+    ]);
+    let mut active_state = String::new();
     if let Ok(out) = cmd.output() {
         if out.status.success() {
             let text = String::from_utf8_lossy(&out.stdout);
+            let mut calendar = String::new();
+            let mut monotonic = String::new();
             for line in text.lines() {
                 if let Some(v) = line.strip_prefix("ActiveState=") {
-                    if v == "inactive" {
-                        // still may be enabled
-                    }
+                    active_state = v.to_string();
                 }
                 if let Some(v) = line.strip_prefix("UnitFileState=") {
-                    task.enabled = v == "enabled" || v == "static" || v == "linked" || v == "enabled-runtime";
+                    task.enabled = unit_file_state_enabled(v);
                     if v == "disabled" || v == "masked" {
                         task.enabled = false;
                     }
@@ -220,85 +323,99 @@ fn enrich_timer(task: &mut DiscoveredTask, user: bool) {
                         task.command = format!("{unit} → {v}");
                     }
                 }
+                if let Some(v) = line.strip_prefix("TimersCalendar=") {
+                    calendar = v.to_string();
+                }
+                if let Some(v) = line.strip_prefix("TimersMonotonic=") {
+                    monotonic = v.to_string();
+                }
+            }
+            // Armed transient / runtime timers with a next fire are enabled.
+            if active_state == "active" && task.next_run.is_some() {
+                task.enabled = true;
+            }
+            let (expr, human) = parse_timer_schedule(&calendar, &monotonic);
+            if !expr.is_empty() {
+                task.schedule_expr = expr;
+                task.human_explanation = human;
+            } else {
+                task.schedule_expr = unit.clone();
+                task.human_explanation = format!(
+                    "systemd timer {unit}{}",
+                    if active_state.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (ActiveState={active_state})")
+                    }
+                );
             }
         }
     }
 
-    // Last result from the triggered service
+    // Last result from the triggered service — honest about never-run units.
     let service = task
         .command
-        .split("→")
+        .split('→')
         .nth(1)
         .map(str::trim)
         .filter(|s| s.ends_with(".service"))
-        .map(|s| s.to_string());
-    if let Some(svc) = service {
-        let mut cmd = Command::new("systemctl");
-        if user {
-            cmd.arg("--user");
-        }
-        cmd.args(["show", &svc, "-p", "ExecMainStatus", "-p", "Result", "-p", "ExecMainCode"]);
-        if let Ok(out) = cmd.output() {
-            if out.status.success() {
-                let text = String::from_utf8_lossy(&out.stdout);
-                let mut status: Option<i32> = None;
-                let mut result = String::new();
-                for line in text.lines() {
-                    if let Some(v) = line.strip_prefix("ExecMainStatus=") {
-                        status = v.parse().ok();
-                    }
-                    if let Some(v) = line.strip_prefix("Result=") {
-                        result = v.to_string();
-                    }
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| unit.replace(".timer", ".service"));
+
+    let mut cmd = Command::new("systemctl");
+    if user {
+        cmd.arg("--user");
+    }
+    cmd.args([
+        "show",
+        &service,
+        "-p",
+        "ExecMainStatus",
+        "-p",
+        "Result",
+        "-p",
+        "ExecMainStartTimestamp",
+    ]);
+    if let Ok(out) = cmd.output() {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let mut status: Option<i32> = None;
+            let mut result = String::new();
+            let mut start_ts = String::new();
+            for line in text.lines() {
+                if let Some(v) = line.strip_prefix("ExecMainStatus=") {
+                    status = v.parse().ok();
                 }
-                if let Some(code) = status {
-                    // Only trust when Result indicates a finished run
-                    if result == "success" || code == 0 {
-                        task.last_result = LastResult::Ok { exit_code: code };
-                    } else if !result.is_empty() && result != "success" {
-                        task.last_result = LastResult::Failed { exit_code: code };
-                    } else {
-                        // No real evidence of a completed run
-                        task.last_result = LastResult::Unknown;
-                    }
-                } else {
-                    task.last_result = LastResult::Unknown;
+                if let Some(v) = line.strip_prefix("Result=") {
+                    result = v.to_string();
+                }
+                if let Some(v) = line.strip_prefix("ExecMainStartTimestamp=") {
+                    start_ts = v.to_string();
                 }
             }
+            task.last_result =
+                last_result_from_props(&start_ts, &result, status, task.last_run);
         }
     }
-
-    // Prefer NEXT from list-timers (already set). Optionally refine via
-    // systemctl show NextElapseUSecRealtime — but list-timers is the acceptance
-    // source of truth, so leave next_run as parsed.
-    let _ = user;
 }
 
 /// Fetch journal logs for a timer's service.
 pub fn timer_logs(task: &DiscoveredTask, lines: usize) -> Result<String, String> {
     let user = matches!(task.source_kind, SourceKind::SystemdUser);
-    let unit = task
+    let unit = unit_from_source(&task.source);
+    let service = task
         .command
-        .split("→")
+        .split('→')
         .nth(1)
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or(task.schedule_expr.as_str());
+        .unwrap_or(unit);
     let mut cmd = Command::new("journalctl");
     if user {
         cmd.arg("--user");
     }
-    cmd.args([
-        "-u",
-        unit,
-        "-n",
-        &lines.to_string(),
-        "--no-pager",
-    ]);
-    let out = cmd
-        .output()
-        .map_err(|e| format!("journalctl: {e}"))?;
-    // journalctl may return non-zero if empty; still return stdout
+    cmd.args(["-u", service, "-n", &lines.to_string(), "--no-pager"]);
+    let out = cmd.output().map_err(|e| format!("journalctl: {e}"))?;
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
@@ -310,20 +427,68 @@ mod tests {
     fn parse_sample_line() {
         let line = "Wed 2026-07-29 15:38:10 EEST  233ms Wed 2026-07-29 15:37:55 EEST      14s ago oom-protect.timer            oom-protect.service";
         let t = parse_timer_line(line, false).expect("parse");
-        assert_eq!(t.schedule_expr, "oom-protect.timer");
+        assert!(t.source.contains("oom-protect.timer"));
         assert!(t.next_run.is_some(), "next_run");
         assert!(t.last_run.is_some(), "last_run");
-        assert!(t.source.contains("oom-protect.timer"));
     }
 
     #[test]
     fn last_run_when_next_is_na() {
-        // Auditor REPRO: NEXT = n/a but LAST is present.
         let line = "n/a                         n/a Wed 2026-07-29 15:37:55 EEST      14s ago foo.timer                    foo.service";
         let t = parse_timer_line(line, false).expect("parse");
         assert!(t.next_run.is_none(), "next should be None for n/a");
-        let last = t.last_run.expect("last_run must be extracted when NEXT is n/a");
-        // Local EEST (UTC+3) 15:37:55 → 12:37:55Z
+        let last = t
+            .last_run
+            .expect("last_run must be extracted when NEXT is n/a");
         assert_eq!(last.to_rfc3339(), "2026-07-29T12:37:55+00:00");
+    }
+
+    #[test]
+    fn never_run_service_is_never_not_ok() {
+        // Supervisor REPRO: defaults Result=success + ExecMainStatus=0 with empty start.
+        let r = last_result_from_props("", "success", Some(0), None);
+        assert!(
+            matches!(r, LastResult::Never),
+            "expected Never, got {r:?}"
+        );
+        let r2 = last_result_from_props("n/a", "success", Some(0), None);
+        assert!(matches!(r2, LastResult::Never), "{r2:?}");
+    }
+
+    #[test]
+    fn real_success_after_start() {
+        let r = last_result_from_props(
+            "Wed 2026-07-29 15:00:00 EEST",
+            "success",
+            Some(0),
+            Some(Utc::now()),
+        );
+        assert!(matches!(r, LastResult::Ok { exit_code: 0 }), "{r:?}");
+    }
+
+    #[test]
+    fn transient_state_is_enabled() {
+        assert!(unit_file_state_enabled("transient"));
+        assert!(unit_file_state_enabled("enabled"));
+        assert!(!unit_file_state_enabled("disabled"));
+        assert!(!unit_file_state_enabled("masked"));
+    }
+
+    #[test]
+    fn parse_oncalendar_schedule() {
+        let cal = "{ OnCalendar=*-*-* 6:00:00 ; next_elapse=Thu 2026-07-30 06:00:00 EEST }";
+        let (expr, human) = parse_timer_schedule(cal, "");
+        assert!(expr.contains("OnCalendar="), "{expr}");
+        assert!(expr.contains("6:00:00") || expr.contains("06:00:00"), "{expr}");
+        assert!(!human.contains(".timer"), "should not just echo unit name: {human}");
+        assert!(human.to_lowercase().contains("calendar") || human.contains("OnCalendar"), "{human}");
+    }
+
+    #[test]
+    fn parse_on_active_sec() {
+        let mono = "{ OnActiveUSec=50min ; next_elapse=n/a }";
+        let (expr, human) = parse_timer_schedule("", mono);
+        assert!(expr.contains("OnActiveSec=50min"), "{expr}");
+        assert!(!human.is_empty());
     }
 }

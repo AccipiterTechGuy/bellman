@@ -238,7 +238,8 @@ pub fn new_cron_task(
 
     let user = current_username();
     let before = read_user_crontab().unwrap_or_default();
-    let entry_id = short_hash(&format!("{cron_expr}|{command}|{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)));
+    // Stable id from content only so dry-run preview matches the applied write.
+    let entry_id = short_hash(&format!("{cron_expr}|{command}"));
     // Escape literal % so crontab does not treat them as stdin separators.
     let encoded_cmd = join_percent(command, None);
     let new_line = format!("{cron_expr} {encoded_cmd}");
@@ -503,9 +504,8 @@ fn insert_into_fence(before: &str, entry_id: &str, new_line: &str) -> String {
             lines.insert(e, id_comment);
         }
         _ => {
-            if !lines.is_empty() && !lines.last().map(|l| l.is_empty()).unwrap_or(false) {
-                lines.push(String::new());
-            }
+            // Append fence at end without inserting a blank separator line —
+            // keeps every pre-existing line byte-identical outside the fence.
             lines.push(FENCE_BEGIN.to_string());
             lines.push(id_comment);
             lines.push(new_line.to_string());
@@ -626,6 +626,19 @@ mod tests {
         assert!(after.contains(FENCE_BEGIN));
         assert!(after.contains("0 2 * * * /bin/false"));
         assert!(after.contains(FENCE_END));
+        // Outside lines stay prefix-identical (no inserted blank separator).
+        assert!(
+            after.starts_with("# keep\n0 1 * * * /bin/true\n# BEGIN bellman-managed\n"),
+            "unexpected rewrite: {after:?}"
+        );
+    }
+
+    #[test]
+    fn new_task_id_stable_across_calls() {
+        // dry-run and apply must mint the same fence id for same content
+        let a = short_hash("0 * * * *|echo hi");
+        let b = short_hash("0 * * * *|echo hi");
+        assert_eq!(a, b);
     }
 
     #[test]

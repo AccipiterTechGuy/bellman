@@ -85,10 +85,20 @@ fn pretty_dow(dow: &str) -> String {
     if upper == "1-5" || upper == "MON-FRI" {
         return "weekdays (Mon–Fri)".into();
     }
-    if upper == "0,6" || upper == "6,0" || upper == "SAT,SUN" {
+    if upper == "0,6" || upper == "6,0" || upper == "SAT,SUN" || upper == "6,7" || upper == "7,6" {
         return "weekends".into();
     }
-    format!("weekdays {dow}")
+    // Single day: 0 and 7 are both Sunday in cron; 6 = Saturday.
+    match upper.as_str() {
+        "0" | "7" | "SUN" => "on Sunday".into(),
+        "1" | "MON" => "on Monday".into(),
+        "2" | "TUE" => "on Tuesday".into(),
+        "3" | "WED" => "on Wednesday".into(),
+        "4" | "THU" => "on Thursday".into(),
+        "5" | "FRI" => "on Friday".into(),
+        "6" | "SAT" => "on Saturday".into(),
+        _ => format!("on days-of-week {dow}"),
+    }
 }
 
 fn is_single_num(s: &str) -> bool {
@@ -99,13 +109,28 @@ fn parse_u(s: &str) -> u32 {
     s.parse().unwrap_or(0)
 }
 
-/// Explain a systemd OnCalendar / timer description (best-effort).
+/// Explain a systemd OnCalendar / On*Sec schedule expression.
 pub fn explain_systemd(expr: &str) -> String {
     if expr.is_empty() {
-        "systemd timer (see unit)".into()
-    } else {
-        format!("systemd calendar: {expr}")
+        return "systemd timer (see unit)".into();
     }
+    // Prefer a readable summary for common OnCalendar patterns.
+    if let Some(cal) = expr
+        .split(';')
+        .map(str::trim)
+        .find_map(|p| p.strip_prefix("OnCalendar="))
+    {
+        let cal = cal.trim();
+        // *-*-* HH:MM:SS → every day at …
+        if let Some(rest) = cal.strip_prefix("*-*-* ") {
+            return format!("systemd calendar: every day at {rest}");
+        }
+        return format!("systemd OnCalendar={cal}");
+    }
+    if expr.contains("OnActiveSec=") || expr.contains("OnBootSec=") || expr.contains("OnUnitActiveSec=") {
+        return format!("systemd monotonic: {expr}");
+    }
+    format!("systemd schedule: {expr}")
 }
 
 /// Explain an `at` job time.
@@ -131,5 +156,19 @@ mod tests {
         assert!(e.contains("weekdays"), "{e}");
         assert!(e.contains("06:00"), "{e}");
         assert!(e.contains("Europe/Helsinki"), "{e}");
+    }
+
+    #[test]
+    fn sunday_dow_7_not_weekdays() {
+        let s = CronSchedule::Fields {
+            minute: "47".into(),
+            hour: "6".into(),
+            dom: "*".into(),
+            month: "*".into(),
+            dow: "7".into(),
+        };
+        let e = explain_cron(&s, "UTC");
+        assert!(e.contains("Sunday"), "{e}");
+        assert!(!e.contains("weekdays 7"), "{e}");
     }
 }
