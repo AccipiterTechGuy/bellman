@@ -56,7 +56,7 @@ Week empty cells and Month day cells open **New timer** with `occurrence.kind = 
 
 ## Evidence ledger
 
-All PNG evidence is **real WebKitGTK** via `scripts/capture_qa_p4e.py` (AT-SPI + XTest + Xlib GetImage), display recipe same family as `docs/QA_P4b.md` path (a) real `:0`. No mocked harness, no Chromium, no hand-edited images.
+All PNG evidence is **real WebKitGTK** via `scripts/capture_qa_p4e.py` (tauri-driver + WebKitWebDriver + Xlib GetImage on an isolated Xvfb). See `docs/QA_P4b.md`. No mocked harness, no Chromium, no hand-edited images.
 
 Session data: `/tmp/qa-p4e-session/share/io.bellman.desktop`  
 CLI: `/tmp/bellman-cli-p4e` (release `bellman` sidecar)

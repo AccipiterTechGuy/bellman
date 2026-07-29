@@ -1,66 +1,32 @@
 #!/usr/bin/env python3
 """QA P4e — WebKitGTK evidence for fire-neighbour collisions / list triage / calendar create.
 
-Drives the real Tauri/WebKitGTK app on DISPLAY (default :0) via AT-SPI + XTest.
-NO mocked harness, NO Chromium, NO hand-edited images.
-
+Isolated display + tauri-driver / WebKitWebDriver. No global-input-injection, never the operator X session.
 Outputs under docs/qa4-screenshots/ (p4e-*) and docs/qa4-evidence/.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import sqlite3
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from Xlib import XK, X
-from Xlib.ext import xtest
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import qa_webdriver as qa
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "qa4-screenshots"
 EVIDENCE = ROOT / "docs" / "qa4-evidence"
-DISPLAY_NAME = os.environ.get("DISPLAY", ":0")
 DATA_DIR = Path(
     os.environ.get(
         "BELLMAN_QA_DATA",
-        "/tmp/qa-p4e-session/share/io.bellman.desktop",
+        "/tmp/bellman-qa-session/share/io.bellman.desktop",
     )
 )
-
-_spec = importlib.util.spec_from_file_location(
-    "capture_qa_p4b", ROOT / "scripts" / "capture_qa_p4b.py"
-)
-p4b = importlib.util.module_from_spec(_spec)
-sys.modules["capture_qa_p4b"] = p4b
-_spec.loader.exec_module(p4b)
-
-p4b.DATA_DIR = DATA_DIR
-p4b.OUT = OUT
-p4b.EVIDENCE = EVIDENCE
-p4b.DISPLAY_NAME = DISPLAY_NAME
-
-_cli_candidates = [
-    os.environ.get("BELLMAN_CLI", ""),
-    str(ROOT / "target/release/bellman-cli"),
-    "/tmp/bellman-cli-schema3",
-    str(ROOT / "target/release/bellman"),
-]
-p4b.CLI_BIN = next((p for p in _cli_candidates if p and Path(p).exists()), "bellman")
-CLI = p4b.CLI_BIN
-
-
-def resize_window(w: int, h: int):
-    for args in (
-        ["wmctrl", "-x", "-r", "Bellman.Bellman", "-e", f"0,40,40,{w},{h}"],
-        ["wmctrl", "-r", "Bellman", "-e", f"0,40,40,{w},{h}"],
-    ):
-        subprocess.run(args, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(0.55)
+CLI = qa.CLI_BIN
 
 
 def dump_store(path: Path):
@@ -92,61 +58,31 @@ def cli(*args: str) -> str:
     return text
 
 
-def open_new(app, d):
-    p4b.close_dialog_if_open(app)
-    time.sleep(0.15)
-    p4b.click_named(app, "All timers", "push button")
-    time.sleep(0.25)
-    p4b.click_named(app, "+ New timer", "push button")
-    time.sleep(0.55)
-
-
-def select_kind_click(app, kind: str, d):
-    kind = kind.lower()
-    combos = p4b.walk_find(app, lambda a: a.getRoleName() == "combo box")
-    if not combos:
-        raise RuntimeError("no combo box")
-    combo = combos[0]
-    comp = combo.queryComponent()
-    try:
-        comp.grabFocus()
-    except Exception:
-        pass
-    ext = comp.getExtents(p4b.pyatspi.DESKTOP_COORDS)
-    cx = int(ext.x + max(ext.width // 2, 4))
-    cy = int(ext.y + max(ext.height // 2, 4))
-    xtest.fake_input(d, X.MotionNotify, x=cx, y=cy)
-    xtest.fake_input(d, X.ButtonPress, detail=1)
-    xtest.fake_input(d, X.ButtonRelease, detail=1)
-    d.sync()
-    time.sleep(0.4)
-    items = p4b.walk_find(
-        app,
-        lambda a: a.getRoleName() == "menu item" and (a.name or "").lower() == kind,
-    )
-    if not items:
-        p4b.select_kind(app, kind, d)
-        return
-    p4b.do_action(items[0])
-    time.sleep(0.45)
-
-
-def set_action_launch(app, d, command="/bin/true"):
-    """Select launch command radio and fill Command."""
-    radios = p4b.walk_find(app, lambda a: a.getRoleName() == "radio button")
-    for r in radios:
-        name = (r.name or "").lower()
-        if "launch" in name:
-            p4b.do_action(r)
-            time.sleep(0.25)
+def set_action_launch(command: str = "/bin/true"):
+    d = qa.driver()
+    By = qa._by()
+    # Click the "launch command" radio via label text
+    for lab in d.find_elements(By.CSS_SELECTOR, "label.radio, label"):
+        if "launch" in (lab.text or "").lower():
+            lab.click()
+            time.sleep(0.2)
             break
-    p4b.focus_entry(app, "Command", d)
-    p4b.clear_and_type(d, command)
-    time.sleep(0.1)
+    try:
+        qa.set_input_value("#td-cmd", command)
+    except Exception:
+        # fallback by placeholder/name
+        for css in ("#td-cmd", "input[placeholder*='notify']", "input"):
+            try:
+                els = d.find_elements(By.CSS_SELECTOR, css)
+                for el in els:
+                    if el.is_displayed():
+                        qa.set_input_value(css if css.startswith("#") else f"#{el.get_attribute('id')}", command)
+                        return
+            except Exception:
+                continue
 
 
 def create_daily(
-    app,
     d,
     *,
     name: str,
@@ -156,28 +92,27 @@ def create_daily(
     snap: str | None = None,
 ):
     print(f"\n== CREATE daily {name!r} @ {time_hhmm} ==")
-    open_new(app, d)
-    select_kind_click(app, "daily", d)
-    time.sleep(0.3)
-    p4b.focus_entry(app, "Name", d)
-    p4b.clear_and_type(d, name)
-    p4b.focus_entry(app, "Timezone", d)
-    p4b.clear_and_type(d, tz)
-    p4b.focus_entry(app, "Wall-clock", d)
-    p4b.clear_and_type(d, time_hhmm)
+    qa.open_new_timer()
+    qa.select_kind("daily")
+    time.sleep(0.25)
+    qa.fill_fields(
+        [
+            ("Name", name),
+            ("Timezone", tz),
+            ("Wall-clock", time_hhmm),
+        ]
+    )
     if launch:
-        set_action_launch(app, d, "/bin/true")
-    time.sleep(1.2)  # preview + neighbours
+        set_action_launch("/bin/true")
+    time.sleep(1.1)
     if snap:
-        p4b.capture(d, snap, {"name": name, "time": time_hhmm, "launch": launch})
-    p4b.click_named(app, "Create", "push button")
-    time.sleep(1.0)
+        qa.capture(d, snap, {"name": name, "time": time_hhmm, "launch": launch})
+    qa.click_button("Create")
+    time.sleep(0.95)
 
 
 def seed_bulk_cli(n: int = 50):
-    """Seed N daily timers via CLI for bounded-work timing (not the core GUI demo)."""
     print(f"\n== CLI seed {n} timers for density/timing ==")
-    # Space them so they don't all collide with 09:00 demo.
     for i in range(n):
         minute = (i * 7) % 60
         hour = 11 + (i // 60) % 10
@@ -197,12 +132,8 @@ def seed_bulk_cli(n: int = 50):
     print(f"  store rows after bulk: {len(rows)}")
 
 
-def measure_neighbours_cli(candidates_iso: list[str]) -> dict:
-    """Call the pure path via a tiny cargo test binary is heavy; instead time
-    list + next for each and record. For the dialog path we time the GUI wait
-    below. Also write bellman next --json for collision timers."""
-    out = {"candidates": candidates_iso, "next": {}}
-    db = DATA_DIR / "timers.db"
+def measure_neighbours_cli() -> dict:
+    out = {"next": {}}
     listing = cli("list", "--json")
     (EVIDENCE / "bellman-list-collision.json").write_text(listing)
     try:
@@ -218,177 +149,183 @@ def measure_neighbours_cli(candidates_iso: list[str]) -> dict:
             tid = t.get("id") or t.get("timer_id")
             if not tid:
                 continue
-            nxt = cli("next", "--json", tid, "3")
+            nxt = cli("next", "--json", str(tid), "3")
             out["next"][name] = nxt
             (EVIDENCE / f"bellman-next-{name}.json").write_text(nxt)
     (EVIDENCE / "collision-cli-parity.json").write_text(json.dumps(out, indent=2) + "\n")
     return out
 
 
-def shot_list_sort_filter(app, d):
+def filter_by_name(query: str):
+    d = qa.driver()
+    By = qa._by()
+    # Prefer dedicated filter input if present
+    for css in (
+        "input[placeholder*='Filter']",
+        "input[aria-label*='Filter']",
+        "input[type='search']",
+        ".filter input",
+        "input",
+    ):
+        els = d.find_elements(By.CSS_SELECTOR, css)
+        for el in els:
+            try:
+                if not el.is_displayed():
+                    continue
+                # Skip dialog fields when dialog open
+                ph = (el.get_attribute("placeholder") or "") + (el.get_attribute("aria-label") or "")
+                if "Filter" in ph or "Search" in ph or "filter" in ph.lower():
+                    eid = el.get_attribute("id")
+                    if eid:
+                        qa.set_input_value(f"#{eid}", query)
+                    else:
+                        d.execute_script(
+                            """
+                            const el = arguments[0], val = arguments[1];
+                            el.focus(); el.value = val;
+                            el.dispatchEvent(new Event('input', {bubbles:true}));
+                            """,
+                            el,
+                            query,
+                        )
+                    time.sleep(0.4)
+                    return True
+            except Exception:
+                continue
+    return False
+
+
+def shot_list_sort_filter(d):
     print("\n== LIST sort/filter ==")
-    p4b.close_dialog_if_open(app)
-    p4b.click_named(app, "All timers", "push button")
-    time.sleep(0.5)
-    # Search box
-    entries = p4b.walk_find(app, lambda a: a.getRoleName() == "text")
-    # Prefer the search entry by name
-    search = p4b.walk_find(
-        app,
-        lambda a: a.getRoleName() in ("text", "entry", "search box")
-        and "name" in ((a.name or "") + (getattr(a, "description", lambda: "")() or "")).lower(),
-    )
-    # Fallback: focus Filter by name
-    focused = False
-    for label in ("Filter timers by name", "Search"):
-        try:
-            p4b.focus_entry(app, label, d)
-            focused = True
-            break
-        except Exception:
-            continue
-    if not focused and entries:
-        try:
-            entries[0].queryComponent().grabFocus()
-            focused = True
-        except Exception:
-            pass
-    if focused:
-        p4b.clear_and_type(d, "qa-collide")
-        time.sleep(0.5)
-    p4b.capture(
+    qa.close_dialog_if_open()
+    qa.click_tab("All timers")
+    time.sleep(0.45)
+    filter_by_name("qa-collide")
+    qa.capture(
         d,
         "p4e-list-filter-search",
         {"filter": "qa-collide", "expect": "only collision timers visible"},
     )
-    # Clear search
-    if focused:
-        p4b.clear_and_type(d, "")
-        time.sleep(0.3)
-    p4b.capture(d, "p4e-list-sort-next-fire", {"sort": "next fire default", "density": True})
+    filter_by_name("")
+    time.sleep(0.3)
+    qa.capture(d, "p4e-list-sort-next-fire", {"sort": "next fire default", "density": True})
 
 
-def shot_calendar_create(app, d):
+def shot_calendar_create(d):
     print("\n== MONTH click-to-create ==")
-    p4b.close_dialog_if_open(app)
-    p4b.click_named(app, "Month", "push button")
-    time.sleep(0.6)
-    p4b.capture(d, "p4e-month-fire-counts", {"expect": "day cells show fire counts"})
-    # Prefer a future month so once-timers keep a non-null next_fire.
+    qa.close_dialog_if_open()
+    qa.click_tab("Month")
+    time.sleep(0.55)
+    qa.capture(d, "p4e-month-fire-counts", {"expect": "day cells show fire counts"})
     try:
-        p4b.click_named(app, "next month", "push button")
-        time.sleep(0.45)
+        qa.click_button("next month", exact=False, timeout=2.0)
+        time.sleep(0.4)
     except Exception:
         pass
-    hits = p4b.walk_find(
-        app,
-        lambda a: a.getRoleName() == "push button"
-        and (a.name or "").startswith("Create timer on"),
-    )
-    if hits:
-        target = hits[min(14, len(hits) - 1)]
-        print(f"  clicking {target.name!r}")
-        p4b.do_action(target)
-        time.sleep(0.8)
-        p4b.capture(d, "p4e-month-create-prefill", {"from": target.name})
-        p4b.focus_entry(app, "Name", d)
-        p4b.clear_and_type(d, "qa-from-month-cell")
-        time.sleep(0.7)
-        p4b.capture(d, "p4e-month-create-dialog", {"name": "qa-from-month-cell"})
-        p4b.click_named(app, "Create", "push button")
-        time.sleep(1.0)
+    drv = qa.driver()
+    By = qa._by()
+    creates = [
+        b
+        for b in drv.find_elements(By.CSS_SELECTOR, "button")
+        if (b.get_attribute("aria-label") or b.text or "").startswith("Create timer on")
+    ]
+    if creates:
+        target = creates[min(14, len(creates) - 1)]
+        label = target.get_attribute("aria-label") or target.text
+        print(f"  clicking {label!r}")
+        target.click()
+        time.sleep(0.75)
+        qa.capture(d, "p4e-month-create-prefill", {"from": label})
+        qa.fill_field("Name", "qa-from-month-cell")
+        time.sleep(0.6)
+        qa.capture(d, "p4e-month-create-dialog", {"name": "qa-from-month-cell"})
+        qa.click_button("Create")
+        time.sleep(0.95)
         dump_store(EVIDENCE / "store-after-month-create.json")
-        p4b.click_named(app, "All timers", "push button")
-        time.sleep(0.4)
-        try:
-            p4b.focus_entry(app, "Filter timers by name", d)
-            p4b.clear_and_type(d, "qa-from-month-cell")
-            time.sleep(0.4)
-        except Exception:
-            pass
-        p4b.capture(d, "p4e-list-after-month-create", {"expect": "qa-from-month-cell row"})
+        qa.click_tab("All timers")
+        time.sleep(0.35)
+        filter_by_name("qa-from-month-cell")
+        qa.capture(d, "p4e-list-after-month-create", {"expect": "qa-from-month-cell row"})
     else:
         print("  no Create timer on … buttons; skip prefill shot")
 
 
-def shot_week_create(app, d):
+def shot_week_create(d):
     print("\n== WEEK empty-day create ==")
-    p4b.close_dialog_if_open(app)
-    p4b.click_named(app, "Week", "push button")
-    time.sleep(0.5)
-    p4b.capture(d, "p4e-week-day-counts", {"expect": "day counts + empty + New"})
-    news = p4b.walk_find(
-        app,
-        lambda a: a.getRoleName() == "push button"
-        and ("+ New" in (a.name or "") or "New on this day" in (a.name or "")),
-    )
+    qa.close_dialog_if_open()
+    qa.click_tab("Week")
+    time.sleep(0.45)
+    qa.capture(d, "p4e-week-day-counts", {"expect": "day counts + empty + New"})
+    drv = qa.driver()
+    By = qa._by()
+    news = [
+        b
+        for b in drv.find_elements(By.CSS_SELECTOR, "button")
+        if "+ New" in (b.text or "") or "New on this day" in (b.text or "")
+    ]
     if news:
-        p4b.do_action(news[0])
-        time.sleep(0.7)
-        p4b.capture(d, "p4e-week-create-prefill", {"expect": "dialog prefilled from week day"})
-        p4b.close_dialog_if_open(app)
+        news[0].click()
+        time.sleep(0.65)
+        qa.capture(d, "p4e-week-create-prefill", {"expect": "dialog prefilled from week day"})
+        qa.close_dialog_if_open()
 
 
 def main() -> int:
+    global DATA_DIR, CLI
+    qa.DATA_DIR = Path(os.environ.get("BELLMAN_QA_DATA", str(DATA_DIR)))
+    qa.DISPLAY_NAME = os.environ.get("DISPLAY", "")
+    qa.OUT = OUT
+    qa.EVIDENCE = EVIDENCE
+    DATA_DIR = qa.DATA_DIR
+    if os.environ.get("BELLMAN_CLI"):
+        qa.CLI_BIN = os.environ["BELLMAN_CLI"]
+    CLI = qa.CLI_BIN
+
     OUT.mkdir(parents=True, exist_ok=True)
     EVIDENCE.mkdir(parents=True, exist_ok=True)
-    d = p4b.xdisp()
-    # Production binary is `bellman-app` (package name); older builds used `bellman`.
-    app = None
-    for name in ("bellman-app", "bellman", "Bellman"):
-        try:
-            app = p4b.find_app(name)
-            print(f"  a11y app: {name!r}")
-            break
-        except RuntimeError:
-            continue
-    if app is None:
-        print("Bellman AT-SPI app not found (tried bellman-app/bellman)", file=sys.stderr)
-        return 2
-    p4b.raise_and_geom(d)
-    resize_window(960, 640)
-    time.sleep(0.4)
 
-    log_lines = []
+    disp = os.environ.get("DISPLAY", "")
+    if disp in (":0", ":0.0") and os.environ.get("BELLMAN_QA_ALLOW_DISPLAY0") != "1":
+        print(f"ERROR: refusing DISPLAY={disp}", file=sys.stderr)
+        return 2
+
+    print(f"P4e WebDriver session DISPLAY={disp} DATA={DATA_DIR}")
+    qa.start_session()
+    d = qa.xdisp()
+    qa.resize_window(960, 640)
+    time.sleep(0.35)
     t0 = time.time()
 
-    # --- Core demo: 3 same-second timers via GUI, 4th opens dialog ---
-    create_daily(app, d, name="qa-collide-alpha-backup", time_hhmm="09:00:00", tz="UTC")
+    create_daily(d, name="qa-collide-alpha-backup", time_hhmm="09:00:00", tz="UTC")
     create_daily(
-        app,
         d,
         name="qa-collide-beta-launch-heavy-workload",
         time_hhmm="09:00:00",
         tz="UTC",
         launch=True,
     )
-    create_daily(app, d, name="qa-collide-gamma-notify", time_hhmm="09:00:00", tz="UTC")
-
-    # Nearby but not identical (2 min later)
-    create_daily(app, d, name="qa-nearby-two-min", time_hhmm="09:02:00", tz="UTC")
-
-    # Long name for ellipsis proof
+    create_daily(d, name="qa-collide-gamma-notify", time_hhmm="09:00:00", tz="UTC")
+    create_daily(d, name="qa-nearby-two-min", time_hhmm="09:02:00", tz="UTC")
     long_name = (
         "qa-long-name-morning-backup-and-sync-pipeline-with-extra-descriptive-words-end"
     )
-    create_daily(app, d, name=long_name, time_hhmm="14:30:00", tz="UTC")
-
+    create_daily(d, name=long_name, time_hhmm="14:30:00", tz="UTC")
     dump_store(EVIDENCE / "store-after-collision-create.json")
 
-    # Open 4th at same time — collision dialog
     print("\n== DIALOG collision naming three peers ==")
-    open_new(app, d)
-    select_kind_click(app, "daily", d)
-    p4b.focus_entry(app, "Name", d)
-    p4b.clear_and_type(d, "qa-collide-delta-fourth")
-    p4b.focus_entry(app, "Timezone", d)
-    p4b.clear_and_type(d, "UTC")
-    p4b.focus_entry(app, "Wall-clock", d)
-    p4b.clear_and_type(d, "09:00:00")
+    qa.open_new_timer()
+    qa.select_kind("daily")
+    qa.fill_fields(
+        [
+            ("Name", "qa-collide-delta-fourth"),
+            ("Timezone", "UTC"),
+            ("Wall-clock", "09:00:00"),
+        ]
+    )
     t_n0 = time.time()
-    time.sleep(1.8)  # preview + query_neighbours
+    time.sleep(1.8)
     t_n1 = time.time()
-    p4b.capture(
+    qa.capture(
         d,
         "p4e-dialog-collision-names-three",
         {
@@ -397,26 +334,25 @@ def main() -> int:
             "neighbour_wait_ms": int((t_n1 - t_n0) * 1000),
         },
     )
-    resize_window(1280, 800)
-    time.sleep(0.5)
-    p4b.capture(d, "p4e-dialog-collision-1280x800", {"viewport": "1280x800"})
-    resize_window(960, 640)
-    time.sleep(0.4)
-    p4b.close_dialog_if_open(app)
+    qa.resize_window(1280, 800)
+    time.sleep(0.45)
+    qa.capture(d, "p4e-dialog-collision-1280x800", {"viewport": "1280x800"})
+    qa.resize_window(960, 640)
+    time.sleep(0.35)
+    qa.close_dialog_if_open()
 
-    # Nearby case: open dialog at 09:00 should show qa-nearby as nearby not collision
-    # (already visible in collision shot). Dedicated shot at 09:01 to show nearby-only.
     print("\n== DIALOG nearby-only ==")
-    open_new(app, d)
-    select_kind_click(app, "daily", d)
-    p4b.focus_entry(app, "Name", d)
-    p4b.clear_and_type(d, "qa-probe-near-0901")
-    p4b.focus_entry(app, "Timezone", d)
-    p4b.clear_and_type(d, "UTC")
-    p4b.focus_entry(app, "Wall-clock", d)
-    p4b.clear_and_type(d, "09:01:00")
-    time.sleep(1.6)
-    p4b.capture(
+    qa.open_new_timer()
+    qa.select_kind("daily")
+    qa.fill_fields(
+        [
+            ("Name", "qa-probe-near-0901"),
+            ("Timezone", "UTC"),
+            ("Wall-clock", "09:01:00"),
+        ]
+    )
+    time.sleep(1.5)
+    qa.capture(
         d,
         "p4e-dialog-nearby-not-collision",
         {
@@ -424,63 +360,50 @@ def main() -> int:
             "expect": "nearby list shows ±60s to collide timers; no same-second badge if none",
         },
     )
-    p4b.close_dialog_if_open(app)
+    qa.close_dialog_if_open()
 
-    # No-collision case
     print("\n== DIALOG no-collision clear state ==")
-    open_new(app, d)
-    select_kind_click(app, "daily", d)
-    p4b.focus_entry(app, "Name", d)
-    p4b.clear_and_type(d, "qa-lonely-1530")
-    p4b.focus_entry(app, "Timezone", d)
-    p4b.clear_and_type(d, "UTC")
-    p4b.focus_entry(app, "Wall-clock", d)
-    p4b.clear_and_type(d, "15:30:00")
-    time.sleep(1.5)
-    p4b.capture(
+    qa.open_new_timer()
+    qa.select_kind("daily")
+    qa.fill_fields(
+        [
+            ("Name", "qa-lonely-1530"),
+            ("Timezone", "UTC"),
+            ("Wall-clock", "15:30:00"),
+        ]
+    )
+    time.sleep(1.4)
+    qa.capture(
         d,
         "p4e-dialog-no-collision",
         {"phase": "clear", "expect": "No other timers fire at or near…"},
     )
-    p4b.close_dialog_if_open(app)
+    qa.close_dialog_if_open()
 
-    # Long name readable in dialog (create open with long existing as neighbour if we collide)
-    # Show the long-named timer itself in edit / list
-    p4b.click_named(app, "All timers", "push button")
-    time.sleep(0.4)
-    try:
-        p4b.focus_entry(app, "Filter timers by name", d)
-        p4b.clear_and_type(d, "qa-long-name")
-        time.sleep(0.4)
-    except Exception:
-        pass
-    p4b.capture(
+    qa.click_tab("All timers")
+    time.sleep(0.35)
+    filter_by_name("qa-long-name")
+    qa.capture(
         d,
         "p4e-list-long-name-readable",
         {"expect": "full long timer name visible, no silent ellipsis"},
     )
 
-    measure_neighbours_cli([])
-    shot_list_sort_filter(app, d)
-    shot_week_create(app, d)
-    shot_calendar_create(app, d)
+    measure_neighbours_cli()
+    shot_list_sort_filter(d)
+    shot_week_create(d)
+    shot_calendar_create(d)
 
-    # Bulk seed for timing note (CLI — does not claim GUI create)
     seed_bulk_cli(50)
-    # Open dialog and time neighbour refresh with ≥50 timers in store
     print("\n== BOUNDED WORK with ≥50 timers ==")
-    open_new(app, d)
-    select_kind_click(app, "daily", d)
-    p4b.focus_entry(app, "Name", d)
-    p4b.clear_and_type(d, "qa-timing-probe")
-    p4b.focus_entry(app, "Timezone", d)
-    p4b.clear_and_type(d, "UTC")
-    p4b.focus_entry(app, "Wall-clock", d)
+    qa.open_new_timer()
+    qa.select_kind("daily")
+    qa.fill_fields([("Name", "qa-timing-probe"), ("Timezone", "UTC")])
     t_b0 = time.time()
-    p4b.clear_and_type(d, "09:00:00")
+    qa.fill_field("Wall-clock", "09:00:00")
     time.sleep(2.0)
     t_b1 = time.time()
-    p4b.capture(
+    qa.capture(
         d,
         "p4e-dialog-collision-50plus",
         {
@@ -494,13 +417,15 @@ def main() -> int:
             },
         },
     )
-    p4b.close_dialog_if_open(app)
+    qa.close_dialog_if_open()
 
     elapsed = time.time() - t0
     summary = {
         "elapsed_s": round(elapsed, 2),
         "cli": CLI,
         "data_dir": str(DATA_DIR),
+        "display": disp,
+        "input_backend": "tauri-driver+WebKitWebDriver",
         "shots": sorted(p.name for p in OUT.glob("p4e-*.png")),
     }
     (EVIDENCE / "p4e-capture-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
@@ -509,4 +434,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        raise SystemExit(main())
+    finally:
+        try:
+            qa.stop_session()
+        except Exception:
+            pass

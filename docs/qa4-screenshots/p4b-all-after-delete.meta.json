@@ -2,18 +2,20 @@
   "file": "p4b-all-after-delete.png",
   "size": [
     960,
-    900
+    763
   ],
-  "bytes": 24420,
-  "mean_luma": 25.53,
-  "stdev": 4.9,
-  "unique_colors_cap200k": 2315,
-  "window_id": "0x5a00003",
+  "bytes": 27470,
+  "mean_luma": 27.19,
+  "stdev": 8.33,
+  "unique_colors_cap200k": 1155,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    30,
-    92,
+    66,
+    97,
     960,
-    900
+    763
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":98",
   "phase": "after-delete"
 }

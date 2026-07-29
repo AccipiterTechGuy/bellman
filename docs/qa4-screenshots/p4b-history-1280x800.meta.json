@@ -2,18 +2,20 @@
   "file": "p4b-history-1280x800.png",
   "size": [
     1280,
-    800
+    763
   ],
-  "bytes": 84130,
-  "mean_luma": 27.36,
-  "stdev": 6.76,
-  "unique_colors_cap200k": 3426,
-  "window_id": "0x5a00003",
+  "bytes": 83551,
+  "mean_luma": 28.15,
+  "stdev": 7.73,
+  "unique_colors_cap200k": 1125,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    30,
-    92,
+    26,
+    97,
     1280,
-    800
+    763
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":98",
   "phase": "layout-large"
 }

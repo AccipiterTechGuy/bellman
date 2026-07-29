@@ -64,7 +64,7 @@ C8b capped `max-height: min(92vh, 600px)` with `overflow: hidden`. Chips + tz li
 
 ## Evidence ledger
 
-All PNG evidence is **real WebKitGTK** via `scripts/capture_qa_p4d.py` (AT-SPI + XTest + Xlib GetImage), display recipe same family as `docs/QA_P4b.md` path (a) real `:0` NVIDIA. No mocked harness, no Chromium, no hand-edited images.
+All PNG evidence is **real WebKitGTK** via `scripts/capture_qa_p4d.py` (tauri-driver + WebKitWebDriver + Xlib GetImage on an isolated Xvfb). See `docs/QA_P4b.md`. No mocked harness, no Chromium, no hand-edited images.
 
 ### Screenshots opened and described
 
@@ -232,7 +232,7 @@ mkdir -p "$QA/share/io.bellman.desktop/logs" "$QA/share/io.bellman.desktop/slots
 printf '%s\n' '{"wizard_completed":true,"autostart_enabled":false,"start_minimized":false,"wake_enabled":false}' \
   > "$QA/share/io.bellman.desktop/config.json"
 
-export DISPLAY=:0
+# DISPLAY is set by scripts/qa_display.sh (isolated Xvfb)
 export XDG_DATA_HOME="$QA/share"
 export XDG_CONFIG_HOME="$QA/config"
 export GDK_BACKEND=x11

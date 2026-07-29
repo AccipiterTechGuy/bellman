@@ -1,11 +1,11 @@
 {
   "WebKitWebProcess": [
-    "781487  781459 187148 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 54"
+    "1725209 1725179 199496 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 26"
   ],
   "WebKitNetworkProcess": [
-    "781478  781459 49220 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 25"
+    "1725205 1725179 49216 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 20"
   ],
   "bellman": [
-    "781459  781455 189920 /home/sami/bellman/.train-worktrees/2026-07-28_0002/target/release/bellman"
+    "1725179 1722686 201548 /tmp/bellman-deb-extract/usr/bin/bellman-app"
   ]
 }

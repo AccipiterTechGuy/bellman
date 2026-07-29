@@ -1,12 +1,12 @@
 [
   {
-    "id": "eaab3b6d-37e4-4bbe-b951-7a0f81a21256",
+    "id": "da6315c2-cc33-4031-9154-d0ecaed2f637",
     "name": "qa-cron",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"cron\",\"expr\":\"30 9 * * 1-5\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
     "tz": "Europe/Helsinki",
-    "next_fire_utc": "2026-07-29T06:30:00.000000000Z",
-    "last_fired": "2026-07-28T09:49:03.844162491Z",
+    "next_fire_utc": "2026-07-30T06:30:00.000000000Z",
+    "last_fired": "2026-07-29T09:01:34.467673918Z",
     "misfire_policy": "{\"coalesce\":{\"grace_secs\":3600}}",
     "overlap_policy": "\"skip\"",
     "retry_policy": "{\"max_retries\":1,\"delay_secs\":30}",
@@ -15,16 +15,18 @@
     "max_runs": null,
     "tags": "[]",
     "action": "{\"type\":\"none\"}",
-    "revision": 3
+    "revision": 3,
+    "jitter_secs": 0,
+    "accuracy_slack_secs": null
   },
   {
-    "id": "14456d28-6b82-4073-acc5-fcf453253810",
+    "id": "dde94721-d77c-47c8-80b2-86eb7a5902b7",
     "name": "qa-daily",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"daily\",\"at\":\"09:15:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
     "tz": "Europe/Helsinki",
-    "next_fire_utc": "2026-07-29T06:15:00.000000000Z",
-    "last_fired": "2026-07-28T09:49:05.887014423Z",
+    "next_fire_utc": "2026-07-30T06:15:00.000000000Z",
+    "last_fired": "2026-07-29T09:01:36.412279018Z",
     "misfire_policy": "{\"coalesce\":{\"grace_secs\":3600}}",
     "overlap_policy": "\"skip\"",
     "retry_policy": "{\"max_retries\":1,\"delay_secs\":30}",
@@ -33,10 +35,12 @@
     "max_runs": null,
     "tags": "[]",
     "action": "{\"type\":\"none\"}",
-    "revision": 3
+    "revision": 3,
+    "jitter_secs": 0,
+    "accuracy_slack_secs": null
   },
   {
-    "id": "e6b0d812-ef58-4e2a-b101-8593c2c19870",
+    "id": "f3d8a2cc-7769-4124-bec1-2e609095de82",
     "name": "qa-dst-gap",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"once\",\"at\":\"2027-03-28T03:30:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -51,15 +55,17 @@
     "max_runs": null,
     "tags": "[]",
     "action": "{\"type\":\"none\"}",
-    "revision": 1
+    "revision": 1,
+    "jitter_secs": 0,
+    "accuracy_slack_secs": null
   },
   {
-    "id": "d3956c37-15d4-4c82-8e83-67c33ef3058c",
+    "id": "3c62c285-8d8c-4215-8368-13dcc5a20f57",
     "name": "qa-interval",
     "enabled": 1,
-    "occurrence": "{\"kind\":{\"occ\":\"interval\",\"every_secs\":180,\"anchor\":\"2026-07-28T09:48:22.734251388Z\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
+    "occurrence": "{\"kind\":{\"occ\":\"interval\",\"every_secs\":180,\"anchor\":\"2026-07-29T09:00:58.945237334Z\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
     "tz": "Europe/Helsinki",
-    "next_fire_utc": "2026-07-28T09:51:22.734251388Z",
+    "next_fire_utc": "2026-07-29T09:03:58.945237334Z",
     "last_fired": null,
     "misfire_policy": "\"skip\"",
     "overlap_policy": "\"skip\"",
@@ -69,10 +75,12 @@
     "max_runs": null,
     "tags": "[]",
     "action": "{\"type\":\"none\"}",
-    "revision": 2
+    "revision": 2,
+    "jitter_secs": 0,
+    "accuracy_slack_secs": null
   },
   {
-    "id": "5d0443e6-1f37-4787-aa97-c4b1487ab317",
+    "id": "c81aafc8-0a3b-4312-9439-7947c1e0e619",
     "name": "qa-monthly",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"monthly\",\"day\":20,\"at\":\"10:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -87,10 +95,12 @@
     "max_runs": null,
     "tags": "[]",
     "action": "{\"type\":\"none\"}",
-    "revision": 2
+    "revision": 2,
+    "jitter_secs": 0,
+    "accuracy_slack_secs": null
   },
   {
-    "id": "a93b762c-cdbf-471f-af05-120546b713fa",
+    "id": "17f53a6e-63c5-41b1-ab65-26fd23a8befb",
     "name": "qa-once-edited",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"once\",\"at\":\"2027-03-28T03:30:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -105,10 +115,12 @@
     "max_runs": null,
     "tags": "[]",
     "action": "{\"type\":\"none\"}",
-    "revision": 2
+    "revision": 2,
+    "jitter_secs": 0,
+    "accuracy_slack_secs": null
   },
   {
-    "id": "dc44d162-9792-48e4-82ed-1ca710562cf4",
+    "id": "41e22991-2544-4555-b7b1-8ab23c17cb8f",
     "name": "qa-weekly",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"weekly\",\"days\":10,\"at\":\"08:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -123,10 +135,12 @@
     "max_runs": null,
     "tags": "[]",
     "action": "{\"type\":\"none\"}",
-    "revision": 2
+    "revision": 2,
+    "jitter_secs": 0,
+    "accuracy_slack_secs": null
   },
   {
-    "id": "04f59f70-ed03-486c-a44b-13cb5d813f3e",
+    "id": "2cc83f29-43d8-4894-8fe3-55787412fd0c",
     "name": "qa-yearly",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"yearly\",\"month\":12,\"day\":28,\"at\":\"12:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -141,6 +155,28 @@
     "max_runs": null,
     "tags": "[]",
     "action": "{\"type\":\"none\"}",
-    "revision": 2
+    "revision": 2,
+    "jitter_secs": 0,
+    "accuracy_slack_secs": null
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "name": "system.prune",
+    "enabled": 1,
+    "occurrence": "{\"kind\":{\"occ\":\"weekly\",\"days\":1,\"at\":\"03:17:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
+    "tz": "Europe/Helsinki",
+    "next_fire_utc": "2026-08-03T00:17:00.000000000Z",
+    "last_fired": null,
+    "misfire_policy": "{\"coalesce\":{\"grace_secs\":3600}}",
+    "overlap_policy": "\"skip\"",
+    "retry_policy": "{\"max_retries\":0,\"delay_secs\":0}",
+    "valid_from": null,
+    "valid_until": null,
+    "max_runs": null,
+    "tags": "[\"system\",\"internal\"]",
+    "action": "{\"type\":\"none\"}",
+    "revision": 2,
+    "jitter_secs": 0,
+    "accuracy_slack_secs": null
   }
 ]

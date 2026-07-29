@@ -1,14 +1,16 @@
 {
   "command": "list",
-  "count": 8,
+  "count": 9,
   "ok": true,
   "timers": [
     {
+      "accuracy_slack_secs": null,
       "action": {
         "type": "none"
       },
       "enabled": true,
-      "id": "eaab3b6d-37e4-4bbe-b951-7a0f81a21256",
+      "id": "da6315c2-cc33-4031-9154-d0ecaed2f637",
+      "jitter_secs": 0,
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -17,7 +19,7 @@
         }
       },
       "name": "qa-cron",
-      "next_fire_utc": "2026-07-29T06:00:00Z",
+      "next_fire_utc": "2026-07-30T06:00:00Z",
       "occurrence": {
         "dst_fold": "first_occurrence",
         "dst_gap": "first_valid_after_gap",
@@ -46,11 +48,13 @@
       "valid_until": null
     },
     {
+      "accuracy_slack_secs": null,
       "action": {
         "type": "none"
       },
       "enabled": true,
-      "id": "14456d28-6b82-4073-acc5-fcf453253810",
+      "id": "dde94721-d77c-47c8-80b2-86eb7a5902b7",
+      "jitter_secs": 0,
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -59,7 +63,7 @@
         }
       },
       "name": "qa-daily",
-      "next_fire_utc": "2026-07-29T05:15:00Z",
+      "next_fire_utc": "2026-07-30T05:15:00Z",
       "occurrence": {
         "dst_fold": "first_occurrence",
         "dst_gap": "first_valid_after_gap",
@@ -88,11 +92,13 @@
       "valid_until": null
     },
     {
+      "accuracy_slack_secs": null,
       "action": {
         "type": "none"
       },
       "enabled": true,
-      "id": "e6b0d812-ef58-4e2a-b101-8593c2c19870",
+      "id": "f3d8a2cc-7769-4124-bec1-2e609095de82",
+      "jitter_secs": 0,
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -130,23 +136,25 @@
       "valid_until": null
     },
     {
+      "accuracy_slack_secs": null,
       "action": {
         "type": "none"
       },
       "enabled": true,
-      "id": "d3956c37-15d4-4c82-8e83-67c33ef3058c",
+      "id": "3c62c285-8d8c-4215-8368-13dcc5a20f57",
+      "jitter_secs": 0,
       "last_fired": null,
       "max_runs": null,
       "misfire": "skip",
       "name": "qa-interval",
-      "next_fire_utc": "2026-07-28T09:50:22.734251388Z",
+      "next_fire_utc": "2026-07-29T09:02:58.945237334Z",
       "occurrence": {
         "dst_fold": "first_occurrence",
         "dst_gap": "first_valid_after_gap",
         "exclusions": [],
         "invalid_monthday": "clamp",
         "kind": {
-          "anchor": "2026-07-28T09:48:22.734251388Z",
+          "anchor": "2026-07-29T09:00:58.945237334Z",
           "every_secs": 120,
           "occ": "interval"
         },
@@ -169,11 +177,13 @@
       "valid_until": null
     },
     {
+      "accuracy_slack_secs": null,
       "action": {
         "type": "none"
       },
       "enabled": true,
-      "id": "5d0443e6-1f37-4787-aa97-c4b1487ab317",
+      "id": "c81aafc8-0a3b-4312-9439-7947c1e0e619",
+      "jitter_secs": 0,
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -212,11 +222,13 @@
       "valid_until": null
     },
     {
+      "accuracy_slack_secs": null,
       "action": {
         "type": "none"
       },
       "enabled": true,
-      "id": "a93b762c-cdbf-471f-af05-120546b713fa",
+      "id": "17f53a6e-63c5-41b1-ab65-26fd23a8befb",
+      "jitter_secs": 0,
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -254,11 +266,13 @@
       "valid_until": null
     },
     {
+      "accuracy_slack_secs": null,
       "action": {
         "type": "none"
       },
       "enabled": true,
-      "id": "dc44d162-9792-48e4-82ed-1ca710562cf4",
+      "id": "41e22991-2544-4555-b7b1-8ab23c17cb8f",
+      "jitter_secs": 0,
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -267,7 +281,7 @@
         }
       },
       "name": "qa-weekly",
-      "next_fire_utc": "2026-07-29T05:00:00Z",
+      "next_fire_utc": "2026-07-31T05:00:00Z",
       "occurrence": {
         "dst_fold": "first_occurrence",
         "dst_gap": "first_valid_after_gap",
@@ -297,11 +311,13 @@
       "valid_until": null
     },
     {
+      "accuracy_slack_secs": null,
       "action": {
         "type": "none"
       },
       "enabled": true,
-      "id": "04f59f70-ed03-486c-a44b-13cb5d813f3e",
+      "id": "2cc83f29-43d8-4894-8fe3-55787412fd0c",
+      "jitter_secs": 0,
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -336,6 +352,54 @@
       },
       "revision": 1,
       "tags": [],
+      "tz": "Europe/Helsinki",
+      "valid_from": null,
+      "valid_until": null
+    },
+    {
+      "accuracy_slack_secs": null,
+      "action": {
+        "type": "none"
+      },
+      "enabled": true,
+      "id": "00000000-0000-4000-8000-000000000001",
+      "jitter_secs": 0,
+      "last_fired": null,
+      "max_runs": null,
+      "misfire": {
+        "coalesce": {
+          "grace_secs": 3600
+        }
+      },
+      "name": "system.prune",
+      "next_fire_utc": "2026-08-03T00:17:00Z",
+      "occurrence": {
+        "dst_fold": "first_occurrence",
+        "dst_gap": "first_valid_after_gap",
+        "exclusions": [],
+        "invalid_monthday": "clamp",
+        "kind": {
+          "at": "03:17:00",
+          "days": 1,
+          "occ": "weekly"
+        },
+        "max_runs": null,
+        "pending_skips": 0,
+        "runs_done": 0,
+        "tz": "Europe/Helsinki",
+        "valid_from": null,
+        "valid_until": null
+      },
+      "overlap": "skip",
+      "retry": {
+        "delay_secs": 0,
+        "max_retries": 0
+      },
+      "revision": 2,
+      "tags": [
+        "system",
+        "internal"
+      ],
       "tz": "Europe/Helsinki",
       "valid_from": null,
       "valid_until": null

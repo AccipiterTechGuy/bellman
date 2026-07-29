@@ -2,18 +2,20 @@
   "file": "p4b-month-1280x800.png",
   "size": [
     1280,
-    800
+    763
   ],
-  "bytes": 67316,
-  "mean_luma": 32.98,
-  "stdev": 7.82,
-  "unique_colors_cap200k": 3153,
-  "window_id": "0x5a00003",
+  "bytes": 71368,
+  "mean_luma": 34.49,
+  "stdev": 7.56,
+  "unique_colors_cap200k": 1041,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    30,
-    92,
+    26,
+    97,
     1280,
-    800
+    763
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":98",
   "phase": "layout-large"
 }

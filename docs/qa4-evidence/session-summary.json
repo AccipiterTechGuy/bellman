@@ -1,7 +1,8 @@
 {
-  "display": ":0",
-  "data_dir": "/tmp/qa-p4b-session/share/io.bellman.desktop",
-  "cli_bin": "/tmp/bellman-cli-schema3",
+  "display": ":98",
+  "data_dir": "/tmp/bellman-qa-session/share/io.bellman.desktop",
+  "cli_bin": "/tmp/bellman-deb-extract/usr/bin/bellman",
+  "input_backend": "tauri-driver+WebKitWebDriver",
   "screenshots": [
     "p4b-all-1280x800.png",
     "p4b-all-after-delete.png",
@@ -40,20 +41,21 @@
   ],
   "timers_final": [
     "qa-daily",
-    "qa-weekly"
+    "qa-weekly",
+    "system.prune"
   ],
   "webkit": {
     "WebKitWebProcess": [
-      "781487  781459 238924 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 54"
+      "1725209 1725179 230688 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 26"
     ],
     "WebKitNetworkProcess": [
-      "781478  781459 49544 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 25"
+      "1725205 1725179 49540 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 20"
     ],
     "bellman": [
-      "781459  781455 197788 /home/sami/bellman/.train-worktrees/2026-07-28_0002/target/release/bellman"
+      "1725179 1722686 206148 /tmp/bellman-deb-extract/usr/bin/bellman-app"
     ]
   },
   "userAgent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
-  "event_log_lines": 14,
+  "event_log_lines": 17,
   "delete_failures": []
 }
