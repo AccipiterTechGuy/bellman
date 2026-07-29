@@ -68,7 +68,7 @@
 
 <section class="section-title">
   <span>Run history</span>
-  <span style="font-weight: 400; text-transform: none; letter-spacing: 0;">
+  <span class="subtitle-meta">
     {log.totalRecords} record{log.totalRecords === 1 ? '' : 's'}
     {log.skipped ? `, ${log.skipped} skipped` : ''}
   </span>

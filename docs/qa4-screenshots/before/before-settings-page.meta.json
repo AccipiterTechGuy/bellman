@@ -1,0 +1,18 @@
+{
+  "file": "before-settings-page.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 88231,
+  "mean_luma": 31.56,
+  "stdev": 14.73,
+  "unique_colors_cap200k": 4784,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ]
+}

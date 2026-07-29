@@ -170,7 +170,7 @@
 
 <section class="section-title">
   <span>All timers</span>
-  <span style="font-weight: 400; text-transform: none; letter-spacing: 0; display: flex; gap: 12px; align-items: center;">
+  <span class="header-actions">
     <span>{filteredSorted.length} of {timers.length} timer{timers.length === 1 ? '' : 's'}</span>
     <button class="btn primary" onclick={onCreate}>+ New timer</button>
   </span>
@@ -260,7 +260,10 @@
           </td>
           <td>
             <span class="toggle" class:on={t.enabled} role="switch" aria-checked={t.enabled}
-                  onclick={(e) => toggle(t, e)} tabindex="0"></span>
+                  aria-label={`Toggle enabled state for timer ${t.name}`}
+                  onclick={(e) => toggle(t, e)}
+                  onkeydown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(t, e); } }}
+                  tabindex="0"></span>
           </td>
           <td class="col-controls">
             <button class="btn" onclick={(e) => openEdit(t, e)}>Edit</button>

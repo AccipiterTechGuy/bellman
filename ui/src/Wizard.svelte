@@ -85,8 +85,10 @@
       </p>
 
       <div class="q">
-        <label for="w-auto">Launch Bellman automatically when I log in?</label>
-        <input id="w-auto" type="checkbox" bind:checked={autostart} />
+        <label for="w-auto" class="checkbox-label">
+          <input id="w-auto" type="checkbox" bind:checked={autostart} />
+          <span>Launch Bellman automatically when I log in?</span>
+        </label>
       </div>
       <p class="hint">
         On Linux, XDG autostart is also what preserves the ambient CAP_WAKE_ALARM
@@ -94,8 +96,10 @@
       </p>
 
       <div class="q">
-        <label for="w-hidden">Start hidden in the system tray.</label>
-        <input id="w-hidden" type="checkbox" bind:checked={startMinimized} />
+        <label for="w-hidden" class="checkbox-label">
+          <input id="w-hidden" type="checkbox" bind:checked={startMinimized} />
+          <span>Start hidden in the system tray.</span>
+        </label>
       </div>
 
       <div class="actions">

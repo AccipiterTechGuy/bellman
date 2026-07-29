@@ -4,16 +4,17 @@
     960,
     640
   ],
-  "bytes": 80361,
-  "mean_luma": 34.04,
-  "stdev": 10.91,
-  "unique_colors_cap200k": 4747,
+  "bytes": 93014,
+  "mean_luma": 37.56,
+  "stdev": 12.66,
+  "unique_colors_cap200k": 2163,
   "window_id": "0x4800003",
   "wmctrl_geom": [
-    60,
-    122,
+    50,
+    112,
     960,
     640
   ],
-  "phase": "nearby-deduped"
+  "phase": "nearby",
+  "expect": "nearby list shows \u00b160s to collide timers; no same-second badge if none"
 }

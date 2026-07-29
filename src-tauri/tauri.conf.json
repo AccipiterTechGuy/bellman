@@ -5,8 +5,8 @@
   "identifier": "io.bellman.desktop",
   "build": {
     "beforeDevCommand": "npm run dev -- --port 1420",
-    "beforeBuildCommand": "bash ../scripts/stage_cli_sidecar.sh && npm run build",
-    "beforeBundleCommand": "bash ../scripts/stage_cli_sidecar.sh",
+    "beforeBuildCommand": "bash -c 'if [ -f ../scripts/stage_cli_sidecar.sh ]; then bash ../scripts/stage_cli_sidecar.sh; else bash scripts/stage_cli_sidecar.sh; fi' && (if [ -f ../package.json ]; then cd ..; fi && npm run build)",
+    "beforeBundleCommand": "bash -c 'if [ -f ../scripts/stage_cli_sidecar.sh ]; then bash ../scripts/stage_cli_sidecar.sh; else bash scripts/stage_cli_sidecar.sh; fi'",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../ui/dist"
   },
@@ -39,7 +39,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage", "msi", "nsis", "app", "dmg"],
+    "targets": ["deb"],
     "publisher": "Bellman",
     "category": "Utility",
     "shortDescription": "Cross-platform task scheduler — desktop cousin of cron",

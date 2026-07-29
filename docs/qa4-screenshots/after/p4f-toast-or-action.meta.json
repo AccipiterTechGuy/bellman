@@ -1,0 +1,19 @@
+{
+  "file": "p4f-toast-or-action.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 79094,
+  "mean_luma": 38.12,
+  "stdev": 15.48,
+  "unique_colors_cap200k": 2611,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ],
+  "expect": "Post-action surface; toast present when engine reports status/error"
+}

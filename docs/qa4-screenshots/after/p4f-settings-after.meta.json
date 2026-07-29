@@ -1,0 +1,19 @@
+{
+  "file": "p4f-settings-after.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 82844,
+  "mean_luma": 31.93,
+  "stdev": 13.83,
+  "unique_colors_cap200k": 1697,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ],
+  "expect": "Settings page surface with Wake from sleep and Autostart"
+}

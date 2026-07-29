@@ -1,0 +1,19 @@
+{
+  "file": "p4f-dialog-cron.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 56955,
+  "mean_luma": 34.71,
+  "stdev": 10.64,
+  "unique_colors_cap200k": 2019,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ],
+  "expect": "Timer Dialog showing cron occurrence kind fields"
+}

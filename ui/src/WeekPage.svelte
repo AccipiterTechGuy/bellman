@@ -129,7 +129,7 @@
 
 <section class="section-title">
   <span>Week</span>
-  <span style="font-weight: 400; text-transform: none; letter-spacing: 0;">{weekLabel}</span>
+  <span class="subtitle-meta">{weekLabel}</span>
 </section>
 
 <div class="week-toolbar">

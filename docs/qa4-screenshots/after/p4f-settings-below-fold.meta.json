@@ -1,0 +1,19 @@
+{
+  "file": "p4f-settings-below-fold.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 38672,
+  "mean_luma": 28.85,
+  "stdev": 10.41,
+  "unique_colors_cap200k": 1125,
+  "window_id": "0x4800003",
+  "wmctrl_geom": [
+    100,
+    162,
+    960,
+    640
+  ],
+  "expect": "Settings scrolled via wheel to misfire/engine"
+}

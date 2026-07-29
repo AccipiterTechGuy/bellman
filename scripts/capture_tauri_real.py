@@ -81,6 +81,16 @@ def grab(d, out_png: Path, geom):
 
 
 def find_bellman_window(d):
+    import subprocess
+    try:
+        out = subprocess.check_output(["wmctrl", "-lx"], text=True)
+        for line in out.splitlines():
+            if "bellman" in line.lower():
+                xid = int(line.split()[0], 16)
+                return d.create_resource_object("window", xid)
+    except Exception:
+        pass
+
     root = d.screen().root
     for w in root.query_tree().children:
         try:
@@ -89,7 +99,7 @@ def find_bellman_window(d):
             attrs = w.get_attributes()
             if (
                 klass
-                and (klass[0] or "").lower() == "bellman"
+                and (klass[0] or "").lower() in ("bellman", "bellman-app")
                 and attrs
                 and attrs.map_state == 2  # IsViewable
                 and g.width > 200

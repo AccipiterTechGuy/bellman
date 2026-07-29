@@ -194,10 +194,11 @@
   />
 {/if}
 
-<div class="toasts">
+<div class="toasts" role="status" aria-live="polite">
   {#each toasts as t (t.id)}
-    <div class="toast" class:err={t.kind === 'err'}>{t.text}</div>
+    <div class="toast" class:err={t.kind === 'err'} role={t.kind === 'err' ? 'alert' : 'status'}>
+      <span class="toast-badge">{t.kind === 'err' ? '⚠ Error' : 'ℹ Info'}</span>
+      <span class="toast-text">{t.text}</span>
+    </div>
   {/each}
 </div>
-
-<svelte:options accessors={true} />
