@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-29 — shipped; card bellman-qa1-gui-qa-on-isolated-display-never-hijack-operator-input, run 2026-07-29_0001, merge d6fd4b2.
+
 # DONE — GUI QA on isolated display (no operator input hijack)
 
 **Status: implemented on train `2026-07-29_0001`.**
