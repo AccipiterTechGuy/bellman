@@ -268,6 +268,64 @@ before claiming Wayland support of any kind for replay.
   only needed once capture ships, and only on the platforms capture supports.
 - Compose depends on the screenshot work in the grid card — build them in that order.
 
+## D-13. A macro only runs with Bellman open, and stopping it is always reachable
+
+### The app must be open
+
+A macro **never runs unless Bellman is running**. No headless execution, no detached run
+that outlives the app.
+
+- If Bellman is not running when a timer is due, the macro **does not run** — it is refused
+  and logged (D-8 Q2 / M5's refuse-and-log, forced `skip`, never late).
+- Quitting Bellman **aborts** any macro in flight. It does not orphan it.
+- The run is **visible** while it happens: the operator can always see that the machine is
+  being driven and by which macro.
+
+The reason is not policy tidiness. The app is what holds the abort path — the panic-key
+listener, the countdown, the modifier-release-on-abort. A macro that can outlive the app is
+a macro nobody can stop.
+
+### Stopping must be reachable — by key AND by button
+
+**Both are required, and the key is the reliable one.**
+
+While a macro runs it owns the pointer (D-10). A stop *button* asks the operator to move the
+mouse to a target while the macro is dragging that same mouse elsewhere — a race the
+operator can lose. So:
+
+- **The panic key is the primary mechanism.** It must work during injection: our synthetic
+  events must neither swallow the real keypress nor trigger it (M4's exit gate).
+- **The stop button is the discoverable mechanism.** It is what someone finds without
+  reading documentation, and it must exist for exactly that reason. It is not sufficient
+  alone.
+- The countdown UI shows **both**: the remaining time and the key that stops it.
+
+### The stop UI must not be a click target
+
+An always-on-top stop control is a surface that injected clicks can land on. Two failures
+follow if this is ignored: the macro clicks its own stop button, or a click intended for the
+target application hits the overlay instead and never reaches the app.
+
+Decide the mechanism explicitly during M4. Candidates, in preference order:
+
+1. **Window-targeted injection** — send input to the resolved target window rather than to a
+   screen coordinate, so the overlay is never in the path. Best answer where the platform
+   supports it.
+2. **Distinguish synthetic from real** at the overlay — `enigo` marks its own events, though
+   the research notes this is documented only on Windows and macOS.
+3. **Operator-configured corner** for the stop control, plus refusing to inject a click
+   whose coordinates fall inside it (and saying so in review, so a macro that needs that
+   spot fails loudly at authoring rather than silently at run time).
+
+A run that cannot be stopped because the stop button ate the click is the worst outcome in
+this whole feature.
+
+### Crash safety
+
+If Bellman dies mid-run, injection stops with the process — but **held modifiers may remain
+stuck** at the OS level. Release modifiers on every exit path that can be reached, and
+document the one that cannot.
+
 ## D-7. Honest scope of what this protects
 
 This is **agent containment**, not anti-malware. An attacker who already has code execution

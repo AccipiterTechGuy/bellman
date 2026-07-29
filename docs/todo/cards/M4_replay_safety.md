@@ -15,6 +15,13 @@ Design: `macro_recorder_security_plan.md` D-9, D-10, D-11.
 - Bounded repeat per D-9: caps multiply, delay between iterations, stop on failure, no
   nesting.
 - On-screen countdown showing the abort key for the whole run (D-10).
+- **Stop button** alongside the panic key (D-13). Both required: the key is the reliable
+  path because the macro owns the pointer, the button is the discoverable one.
+- **The stop UI must not be a click target** for injected events (D-13). Pick a mechanism
+  explicitly — window-targeted injection preferred; synthetic-event marking or a reserved
+  corner as fallbacks.
+- A macro **only runs while Bellman is open**; quitting aborts the run rather than orphaning
+  it (D-13).
 - Dry run and step-through.
 
 ## First card that uses the dev bypass
@@ -35,3 +42,8 @@ By now it has shipped and been exercised for three cards.
 - Abort mid-run leaves **no stuck modifiers** — assert by reading modifier state after.
 - Exceeding the runtime cap hard-aborts and logs `aborted-on-cap`, never `completed`.
 - Fingerprint mismatch refuses. Two concurrent requests → exactly one runs.
+- The stop **button** halts a run that is actively moving the pointer — tested with the
+  macro driving the mouse, not with it idle.
+- An injected click whose coordinates fall on the stop control does **not** stop the run and
+  does **not** get swallowed — whichever mechanism is chosen, prove this case.
+- Quitting Bellman mid-run aborts cleanly with no stuck modifiers.
