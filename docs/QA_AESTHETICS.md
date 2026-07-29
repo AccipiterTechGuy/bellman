@@ -137,10 +137,11 @@ Generated from fresh build of current design system:
 6. [p4f-settings-below-fold.png](docs/qa4-screenshots/after/p4f-settings-below-fold.png): Settings page scrolled to bottom showing Misfire defaults and Engine settings cards.
 7. [p4f-wizard-after.png](docs/qa4-screenshots/after/p4f-wizard-after.png): First-run Wizard overlay showing backdrop and 32px checkboxes.
 8. [p4f-empty-filter.png](docs/qa4-screenshots/after/p4f-empty-filter.png): Zero-result empty filter state showing `0 of N timers` and custom `#12161b` select dropdowns (Sort label painted).
-9. [p4f-toast-info.png](docs/qa4-screenshots/after/p4f-toast-info.png): Settings save toast with non-colour **ℹ Info** badge.
-10. [p4f-dialog-disabled-create.png](docs/qa4-screenshots/after/p4f-dialog-disabled-create.png): New timer dialog with **Create** disabled (empty name).
-11. [p4f-control-hover-disabled.png](docs/qa4-screenshots/after/p4f-control-hover-disabled.png): Dialog footer hover + disabled Create state.
-12. `p4f-dialog-once.png`..`p4f-dialog-cron.png`: Timer Dialog showing each occurrence kind variant (`once`, `interval`, `daily`, `weekly`, `monthly`, `yearly`, `cron`) with corresponding form fields.
+9. [p4f-toast-info.png](docs/qa4-screenshots/after/p4f-toast-info.png): Settings save toast with non-colour **ℹ INFO** badge.
+10. [p4f-toast-error.png](docs/qa4-screenshots/after/p4f-toast-error.png): Error toast with non-colour **⚠ ERROR** badge (`timer not found` after concurrent delete).
+11. [p4f-dialog-disabled-create.png](docs/qa4-screenshots/after/p4f-dialog-disabled-create.png): New timer dialog with **Create** disabled (empty name).
+12. [p4f-control-hover.png](docs/qa4-screenshots/after/p4f-control-hover.png): Real **+ New timer** `:hover` (`--accent-hover` fill vs primary rest state).
+13. `p4f-dialog-once.png`..`p4f-dialog-cron.png`: Timer Dialog showing each occurrence kind variant (`once`, `interval`, `daily`, `weekly`, `monthly`, `yearly`, `cron`) with corresponding form fields.
 
 ---
 
