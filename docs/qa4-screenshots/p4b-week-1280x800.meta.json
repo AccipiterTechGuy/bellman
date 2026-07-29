@@ -2,18 +2,20 @@
   "file": "p4b-week-1280x800.png",
   "size": [
     1280,
-    800
+    763
   ],
-  "bytes": 43820,
-  "mean_luma": 28.86,
-  "stdev": 6.8,
-  "unique_colors_cap200k": 3317,
-  "window_id": "0x5a00003",
+  "bytes": 43999,
+  "mean_luma": 29.1,
+  "stdev": 7.07,
+  "unique_colors_cap200k": 943,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    30,
-    92,
+    26,
+    97,
     1280,
-    800
+    763
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":98",
   "phase": "layout-large"
 }

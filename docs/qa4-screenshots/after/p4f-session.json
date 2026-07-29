@@ -1,0 +1,28 @@
+{
+  "display": ":97",
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "app": "/home/sami/bellman/target/release/bellman-app",
+  "shots": [
+    "p4f-control-hover-disabled.png",
+    "p4f-control-hover.png",
+    "p4f-dialog-cron.png",
+    "p4f-dialog-daily.png",
+    "p4f-dialog-disabled-create.png",
+    "p4f-dialog-interval.png",
+    "p4f-dialog-monthly.png",
+    "p4f-dialog-once.png",
+    "p4f-dialog-weekly.png",
+    "p4f-dialog-yearly.png",
+    "p4f-empty-filter.png",
+    "p4f-history-after.png",
+    "p4f-list-after.png",
+    "p4f-month-after.png",
+    "p4f-settings-after.png",
+    "p4f-settings-below-fold.png",
+    "p4f-toast-error.png",
+    "p4f-toast-info.png",
+    "p4f-toast-or-action.png",
+    "p4f-week-after.png",
+    "p4f-wizard-after.png"
+  ]
+}

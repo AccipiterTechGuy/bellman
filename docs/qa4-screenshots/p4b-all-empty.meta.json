@@ -4,27 +4,29 @@
     960,
     640
   ],
-  "bytes": 20139,
-  "mean_luma": 25.85,
-  "stdev": 5.65,
-  "unique_colors_cap200k": 2018,
-  "window_id": "0x5a00003",
+  "bytes": 24453,
+  "mean_luma": 27.55,
+  "stdev": 8.87,
+  "unique_colors_cap200k": 1091,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    50,
-    112,
+    185,
+    137,
     960,
     640
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":98",
   "phase": "baseline",
   "webkit": {
     "WebKitWebProcess": [
-      "781487  781459 187148 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 54"
+      "1725209 1725179 199496 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 26"
     ],
     "WebKitNetworkProcess": [
-      "781478  781459 49220 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 25"
+      "1725205 1725179 49216 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 20"
     ],
     "bellman": [
-      "781459  781455 189920 /home/sami/bellman/.train-worktrees/2026-07-28_0002/target/release/bellman"
+      "1725179 1722686 201548 /tmp/bellman-deb-extract/usr/bin/bellman-app"
     ]
   }
 }

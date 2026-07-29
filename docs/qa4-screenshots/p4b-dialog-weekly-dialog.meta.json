@@ -4,17 +4,19 @@
     960,
     640
   ],
-  "bytes": 68149,
-  "mean_luma": 27.96,
-  "stdev": 13.42,
-  "unique_colors_cap200k": 5183,
-  "window_id": "0x5a00003",
+  "bytes": 58917,
+  "mean_luma": 28.0,
+  "stdev": 13.32,
+  "unique_colors_cap200k": 1631,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    50,
-    112,
+    185,
+    137,
     960,
     640
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":98",
   "kind": "weekly",
   "phase": "create"
 }

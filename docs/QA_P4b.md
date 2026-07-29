@@ -1,76 +1,99 @@
-# QA P4b — WebKitGTK GUI evidence for C8 calendar UI (rework #3)
+# QA P4b — WebKitGTK GUI evidence for C8 calendar UI
 
-Card: train run `2026-07-28_0001`.
-C8 base: `d49b7dc` / `ec8a330`. Layout + preview + kind-label tweaks ship on this card.
+Card: train run `2026-07-29_0001` (isolated display + WebDriver rewrite).
+C8 base evidence still under `docs/qa4-screenshots/` / `docs/qa4-evidence/`.
 
-## Display setup (path a — real `:0` NVIDIA)
+## Display setup — isolated Xvfb (never the operator session)
 
-Copy-paste from a clean shell (repo root = this worktree or `~/bellman`):
+GUI QA runs on its **own** Xvfb display with a private D-Bus session. It must
+not steal the operator's mouse or keyboard. Interaction is
+**tauri-driver + WebKitWebDriver** (in-webview). Screenshots use Xlib GetImage
+on the isolated display only (read-only).
+
+### One-shot runner
 
 ```sh
 set -euo pipefail
 ROOT="$(pwd)"                          # worktree or main checkout
 cd "$ROOT"
 
-# 1. Frontend + production Tauri shell
-#    MUST use cargo-tauri: plain `cargo build -p bellman --release` sets cfg(dev)
-#    and loads http://localhost:1420 → blank white window.
+# 1. Frontend + production Tauri shell (bellman-app)
+#    MUST use cargo-tauri (or cargo build -p bellman-app --features custom-protocol):
+#    a plain build without custom-protocol loads http://localhost:1420 → blank window.
 cd ui && npm ci && npm run build && cd ..
 cargo tauri build --no-bundle
+# or:
+# cargo build -p bellman-app --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
 
-# 2. Schema-v3 CLI as a SIDE copy (both packages emit a binary named "bellman")
-cargo build -p bellman-cli --release
-cp -a target/release/bellman /tmp/bellman-cli-schema3
-# Restore the GUI binary that cargo-cli may have overwritten:
-cp -a target/release/bundle/deb/*/data/usr/bin/bellman target/release/bellman 2>/dev/null \
-  || cargo tauri build --no-bundle
+export BELLMAN_APP="${CARGO_TARGET_DIR:-$ROOT/target}/release/bellman-app"
+export BELLMAN_CLI="${CARGO_TARGET_DIR:-$ROOT/target}/release/bellman"
+test -x "$BELLMAN_APP"
 
-BIN="$ROOT/target/release/bellman"
-test -x "$BIN"
-test -x /tmp/bellman-cli-schema3
+# 2. Python deps for the harness (venv recommended)
+python3 -m venv /tmp/bellman-qa-venv
+/tmp/bellman-qa-venv/bin/pip install selenium pillow python-xlib
+export BELLMAN_QA_PYTHON=/tmp/bellman-qa-venv/bin/python
 
-# 3. Isolated data dir + wizard already completed
-QA=/tmp/qa-p4b-session
-rm -rf "$QA"
-mkdir -p "$QA/share/io.bellman.desktop/logs" "$QA/share/io.bellman.desktop/slots" "$QA/config"
-printf '%s\n' '{"wizard_completed":true,"autostart_enabled":false,"start_minimized":false,"wake_enabled":false}' \
-  > "$QA/share/io.bellman.desktop/config.json"
+# 3. System deps (once per machine) — see docs/BUILD_PLAN.md
+#    sudo apt install -y webkit2gtk-driver   # version-match libwebkit2gtk-4.1
+#    cargo install tauri-driver --locked
+#    Window manager: metacity is already on Mint (`metacity --sm-disable`).
 
-# 4. Launch GUI on the real display; tee raw stdout/stderr (0-byte is fine)
-export DISPLAY=:0
-export XDG_DATA_HOME="$QA/share"
-export XDG_CONFIG_HOME="$QA/config"
-export GDK_BACKEND=x11
-export RUST_LOG=info
-: > /tmp/qa-p4b.out
-: > /tmp/qa-p4b.err
-"$BIN" >>/tmp/qa-p4b.out 2>>/tmp/qa-p4b.err &
-echo $! > /tmp/qa-p4b.pid
-sleep 3
-wmctrl -x -r Bellman.Bellman -e 0,40,40,960,640 || true
-
-# 5. Drive GUI + capture
-export BELLMAN_CLI=/tmp/bellman-cli-schema3
-export BELLMAN_QA_DATA="$QA/share/io.bellman.desktop"
-python3 scripts/capture_qa_p4b.py
-
-# 6. Commit-ready log copies (raw; do not rewrite empty files as prose)
-cp -a /tmp/qa-p4b.out docs/qa4-evidence/app-stdout.log
-cp -a /tmp/qa-p4b.err docs/qa4-evidence/app-stderr.log
-cat /tmp/qa-p4b.out /tmp/qa-p4b.err > docs/qa4-evidence/app-combined.log
+# 4. Run the suite on an isolated display
+scripts/run_gui_qa.sh p4b
 ```
 
-If `CARGO_TARGET_DIR` is set (e.g. a shared target from another worktree), replace
-`BIN="$ROOT/target/release/bellman"` with
-`BIN="$CARGO_TARGET_DIR/release/bellman"`.
+What `scripts/run_gui_qa.sh` does:
 
-### Paths tried for the WebKit empty-shell blocker
+1. `scripts/qa_display.sh start` — picks a **free** display (refuses busy
+   locks; never attaches to someone else's Xvfb), starts Xvfb + metacity,
+   prepares isolated `XDG_DATA_HOME` / `XDG_CONFIG_HOME` / `XDG_RUNTIME_DIR`
+   with `wizard_completed` + `start_minimized=false`.
+2. Launches capture under that env; `qa_webdriver.py` starts
+   `tauri-driver` under `dbus-run-session` so
+   `tauri_plugin_single_instance` does not forward to a live operator instance.
+3. Tears the display **and** the driver process group down on exit (no orphan
+   Xvfb, tauri-driver, or WebKitWebDriver left listening).
+
+Manual equivalent:
+
+```sh
+scripts/qa_display.sh start
+eval "$(scripts/qa_display.sh env)"
+export BELLMAN_APP=… BELLMAN_CLI=…
+/tmp/bellman-qa-venv/bin/python scripts/capture_qa_p4b.py
+scripts/qa_display.sh stop
+```
+
+### Paths tried for the WebKit empty-shell / window-map issue
 
 | Path | Result |
 |---|---|
-| **(a) Real `:0` + NVIDIA** | **Works** — full UI paints; used for all evidence |
-| (b) Software under Xvfb (`LIBGL_ALWAYS_SOFTWARE`, `WEBKIT_DISABLE_*`, …) | Still empty shell (C8 rework); WebKitWebProcess alive but no pixels |
-| (c) Xephyr / DRI3 Xvfb config | Not required once (a) worked |
+| **(a) Isolated Xvfb + metacity + private D-Bus + clean XDG + `start_minimized=false`** | **Works** — real 960×640 toplevel maps; multi-colour UI screenshots |
+| (b) Operator interactive session (legacy) | Works for paint, but **steals pointer/keyboard** — forbidden |
+| (c) Xvfb without private bus while operator instance is live | `tauri_plugin_single_instance` exits the second launch (silent empty shell) |
+| (d) Xvfb without isolated/clean env | App can leave a 10×10 unmapped placeholder; use `qa_display.sh` |
+| (e) Missing window manager | Ruled out — metacity/muffin ship on Mint; still need (a) for a real map |
+| (f) DRI / `LIBGL_*` / `WEBKIT_DISABLE_*` matrix | Not the root cause while single-instance / window map were wrong |
+
+### Why the window used to stay 10×10
+
+Two causes were conflated in earlier probes:
+
+1. **`tauri_plugin_single_instance`** kills every second launch on the same
+   session bus. Fix for tests: private bus via `dbus-run-session` (do **not**
+   weaken the plugin in shipping code).
+2. Polluted operator environment + missing `start_minimized=false` in the
+   isolated config. `qa_display.sh` writes the config and sets XDG dirs.
+
+## Isolation / input-backend acceptance (this card)
+
+| Item | Status | Evidence |
+|---|---|---|
+| Isolated display (not operator session) | **required** | `scripts/qa_display.sh`, `run_gui_qa.sh` |
+| WebDriver in-webview input (no global pointer) | **required** | `scripts/qa_webdriver.py` |
+| Driver process group torn down | **required** | `stop_session` killpg + EXIT trap |
+| Real pixels (unique colours ≫ 1) | required each run | meta `unique_colors_cap200k` |
 
 ## Acceptance ledger
 
@@ -93,9 +116,8 @@ If `CARGO_TARGET_DIR` is set (e.g. a shared target from another worktree), repla
 1. **GUI create does not write `EventKind::Registered`** — **RESOLVED** on card `2026-07-28_0002` (this card). `create_timer` now emits `EventKind::Registered` with message `gui create`.
    Sibling commands `update_timer`, `delete_timer`, and toggle `set_enabled` / `set_pause_all` do NOT emit lifecycle events because there are no matching `EventKind` variants for update/delete. This gap is recorded and left for C11.
 
-2. **userAgent is library default, not live `navigator.userAgent`.**  
-   Method: `WebKit2.Settings.get_user_agent()` (same `libwebkit2gtk-4.1`; app never `set_user_agent`).  
-   Value: `Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15`
+2. **userAgent** — originally library default via `WebKit2.Settings.get_user_agent()` (app never calls `set_user_agent`). The isolated-display harness now also records live `navigator.userAgent` from the WebDriver webview when available (`docs/qa4-evidence/userAgent.json`).
+   Library default value: `Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15`
 
 3. **Some form *labels*** (e.g. long Weekdays csv legend) can still clip slightly at 960×640 — the legend renders `mon,tue,wed,thu,fri,sat,su` with the trailing `n)` cut, at 960×640 **and** at 1280×800. No data is hidden and no control is blocked: **preview numbers and the occurrence-kind select value** are fully readable after rework #3 short option labels.  
    **Owner: card `bellman-c8d-timer-input-ergonomics-pickers-date-formats-validation`**, whose scope replaces this CSV field with seven weekday toggle chips — the legend disappears with the field. Left OPEN here rather than restyled, per this card's "do NOT re-fix or refactor C8 code here".
@@ -121,8 +143,9 @@ CLI: `2026-07-29T05:00:00+00:00` … `2026-08-07T05:00:00+00:00` — matches.
 ## Files
 
 ```
-ui/src/styles.css
-ui/src/TimerDialog.svelte
+scripts/qa_display.sh
+scripts/qa_webdriver.py
+scripts/run_gui_qa.sh
 scripts/capture_qa_p4b.py
 docs/QA_P4b.md
 docs/qa4-screenshots/p4b-*.png + p4b-*.meta.json

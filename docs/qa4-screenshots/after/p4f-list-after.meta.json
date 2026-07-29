@@ -4,16 +4,18 @@
     960,
     640
   ],
-  "bytes": 73762,
-  "mean_luma": 38.07,
-  "stdev": 16.1,
-  "unique_colors_cap200k": 2055,
-  "window_id": "0x5a00003",
+  "bytes": 32798,
+  "mean_luma": 28.98,
+  "stdev": 13.78,
+  "unique_colors_cap200k": 1577,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    110,
-    172,
+    66,
+    137,
     960,
     640
   ],
-  "expect": "All timers surface with design tokens, hit targets, tabular numbers, Sort label visible"
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
+  "expect": "All timers / list surface after visual polish"
 }

@@ -170,3 +170,9 @@ change that touches release profile flags.
 - Real Apple notarization (secrets not on this machine)
 - Windows SmartScreen / code-sign cert
 - P7 wake-from-sleep RTC + Settings wake panel
+
+## GUI QA display isolation
+
+GUI capture scripts must **not** attach to the operator X session. Use
+`scripts/run_gui_qa.sh` (wraps `scripts/qa_display.sh` + WebDriver). See
+`docs/QA_P4b.md` and `docs/BUILD_PLAN.md` ("to RUN the GUI test suite").

@@ -4,16 +4,18 @@
     960,
     640
   ],
-  "bytes": 65660,
-  "mean_luma": 35.46,
-  "stdev": 11.62,
-  "unique_colors_cap200k": 2152,
-  "window_id": "0x4800003",
+  "bytes": 54035,
+  "mean_luma": 34.95,
+  "stdev": 11.57,
+  "unique_colors_cap200k": 1853,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    50,
-    112,
+    66,
+    137,
     960,
     640
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
   "name": "qa-from-month-cell"
 }

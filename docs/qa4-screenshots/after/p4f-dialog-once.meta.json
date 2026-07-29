@@ -4,16 +4,18 @@
     960,
     640
   ],
-  "bytes": 63118,
-  "mean_luma": 35.16,
-  "stdev": 11.02,
-  "unique_colors_cap200k": 2192,
-  "window_id": "0x5a00003",
+  "bytes": 51985,
+  "mean_luma": 34.95,
+  "stdev": 10.91,
+  "unique_colors_cap200k": 1836,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    110,
-    172,
+    66,
+    137,
     960,
     640
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
   "expect": "Timer Dialog showing once occurrence kind fields"
 }

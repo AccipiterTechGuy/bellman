@@ -4,16 +4,18 @@
     960,
     640
   ],
-  "bytes": 100378,
-  "mean_luma": 42.29,
-  "stdev": 13.89,
-  "unique_colors_cap200k": 1553,
-  "window_id": "0x5a00003",
+  "bytes": 60309,
+  "mean_luma": 33.29,
+  "stdev": 9.02,
+  "unique_colors_cap200k": 1648,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    110,
-    172,
+    66,
+    137,
     960,
     640
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
   "expect": "Month grid surface with WCAG AA compliant out-of-month contrast"
 }

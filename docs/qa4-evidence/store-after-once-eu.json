@@ -1,6 +1,6 @@
 [
   {
-    "id": "ac3fe5db-b6e6-4bdf-9893-8157cbb4978e",
+    "id": "323e642b-ccf4-4383-855f-29e670dc91f3",
     "name": "qa-p4d-once-eu",
     "enabled": 1,
     "occurrence": "{\"kind\":{\"occ\":\"once\",\"at\":\"2026-12-24T09:00:00\"},\"tz\":\"Europe/Helsinki\",\"dst_gap\":\"first_valid_after_gap\",\"dst_fold\":\"first_occurrence\",\"invalid_monthday\":\"clamp\",\"valid_from\":null,\"valid_until\":null,\"max_runs\":null,\"runs_done\":0,\"exclusions\":[],\"pending_skips\":0}",
@@ -17,7 +17,8 @@
     "action": "{\"type\":\"none\"}",
     "revision": 1,
     "jitter_secs": 0,
-    "accuracy_slack_secs": null
+    "accuracy_slack_secs": null,
+    "wake_machine": 0
   },
   {
     "id": "00000000-0000-4000-8000-000000000001",
@@ -37,6 +38,7 @@
     "action": "{\"type\":\"none\"}",
     "revision": 2,
     "jitter_secs": 0,
-    "accuracy_slack_secs": null
+    "accuracy_slack_secs": null,
+    "wake_machine": 0
   }
 ]

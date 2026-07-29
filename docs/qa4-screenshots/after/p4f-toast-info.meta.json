@@ -4,16 +4,18 @@
     960,
     640
   ],
-  "bytes": 86949,
-  "mean_luma": 32.26,
-  "stdev": 14.02,
-  "unique_colors_cap200k": 1724,
-  "window_id": "0x5a00003",
+  "bytes": 57256,
+  "mean_luma": 31.02,
+  "stdev": 12.82,
+  "unique_colors_cap200k": 1338,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    110,
-    172,
+    66,
+    137,
     960,
     640
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
   "expect": "Settings save info toast with \u2139 Info badge (non-colour encoding)"
 }

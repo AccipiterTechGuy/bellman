@@ -1,1 +1,1 @@
-{"command":"next","fires":["2026-07-29T09:00:00+00:00","2026-07-30T09:00:00+00:00","2026-07-31T09:00:00+00:00"],"id":"c73b2db5-99da-42f2-b515-89ed80f68c19","n":3,"name":"qa-collide-beta-launch-heavy-workload","ok":true}
+{"command":"next","fires":["2026-07-30T09:00:00+00:00","2026-07-31T09:00:00+00:00","2026-08-01T09:00:00+00:00"],"id":"406a0a6d-2936-4e25-a259-c569291717fd","n":3,"name":"qa-collide-beta-launch-heavy-workload","ok":true}

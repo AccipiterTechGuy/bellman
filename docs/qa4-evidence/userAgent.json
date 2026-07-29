@@ -2,26 +2,26 @@
   "userAgent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
   "attempts": [
     {
-      "method": "WebKit2.Settings.get_user_agent()",
+      "method": "WebDriver navigator.userAgent",
       "ok": true,
       "userAgent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15"
     },
     {
-      "method": "WEBKIT_INSPECTOR_SERVER",
+      "method": "WebKit2.Settings.get_user_agent()",
       "ok": false,
-      "error": "env not set for this session"
+      "error": "ModuleNotFoundError(\"No module named 'gi'\")"
     }
   ],
   "webkit_pids": {
     "WebKitWebProcess": [
-      "1135009 1134983 204924 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 51"
+      "1725209 1725179 199540 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess 4 26"
     ],
     "WebKitNetworkProcess": [
-      "1135000 1134983 49388 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 22"
+      "1725205 1725179 49216 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 20"
     ],
     "bellman": [
-      "1134983       1 187540 /home/sami/bellman/.train-worktrees/2026-07-28_0008/target/release/bellman-app"
+      "1725179 1722686 201548 /tmp/bellman-deb-extract/usr/bin/bellman-app"
     ]
   },
-  "note": "WebKit2.Settings.get_user_agent() is the default UA string the running libwebkit2gtk-4.1 WebKitWebProcess inherits when the app does not call set_user_agent. App does not override (grep: no set_user_agent in src-tauri)."
+  "note": "Live navigator.userAgent via WebDriver when available."
 }

@@ -2,18 +2,20 @@
   "file": "p4b-dialog-1280x800.png",
   "size": [
     1280,
-    800
+    763
   ],
-  "bytes": 82614,
-  "mean_luma": 21.86,
-  "stdev": 12.81,
-  "unique_colors_cap200k": 6825,
-  "window_id": "0x5a00003",
+  "bytes": 68203,
+  "mean_luma": 22.3,
+  "stdev": 12.91,
+  "unique_colors_cap200k": 1774,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    30,
-    92,
+    26,
+    97,
     1280,
-    800
+    763
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":98",
   "phase": "layout-large-dialog-full-utc"
 }

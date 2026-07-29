@@ -1,14 +1,16 @@
 {
   "command": "list",
-  "count": 2,
+  "count": 3,
   "ok": true,
   "timers": [
     {
+      "accuracy_slack_secs": null,
       "action": {
         "type": "none"
       },
       "enabled": true,
-      "id": "f59cbf8c-64b8-4581-a2d5-14599b43dea5",
+      "id": "86085c80-d261-463d-a1d8-0a6a6084fc9b",
+      "jitter_secs": 0,
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -17,7 +19,7 @@
         }
       },
       "name": "qa-daily",
-      "next_fire_utc": "2026-07-29T05:15:00Z",
+      "next_fire_utc": "2026-07-30T05:15:00Z",
       "occurrence": {
         "dst_fold": "first_occurrence",
         "dst_gap": "first_valid_after_gap",
@@ -46,11 +48,13 @@
       "valid_until": null
     },
     {
+      "accuracy_slack_secs": null,
       "action": {
         "type": "none"
       },
       "enabled": true,
-      "id": "aa983664-9a1a-432a-8e63-5c17cbb7a09e",
+      "id": "0257a86d-51d5-4cbd-97ba-2794a2f4e851",
+      "jitter_secs": 0,
       "last_fired": null,
       "max_runs": null,
       "misfire": {
@@ -59,7 +63,7 @@
         }
       },
       "name": "qa-weekly",
-      "next_fire_utc": "2026-07-29T05:00:00Z",
+      "next_fire_utc": "2026-07-31T05:00:00Z",
       "occurrence": {
         "dst_fold": "first_occurrence",
         "dst_gap": "first_valid_after_gap",
@@ -84,6 +88,54 @@
       },
       "revision": 1,
       "tags": [],
+      "tz": "Europe/Helsinki",
+      "valid_from": null,
+      "valid_until": null
+    },
+    {
+      "accuracy_slack_secs": null,
+      "action": {
+        "type": "none"
+      },
+      "enabled": true,
+      "id": "00000000-0000-4000-8000-000000000001",
+      "jitter_secs": 0,
+      "last_fired": null,
+      "max_runs": null,
+      "misfire": {
+        "coalesce": {
+          "grace_secs": 3600
+        }
+      },
+      "name": "system.prune",
+      "next_fire_utc": "2026-08-03T00:17:00Z",
+      "occurrence": {
+        "dst_fold": "first_occurrence",
+        "dst_gap": "first_valid_after_gap",
+        "exclusions": [],
+        "invalid_monthday": "clamp",
+        "kind": {
+          "at": "03:17:00",
+          "days": 1,
+          "occ": "weekly"
+        },
+        "max_runs": null,
+        "pending_skips": 0,
+        "runs_done": 0,
+        "tz": "Europe/Helsinki",
+        "valid_from": null,
+        "valid_until": null
+      },
+      "overlap": "skip",
+      "retry": {
+        "delay_secs": 0,
+        "max_retries": 0
+      },
+      "revision": 2,
+      "tags": [
+        "system",
+        "internal"
+      ],
       "tz": "Europe/Helsinki",
       "valid_from": null,
       "valid_until": null

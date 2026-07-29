@@ -4,16 +4,18 @@
     960,
     640
   ],
-  "bytes": 63330,
-  "mean_luma": 17.97,
-  "stdev": 18.08,
-  "unique_colors_cap200k": 1220,
-  "window_id": "0x5a00003",
+  "bytes": 63616,
+  "mean_luma": 18.27,
+  "stdev": 18.03,
+  "unique_colors_cap200k": 1204,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    110,
-    172,
+    66,
+    137,
     960,
     640
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
   "expect": "First-run Wizard overlay with backdrop and 32px checkboxes"
 }

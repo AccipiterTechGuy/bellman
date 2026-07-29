@@ -237,6 +237,11 @@ sudo apt install -y webkit2gtk-driver          # → WebKitWebDriver 2.52.3
 
 # Tauri's WebDriver bridge (no root needed)
 cargo install tauri-driver --locked
+
+# Python harness deps (venv recommended; system packages also fine)
+python3 -m venv /tmp/bellman-qa-venv
+/tmp/bellman-qa-venv/bin/pip install selenium pillow python-xlib
+# X tools used by the harness: Xvfb, metacity, wmctrl
 ```
 
 **The `webkit2gtk-driver` version must match the installed `libwebkit2gtk-4.1`**
@@ -244,10 +249,11 @@ cargo install tauri-driver --locked
 
 A window manager is also required on the headless QA display, but needs no
 install on Mint: `metacity` and `muffin` ship with the desktop. Use
-`metacity --sm-disable`.
+`metacity --sm-disable` (via `scripts/qa_display.sh`).
 
-Without these the GUI QA harness has historically fallen back to driving the
-operator's live `:0` session, which steals their mouse and keyboard mid-run.
+Entry point: `scripts/run_gui_qa.sh p4b` (isolated Xvfb + private D-Bus +
+tauri-driver). See `docs/QA_P4b.md`. Do **not** point the harness at the
+operator session — that path is what this prerequisite block exists to replace.
 See `docs/todo/qa_isolated_display_no_input_hijack.md`.
 
 ## Build phases (each = one crew card; exit gate before the next departs)
