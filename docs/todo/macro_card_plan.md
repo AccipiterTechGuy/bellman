@@ -28,65 +28,33 @@ blocks testing.
 
 ## The ladder
 
-| # | Card | Password needed to test? |
-|---|---|---|
-| M1 | Model + encrypted store + gate skeleton | **No** — DEK from OS keyring |
-| M2 | Capture, per-OS | **No** |
-| M3 | GUI: table + step editor + review screen | **No** |
-| M4 | Replay engine + safety rails | No — dev bypass, shipped in M1 |
-| M5 | Timer attachment + unattended trust | No |
-| M6 | Secrets + password-field awareness | No |
-| M7 | **Master password** — setup, recovery, lockout, audit polish | **Yes — this is where it arrives** |
-| M8 | **Capability tokens** — the 10-token list, review gate, skill | **Yes** |
-| M9 | Per-OS QA on real hardware + the ship guard | Yes |
+Re-cut after D-12 (compose/capture). All nine are minted on the board, **created only** —
+none are sealed or railed until the cards already on the board have shipped.
 
-M1–M6 are testable end to end with no password anywhere. M7 turns the gate real. M8 adds the
-token system from D-2…D-5. M9 validates on real Windows/macOS/Wayland hardware.
+| # | Card | Password to test? | Notes |
+|---|---|---|---|
+| **M1** | Model + encrypted store + gate skeleton | **No** | DEK from OS keyring. Atomic — do not split. |
+| **M2** | **Compose** authoring — screenshot, pick, type | **No** | Default path. Needs no permissions on any OS. Depends on the grid card's screenshot core. |
+| **M3** | GUI — table, step editor, mandatory review | **No** | |
+| **M4** | Replay engine + safety rails | No | First user of the dev bypass. |
+| **M5** | Timer attachment + trust + idle defaults | No | |
+| **M6** | **Capture** authoring (opt-in) + secrets | No | Optional. Blocked on two facts. |
+| **M7** | **Execution password** — setup, lockout, audit | **Yes** | The gate becomes real here. |
+| **M8** | **Execution tokens** + review gate + agent skill | **Yes** | |
+| **M9** | Per-OS QA on real hardware + ship guard | Yes | |
 
-**Do not collapse M1.** If encryption slips out of it while replay ships, the result is the
-UI lock the whole design exists to avoid.
+M1–M6 are testable end to end with no password anywhere.
 
-## Card notes
+### What D-12 changed
 
-**M1** — `Macro`/`Step`/`Target`/`TrustLevel`; `macros.enc` with Argon2id KEK, wrapped DEK,
-XChaCha20-Poly1305, generation ID; keyring-backed DEK; `gate` module with `RunToken` (private
-field, so `replay()` cannot be called without `authorize()`); persisted lockout counter; the
-dev-bypass cargo feature with all five ship guards; JSONL event types with hash chain.
-**No capture, no injection.**
-
-**M2** — `trait InputCapture` per OS. Wayland returns `ReplayOnly`/`Unavailable` honestly.
-Both recording modes; Steps is the default. **Re-verify F2 first**: the reports disagree on
-whether `rdev` is abandoned (2023 vs 2026 release dates) and the whole write-our-own
-recommendation turns on it.
-
-**M3** — Svelte 5 page; three-pane layout; step editor with undo/redo and re-record-one-step;
-five recording indicators; **mandatory post-record review** with Keep/Redact/Secret. A
-recording cannot be saved without passing review — assert it in a test.
-
-**M4** — `enigo` behind a `pub(crate)` adapter; panic key; max time/steps; single-runner
-mutex; modifier release on abort; dry run and step-through. First card that uses the dev
-bypass — which by now has shipped and been exercised for three cards.
-
-**M5** — `macro` action type; per-macro trust; `armed_until` decay; refuse-and-log when
-locked; **forced `skip`** misfire policy, never coalesce.
-
-**M6** — `Secret` step type; Windows UIA `IsPassword`; macOS `AXSecureTextField`. **Re-verify
-F-conflict first**: reports disagree on whether browsers expose `IsPassword`, which decides
-whether auto-pause can be promised at all.
-
-**M7** — master password setup wizard with the data-loss sentence and opt-in recovery code;
-lockout with backoff surviving a process kill; export/import; full audit event set including
-`macro_hash`. **The gate becomes real here.** Everything before it ran open.
-
-**M8** — capability tokens per D-2…D-5: 10 single-use tokens shown once at master-password
-setup; configurable expiry; **record scope only, enforced by the type system**; stored as a
-hash (verifiable while locked) *and* an encrypted copy (re-displayable after unlock); a
-used-flag surviving restart; burn-all. Plus D-4's review gate — macros recorded under a token
-are `agent-authored, unreviewed` and can neither run nor be attached to a timer until a human
-approves them. Plus the agent skill file, which **must never contain a token**.
-
-**M9** — fresh-VM validation per OS: record → review → save → dry-run → attach → fires
-overnight → the audit log reconstructs it. The marker grep proven to fail a poisoned build.
+- **M2 is now compose, not capture.** Authoring inside Bellman's own window needs no
+  permission on any platform, works on Wayland, and cannot record a password by accident.
+- **Capture moved to M6 and became optional.** It buys speed, at the cost of a
+  global-input-capture grant. It must not quietly become the default path.
+- The old M6 (password-field awareness) **folded into M6** — it is only needed once capture
+  ships, and only on the platforms capture supports.
+- Two of the three factual conflicts the research flagged are now **moot** for M1–M5. They
+  block M6 only.
 
 ## Open before M2 and M6 start
 

@@ -1,0 +1,37 @@
+# M4 — Replay engine + safety rails
+
+Design: `macro_recorder_security_plan.md` D-9, D-10, D-11.
+
+## Scope
+
+- `enigo` behind a `pub(crate)` adapter — never called directly from anywhere else.
+- `exec::replay(macro, RunToken)` — the single chokepoint from M1.
+- **Panic key** that aborts the whole run, including all remaining loop iterations.
+- Caps enforced **twice**: refuse pre-flight on the estimate, hard-abort mid-run on actual
+  elapsed time. One hung step defeats any estimate.
+- Modifier release on abort — never leave a stuck Ctrl or Shift.
+- Single-runner mutex: two macros never run at once.
+- Screen-fingerprint check before injecting; refuse if the layout moved.
+- Bounded repeat per D-9: caps multiply, delay between iterations, stop on failure, no
+  nesting.
+- On-screen countdown showing the abort key for the whole run (D-10).
+- Dry run and step-through.
+
+## First card that uses the dev bypass
+
+By now it has shipped and been exercised for three cards.
+
+## Do NOT
+
+- No conditionals. Ever. A fixed count only (D-9).
+- No caller-supplied repeat count — it is reviewed macro content.
+
+## Exit gate
+
+- Replay into a scratch window and assert the result.
+- **The panic key works during injection** — proven, not assumed. Our synthetic events must
+  neither swallow the real keypress nor trigger it themselves. The research notes `enigo`'s
+  event-marking is documented only on Windows and macOS.
+- Abort mid-run leaves **no stuck modifiers** — assert by reading modifier state after.
+- Exceeding the runtime cap hard-aborts and logs `aborted-on-cap`, never `completed`.
+- Fingerprint mismatch refuses. Two concurrent requests → exactly one runs.
