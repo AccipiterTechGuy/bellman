@@ -688,6 +688,26 @@ main {
 }
 
 /* --- Week Page Surface -------------------------------------------- */
+.week-section-title {
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* Week identity (e.g. "Week 29 · 13–19 July 2026") — stay readable at
+ * desktop width; never clip behind horizontal overflow of the day grid. */
+.week-identity {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-primary);
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-sm);
+  letter-spacing: 0.01em;
+}
+
 .week-toolbar,
 .month-toolbar,
 .history-toolbar {
@@ -745,6 +765,20 @@ main {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   background: var(--bg-surface-elevated);
+}
+
+/* Current day when today falls inside the displayed ISO week. Mirrors
+ * .month-cell.today so dark-theme accent contrast stays consistent. */
+.week-col.today {
+  border-color: var(--accent-primary);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-soft-border);
+}
+
+.week-col.today > header {
+  color: var(--accent-primary);
+  background: var(--accent-soft);
+  border-bottom-color: var(--accent-soft-border);
 }
 
 .empty-cell {

@@ -470,6 +470,105 @@ describe('api.js — calendar helpers (pure, no IPC)', () => {
     expect(isoDate(start)).toBe('2026-03-16'); // Mon before Wed 2026-03-18
   });
 
+  it('isoWeekNumber / isoWeekYear: mid-year week (e.g. Week 29 of 2026)', async () => {
+    const { isoWeekNumber, isoWeekYear, formatIsoWeekHeading, isoWeekStart, addDays, isoDate } =
+      await import('./api.js');
+    // 2026-07-15 is a Wednesday → ISO week Mon 13 – Sun 19 July 2026 = week 29.
+    const wed = new Date(2026, 6, 15);
+    expect(isoWeekNumber(wed)).toBe(29);
+    expect(isoWeekYear(wed)).toBe(2026);
+    expect(formatIsoWeekHeading(wed)).toBe('Week 29 · 13–19 July 2026');
+    // Heading is always from week start, not the raw anchor DOW.
+    const mon = isoWeekStart(wed);
+    expect(isoDate(mon)).toBe('2026-07-13');
+    expect(isoDate(addDays(mon, 6))).toBe('2026-07-19');
+    expect(formatIsoWeekHeading(mon)).toBe(formatIsoWeekHeading(wed));
+  });
+
+  it('iso week 1: Dec/Jan boundary uses ISO week-year', async () => {
+    const {
+      isoWeekNumber, isoWeekYear, formatIsoWeekHeading, isoWeekParts, isoDate,
+    } = await import('./api.js');
+    // 2026-01-01 is a Thursday → ISO week 1 of 2026, Mon 2025-12-29 … Sun 2026-01-04.
+    const jan1 = new Date(2026, 0, 1);
+    expect(isoWeekNumber(jan1)).toBe(1);
+    expect(isoWeekYear(jan1)).toBe(2026);
+    expect(isoDate(isoWeekParts(jan1).weekStart)).toBe('2025-12-29');
+    expect(isoDate(isoWeekParts(jan1).weekEnd)).toBe('2026-01-04');
+    expect(formatIsoWeekHeading(jan1))
+      .toBe('Week 1 · 29 December 2025 – 4 January 2026');
+    // Calendar Dec still in week 1 of the *next* ISO year:
+    const dec29 = new Date(2025, 11, 29);
+    expect(isoWeekNumber(dec29)).toBe(1);
+    expect(isoWeekYear(dec29)).toBe(2026);
+  });
+
+  it('iso week 52 and week 53 at year edges', async () => {
+    const { isoWeekNumber, isoWeekYear, formatIsoWeekHeading, isoWeekParts, isoDate } =
+      await import('./api.js');
+    // 2025 has 52 ISO weeks; Mon 2025-12-22 is week 52 of 2025.
+    const w52 = new Date(2025, 11, 22);
+    expect(isoWeekNumber(w52)).toBe(52);
+    expect(isoWeekYear(w52)).toBe(2025);
+    expect(formatIsoWeekHeading(w52)).toBe('Week 52 · 22–28 December 2025');
+
+    // 2020 has 53 ISO weeks; 2021-01-01 (Fri) is still week 53 of 2020.
+    const jan1_2021 = new Date(2021, 0, 1);
+    expect(isoWeekNumber(jan1_2021)).toBe(53);
+    expect(isoWeekYear(jan1_2021)).toBe(2020);
+    expect(isoDate(isoWeekParts(jan1_2021).weekStart)).toBe('2020-12-28');
+    expect(isoDate(isoWeekParts(jan1_2021).weekEnd)).toBe('2021-01-03');
+    expect(formatIsoWeekHeading(jan1_2021))
+      .toBe('Week 53 · 28 December 2020 – 3 January 2021');
+
+    // 2026 also has 53 weeks (Thu 2026-12-31 → week 53 of 2026).
+    const dec31_2026 = new Date(2026, 11, 31);
+    expect(isoWeekNumber(dec31_2026)).toBe(53);
+    expect(isoWeekYear(dec31_2026)).toBe(2026);
+  });
+
+  it('Prev / Next / This week update week number and range together', async () => {
+    const { formatIsoWeekHeading, addDays, isoWeekNumber } = await import('./api.js');
+    // Simulate WeekPage.shiftWeek / jumpToday against a fixed anchor.
+    // Current week: Week 29 · 13–19 July 2026 (Wed 15 Jul anchor).
+    let anchor = new Date(2026, 6, 15);
+    expect(formatIsoWeekHeading(anchor)).toBe('Week 29 · 13–19 July 2026');
+    expect(isoWeekNumber(anchor)).toBe(29);
+
+    // Next ▶ → week 30
+    anchor = addDays(anchor, 7);
+    expect(formatIsoWeekHeading(anchor)).toBe('Week 30 · 20–26 July 2026');
+    expect(isoWeekNumber(anchor)).toBe(30);
+
+    // Next ▶ again → week 31 (crosses into August)
+    anchor = addDays(anchor, 7);
+    expect(formatIsoWeekHeading(anchor)).toBe('Week 31 · 27 July – 2 August 2026');
+    expect(isoWeekNumber(anchor)).toBe(31);
+
+    // ◀ Prev twice → back to week 29
+    anchor = addDays(anchor, -14);
+    expect(formatIsoWeekHeading(anchor)).toBe('Week 29 · 13–19 July 2026');
+
+    // This week: jump to a different "today" still in week 29
+    const thisWeek = new Date(2026, 6, 17); // Fri 17 Jul
+    expect(formatIsoWeekHeading(thisWeek)).toBe('Week 29 · 13–19 July 2026');
+  });
+
+  it('dateInIsoWeek: today only matches the displayed week', async () => {
+    const { dateInIsoWeek, addDays } = await import('./api.js');
+    const today = new Date(2026, 6, 15); // Wed in week 29
+    const week29Anchor = new Date(2026, 6, 13); // Mon of week 29
+    const week30Anchor = addDays(week29Anchor, 7);
+
+    expect(dateInIsoWeek(today, week29Anchor)).toBe(true);
+    expect(dateInIsoWeek(today, week30Anchor)).toBe(false);
+    // Edges of the week are inclusive for Mon and Sun.
+    expect(dateInIsoWeek(new Date(2026, 6, 13), week29Anchor)).toBe(true);
+    expect(dateInIsoWeek(new Date(2026, 6, 19), week29Anchor)).toBe(true);
+    // Next Monday is outside.
+    expect(dateInIsoWeek(new Date(2026, 6, 20), week29Anchor)).toBe(false);
+  });
+
   it('addDays crosses month boundary', async () => {
     const { addDays, isoDate } = await import('./api.js');
     const d = addDays(new Date(2026, 0, 30), 5);
