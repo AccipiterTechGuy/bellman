@@ -228,6 +228,28 @@ cargo install tauri-cli --locked
 These four are exactly what a fresh contributor machine (or CI runner) needs
 before `cargo tauri dev` works; P6's CI recipe starts from this list.
 
+### Additionally, to RUN the GUI test suite (added 2026-07-29)
+
+```sh
+# WebKit's WebDriver server — lets the QA harness drive the app from inside the
+# webview instead of injecting synthetic mouse/keyboard events into the desktop.
+sudo apt install -y webkit2gtk-driver          # → WebKitWebDriver 2.52.3
+
+# Tauri's WebDriver bridge (no root needed)
+cargo install tauri-driver --locked
+```
+
+**The `webkit2gtk-driver` version must match the installed `libwebkit2gtk-4.1`**
+(both 2.52.3 here) — a mismatched driver fails to attach with an unhelpful error.
+
+A window manager is also required on the headless QA display, but needs no
+install on Mint: `metacity` and `muffin` ship with the desktop. Use
+`metacity --sm-disable`.
+
+Without these the GUI QA harness has historically fallen back to driving the
+operator's live `:0` session, which steals their mouse and keyboard mid-run.
+See `docs/todo/qa_isolated_display_no_input_hijack.md`.
+
 ## Build phases (each = one crew card; exit gate before the next departs)
 
 ### P0 — core engine, headless  ◀ hardest, highest value
