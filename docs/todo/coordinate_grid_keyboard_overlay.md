@@ -1,122 +1,127 @@
-# Coordinate Grid and Virtual Keyboard Overlay
+# Coordinate Grid — screenshot-composited first, live overlay second
 
 Repo: `~/bellman`
 
-**GATED ON RESEARCH.** A four-way feasibility study is running
-(`Transparent desktop coordinate-grid + virtual-keyboard overlay — cross-OS feasibility`).
-Do not start until its `synthesis.md` lands. The study may come back NO-GO for a platform,
-or recommend image anchoring over a grid entirely — either outcome rewrites this card.
+**Research complete.** Four-way study + synthesis:
+`Research_from_Crew/transparent-desktop-coordinate-grid-virt_research_2026-07-29_194756/synthesis/synthesis.md`.
+This card has been **re-scoped by that research**. Read the synthesis before starting; the
+sections below record what it decided so a crew does not re-derive or re-argue it.
 
-## Goal
+## The verdict that changed the plan
 
-Give Bellman and connected AI agents a visual targeting system for the desktop: a
-transparent overlay that labels screen positions, so an agent can look at a screenshot and
-name an exact place to click or a key to press.
+> **The grid does not need to be on the screen.**
 
-## The loop this exists to serve
+Capture each monitor clean, draw the grid, labels and coordinates **into the captured image
+buffer** in Rust, and hand the agent that image. The agent sees an identical labelled grid.
+The desktop is never touched.
 
-1. Bellman shows the overlay.
-2. Bellman screenshots the desktop **with the overlay composited in**.
-3. The agent reads the screenshot and returns a cell, a coordinate, or a key.
-4. Bellman **hides the overlay**, then performs the real click or keystroke.
+Two of four researchers reached this independently. It deletes, in one move: click-through,
+focus theft, z-order, always-on-top, compositor detection, capture-inclusion, the
+hide-then-click race, `macOSPrivateApi`, four open Tauri bugs — **and the Wayland blocker.**
+It is the only version that works on GNOME/Wayland, where a live overlay is impossible
+permanently, not temporarily.
 
-Step 4 is the one with a hidden trap — see "Do not fake the hide" below.
+Cost: days, versus weeks for the live overlay.
 
-## Mode 1 — grid only
+## Build order — do not invert this
 
-Transparent, always-on-top grid over the whole desktop. Readable X/Y coordinates or
-labelled cells. Light neon colour, soft glow, faded — the applications underneath must
-stay legible. This is an aid, not a curtain.
+**Tier A — `bellman grid screenshot` (this card).**
+Capture per monitor → composite grid + labels in Rust → return the image **plus a coordinate
+manifest**. No window, no overlay, no permissions beyond screen capture.
 
-## Mode 2 — grid + virtual keyboard
+**Tier B — live overlay (a LATER card, only if a human needs to see it on the real desktop).**
+Native, **WebView-free**, one surface per monitor, in the same Rust process. X11 / Windows /
+macOS only. Do not start it as part of this card.
 
-The same grid plus a drawn keyboard. The grid turns **red** so the active mode is
-unmistakable at a glance. Each key is labelled with its screen coordinates so an agent can
-reference, select or inspect a specific key.
+**Never a transparent WebView.** All four researchers agree.
 
-## Required behaviour
+## Per-OS reality
 
-- Transparent full-screen overlay, always on top, never steals focus
-- Optional click-through mode
-- Light neon grid in normal mode; red grid when the keyboard is active
-- Soft faded glow, not heavy solid lines
-- Readable X/Y coordinates in both modes
-- One or several monitors
-- Quick show / hide / mode-switch
-- Screenshot capture that includes the overlay
-- Hide before executing the final click or key action
+| Environment | Tier A (this card) | Tier B (later) |
+|---|---|---|
+| Linux / X11 | GO | GO |
+| Windows 10 1803+ / 11 | GO | GO |
+| macOS 13+ | GO — and needs **no private API** | GO-WITH-LIMITS: two TCC grants |
+| Linux / Wayland — GNOME | **GO** (portal) | **NO-GO. Permanently.** |
+| Linux / Wayland — KDE, wlroots | GO (portal) | NO-GO for v1; runtime-probe, never assume |
 
-## Commands
+Never assume the environment. Probe at runtime and report honestly.
+
+## The macOS coordinate correction — read this twice
+
+The original brief for this feature asserted that macOS uses a bottom-left origin with Y
+increasing upward. **That is wrong**, and it is wrong in a way that silently mirrors every
+click vertically on one platform.
+
+Bottom-left/Y-up is an **AppKit** fact. **CoreGraphics global display space — which is what
+screen capture and click injection actually use — is top-left, Y-down, in points**, the same
+as X11 and Windows.
+
+Two researchers caught it against Apple's own documentation; two inherited the error from
+the brief. Implement against CoreGraphics, and add a test that would fail if someone
+"fixes" it back.
+
+## The canonical coordinate space
+
+One space, defined once, used by `grid`, by capture, and by any future click injection. The
+synthesis §4 specifies it — implement that, document it in `docs/`, and unit-test the
+conversion per OS. A grid that reports numbers the click API will not accept is worse than
+no grid: it produces confident, wrong clicks.
+
+## Dropped from the original spec
+
+**The virtual keyboard — dropped, 3-1.** Keystrokes take keycodes, not coordinates. Drawing
+a keyboard, screenshotting it, and having a model read a keycap back out of pixels is a
+lossy round trip to information we already have exactly. Ship instead:
 
 ```
-bellman grid show
-bellman grid show --keyboard
-bellman grid hide
-bellman grid screenshot [--out PATH]
-bellman grid mode normal
-bellman grid mode keyboard
+bellman type "hello"
+bellman key ctrl+shift+p
 ```
 
-`--json` on every one of these. This surface exists to be driven by an agent, not typed.
+Exact, instant, no overlay, no race — and they work on Wayland. The agent returns a key
+*name*, validated against an enum.
 
-## Correctness rules — these are where the feature lives or dies
+**Note:** `bellman type` is gated. See `docs/todo/macro_recorder_security_plan.md` D-6 — it
+is not exposed to agents in v1.
 
-**One coordinate space, and it is documented.** A grid reporting numbers that the click
-API does not accept is worse than no grid: it produces confident, wrong clicks. Logical vs
-physical pixels, DPI scale, and **macOS's bottom-left origin with Y increasing upward**
-(against top-left/Y-down on X11 and Windows) must all be resolved into a single space that
-`bellman grid` reports and `bellman mouse move` consumes. The research synthesis names
-that space — implement it, document it in `docs/`, and test the conversion per OS.
+**Kept:** the red mode indicator. An unmistakable "you are in a dangerous mode" signal is
+good design regardless of which modes survive.
 
-**Do not fake the hide.** Sleeping 100 ms after `hide()` and hoping the compositor caught
-up is how the overlay ends up in the click, or in the next screenshot. Use the real
-per-OS synchronisation the research identifies; if a timeout genuinely is the only honest
-mechanism on some platform, say so in the code comment and make the value configurable
-rather than a magic number.
+## Where the grid actually sits
 
-**A screenshot must actually contain the overlay.** Some capture APIs silently omit
-always-on-top layered windows. Assert it in a test: capture with the overlay up and prove
-the grid pixels are present, rather than trusting the API.
+All four researchers ranked it **the weakest of the three targeting strategies**:
 
-**Report what it cannot do.** There are surfaces where the overlay cannot draw or the
-capture returns black — lock screens, UAC/secure desktop, full-screen exclusive apps. When
-Bellman is on one of those, say so; never return a screenshot that silently lacks the
-overlay and let an agent target from it.
+1. Accessibility tree — real element identities, not pixels
+2. Anchored marks / image anchoring — survives things moving
+3. The grid — the **universal floor** and the **calibration instrument**
 
-## Platform honesty
+Build it as the floor that always works and the tool that proves the other two are aimed
+correctly. Do not build the product around it.
 
-Per the research verdict, some platforms will be GO, some GO-WITH-LIMITS, and Wayland may
-be NO-GO outside wlroots compositors. Implement what is GO. On anything else,
-`bellman grid show` must fail with a clear reason — "overlay unsupported on GNOME/Wayland:
-no layer-shell protocol" — and **never** an empty window or a silent success. An agent
-that thinks the grid is up when it is not will click blind.
+## Must ship with it
 
-## Idle cost
-
-Bellman's design point is a small resident footprint (`docs/PERF.md`). A full-screen
-always-on-top transparent window is a real compositing burden. When hidden, the cost must
-be genuinely zero — not an invisible window still being composited. Measure it and add it
-to the perf gates.
+**The sentinel self-test** (synthesis §7). The feature must be able to prove its own
+coordinates are right, rather than assert it. A round trip — read a labelled point off the
+grid, feed it back, land within tolerance — is the real test. Drawing pretty lines is not.
 
 ## Acceptance
 
-1. Transparent neon coordinate grid shows over the desktop.
-2. Grid + virtual keyboard shows.
-3. Normal mode is light neon; keyboard mode is red. Distinguishable in a screenshot test.
-4. Coordinates readable in both modes.
-5. Click-through works: a click at a gridded point reaches the app underneath, proven by
-   the app reacting, not by inspection.
-6. `bellman grid screenshot` saves an image that demonstrably contains the overlay.
-7. Multi-monitor: correct coordinates on a second monitor, including one positioned left
-   of or above the primary (negative coordinates), and under mixed DPI if the research
-   says that is supported.
-8. A coordinate read off the grid, fed to the mouse-move API, lands within 1 px of the
-   labelled point — the round trip, not the drawing, is the real test.
-9. On an unsupported platform, `grid show` fails loudly with the reason.
-10. Hidden overlay costs no measurable idle CPU.
+1. `bellman grid screenshot` returns an image with a readable coordinate grid composited in,
+   plus a machine-readable coordinate manifest, on X11.
+2. The same works on **GNOME/Wayland** through the portal.
+3. Works with `DISPLAY` unset where the platform allows it; never requires a visible window.
+4. Multi-monitor: correct coordinates on a second monitor, including one positioned left of
+   or above the primary (negative coordinates), and under mixed DPI.
+5. macOS conversion is tested against CoreGraphics top-left/Y-down, with a test that fails if
+   an AppKit-style flip is reintroduced.
+6. A coordinate read off the grid round-trips to within tolerance — the sentinel.
+7. On an environment where capture is unavailable, it fails loudly with the reason, never a
+   blank image.
+8. No live overlay, no transparent window, and no `macOSPrivateApi` anywhere in this card.
 
 ## Prerequisites
 
-The research report produces a per-OS install list. Add it to
-`docs/BUILD_PLAN.md` alongside the existing toolchain and GUI-test blocks, and flag
-anything needing root — the crew cannot install those unattended.
+The synthesis §8 carries a per-OS install list. Add it to `docs/BUILD_PLAN.md` beside the
+existing toolchain blocks, and flag anything needing root — a crew cannot install those
+unattended.
