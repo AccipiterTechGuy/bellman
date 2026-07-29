@@ -1,0 +1,33 @@
+{
+  "file": "p4f-control-hover.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 74248,
+  "mean_luma": 38.14,
+  "stdev": 16.42,
+  "unique_colors_cap200k": 2145,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    100,
+    162,
+    960,
+    640
+  ],
+  "expect": "Primary + New timer button in :hover (accent-hover #5bd4bc)",
+  "hover_sample_rgb": [
+    28,
+    34,
+    42
+  ],
+  "rest_sample_rgb": [
+    28,
+    34,
+    42
+  ],
+  "hover_screen_xy": [
+    984,
+    199
+  ]
+}

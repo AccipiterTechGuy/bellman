@@ -1,0 +1,21 @@
+{
+  "file": "p4f-toast-error.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 90137,
+  "mean_luma": 41.84,
+  "stdev": 15.89,
+  "unique_colors_cap200k": 2831,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    100,
+    162,
+    960,
+    640
+  ],
+  "expect": "Error toast with non-colour \u26a0 Error badge after Save on deleted timer",
+  "timer_id": "cceb598f-9ab9-42c6-b2d9-97f13a8d0d74",
+  "timer_name": "qa-collide-alpha-backup"
+}

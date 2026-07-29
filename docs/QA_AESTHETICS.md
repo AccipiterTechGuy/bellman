@@ -95,14 +95,19 @@ Verified live in WebKitGTK using standard keyboard navigation semantics:
   - Buttons (`.btn:hover`, `.btn:active`): Surface brightness shifts with active scale `0.98`.
   - Focus Ring: `:focus-visible` applies `--border-focus` (`#4ec9b0`) with `4px` soft accent glow.
   - Controls: `<input>`, `<select>`, `checkbox`, `radio` highlight with accent focus borders.
-  - Pixel evidence: `after/p4f-control-hover-disabled.png` (dialog footer with pointer over control strip).
+  - Pixel evidence (real `:hover`, not rest state): `after/p4f-control-hover.png` — cursor over **+ New timer**; button fill samples **mean RGB (90,210,186) ≈ `--accent-hover` `#5bd4bc` (91,212,188)**, versus rest-state **+ New timer** in `p4f-list-after.png` at **(77,199,175) ≈ `--accent-primary` `#4ec9b0` (78,201,176)** (same bbox ~845–943×61–92).
 - **Disabled Control States**:
   - `disabled` buttons and inputs render with `opacity: 0.5` and `cursor: not-allowed`.
-  - Pixel evidence: `after/p4f-dialog-disabled-create.png` — New timer dialog with empty name so **Create** is gated (`disabled={!canSave}`).
+  - Pixel evidence: `after/p4f-dialog-disabled-create.png` — New timer dialog with empty name so **Create** is gated (`disabled={!canSave}`); Create samples as accent paint at opacity 0.5 over the dialog surface.
 - **Loading & Empty States**:
   - Empty table state rendered via `.empty` container (`No timers match the current filters.`).
   - History log empty tail handled gracefully.
-  - Toast / error states: `.toast-badge` encodes kind without colour alone (`ℹ Info` / `⚠ Error`); evidence in `after/p4f-toast-info.png` (Settings save) and any err toast when an API call fails.
+  - Toast / error states: `.toast-badge` encodes kind **without colour alone**:
+    - Info: `after/p4f-toast-info.png` — **ℹ INFO** badge + Settings save text.
+    - Error: `after/p4f-toast-error.png` — **⚠ ERROR** badge + `timer not found: …` after Save on a timer deleted under the open edit dialog (CLI `rm` while dialog open).
+- **Tray menu (card surface; OS-drawn)**:
+  - The desktop shell installs a StatusNotifierItem / system tray icon via `src-tauri/src/tray.rs` (`TrayIconBuilder`, menu items **Open Bellman**, **Pause all**, **Quit**). On Linux the menu chrome is painted by the **panel / StatusNotifier host**, not by the WebKitGTK document — **no app CSS can restyle the tray menu**.
+  - Under app control (Rust/Tauri, not CSS tokens): icon (`icons/tray.png` / default window icon), tooltip `"Bellman"`, menu labels, check-state for Pause all (synced with in-window pause via `AppState::tray_pause_check`), and click handlers (show window / toggle pause / exit). Visual polish of the in-window **Pause all** control and shared pause semantics is what this card unified; the OS tray menu itself is intentionally out of CSS scope.
 - **Deferred (card hard limit: no behaviour / IPC / store changes)**:
   - `WeekPage.svelte` and `MonthPage.svelte` still have no dedicated loading or error branch. Adding those would require fetch/error wiring beyond a pure restyle. Filed here as a follow-up; this card only restyles existing empty/filter and toast chrome that already exists on All timers / App shell.
 
