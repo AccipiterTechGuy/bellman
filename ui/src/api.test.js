@@ -378,6 +378,15 @@ describe('api.js — C8 calendar UI command surface', () => {
     expect(state.invokes[0].args.id).toBe('abc');
   });
 
+  it('listCalendarTruth invokes list_calendar_truth with from/to/timezone', async () => {
+    const { listCalendarTruth } = await import('./api.js');
+    await listCalendarTruth('2026-07-27', '2026-08-02', 'Europe/Helsinki');
+    expect(state.invokes[0].cmd).toBe('list_calendar_truth');
+    expect(state.invokes[0].args.from).toBe('2026-07-27');
+    expect(state.invokes[0].args.to).toBe('2026-08-02');
+    expect(state.invokes[0].args.timezone).toBe('Europe/Helsinki');
+  });
+
   it('previewFires invokes preview_fires with the flat WebOccurrenceDto + n', async () => {
     const { previewFires } = await import('./api.js');
     // The dialog sends the deliberate WebOccurrenceDto shape (flat
@@ -641,6 +650,31 @@ describe('api.js — structured-occurrence helpers (rework #1: auditor fix)', ()
     expect(clamp(2026, 3, 31)).toBe(30);  // Apr = 30
     expect(clamp(2026, 0, 31)).toBe(31);  // Jan unchanged
     expect(clamp(2026, 11, 31)).toBe(31); // Dec unchanged
+  });
+
+  it('MonthPage navigation helpers (shiftMonthYear / monthTruthRange / Today)', async () => {
+    const {
+      shiftMonthYear,
+      shiftCalendarYear,
+      todayYearMonth,
+      monthTruthRange,
+      formatMonthHeading,
+    } = await import('./api.js');
+    // Prev from July → June
+    expect(shiftMonthYear(2026, 6, -1)).toEqual({ year: 2026, month: 5 });
+    expect(formatMonthHeading(2026, 5)).toBe('June 2026');
+    // Next from July → August
+    expect(shiftMonthYear(2026, 6, 1)).toEqual({ year: 2026, month: 7 });
+    expect(formatMonthHeading(2026, 7)).toBe('August 2026');
+    // Year wrap
+    expect(shiftMonthYear(2026, 0, -1)).toEqual({ year: 2025, month: 11 });
+    expect(shiftCalendarYear(2026, 1)).toBe(2027);
+    // Today jump
+    expect(todayYearMonth(new Date(2026, 6, 15))).toEqual({ year: 2026, month: 6 });
+    // Backend range for visible grid (includes pad days)
+    const r = monthTruthRange(2026, 6);
+    expect(r.from <= '2026-07-01').toBe(true);
+    expect(r.to >= '2026-07-31').toBe(true);
   });
 
   it('TimerDto structured shape: weekly + Notify action round-trips through the IPC mock', async () => {

@@ -174,6 +174,19 @@ export async function runNow(id) {
 export async function listLogTail(timerId, limit) {
   return await invoke('list_log_tail', { timerId, limit });
 }
+/**
+ * Week/Month truth model for a civil date range.
+ * @param {string} from YYYY-MM-DD
+ * @param {string} to YYYY-MM-DD
+ * @param {string} [timezone] IANA tz; omit for system local
+ */
+export async function listCalendarTruth(from, to, timezone) {
+  return await invoke('list_calendar_truth', {
+    from,
+    to,
+    timezone: timezone ?? null,
+  });
+}
 export async function createTimer(input) {
   return await invoke('create_timer', { input });
 }
@@ -424,6 +437,60 @@ export function monthGrid(year, month) {
     out.push(addDays(start, i));
   }
   return out;
+}
+
+/**
+ * Month-page navigation: shift `year`/`month` (0-indexed) by `delta` months.
+ * Used by MonthPage « Year / ◀ Month / Month ▶ / Year » — must stay pure so
+ * unit tests exercise the same function the component imports.
+ * @returns {{ year: number, month: number }}
+ */
+export function shiftMonthYear(year, month, delta) {
+  let m = month + delta;
+  let y = year;
+  while (m < 0) { m += 12; y -= 1; }
+  while (m > 11) { m -= 12; y += 1; }
+  return { year: y, month: m };
+}
+
+/** Month-page navigation: shift calendar year by `delta`. */
+export function shiftCalendarYear(year, delta) {
+  return year + delta;
+}
+
+/**
+ * Month-page "Today" jump — year/month of `now` (injectable for tests).
+ * @param {Date} [now]
+ * @returns {{ year: number, month: number }}
+ */
+export function todayYearMonth(now = new Date()) {
+  return { year: now.getFullYear(), month: now.getMonth() };
+}
+
+/**
+ * Inclusive ISO date range MonthPage passes to `listCalendarTruth` for the
+ * visible 6×7 grid of `year`/`month` (includes leading/trailing adjacent days).
+ * @returns {{ from: string, to: string }}
+ */
+export function monthTruthRange(year, month) {
+  const grid = monthGrid(year, month);
+  return {
+    from: isoDate(grid[0]),
+    to: isoDate(grid[grid.length - 1]),
+  };
+}
+
+/**
+ * Heading text for the Month section subtitle (e.g. "July 2026").
+ * Uses `en-US` long month so tests are locale-stable.
+ * @param {number} year
+ * @param {number} month 0-indexed
+ */
+export function formatMonthHeading(year, month) {
+  return new Date(year, month, 1).toLocaleString('en-US', {
+    month: 'long',
+    year: 'numeric',
+  });
 }
 
 /** Format a YYYY-MM-DD string in local tz. */

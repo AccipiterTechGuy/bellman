@@ -157,6 +157,82 @@ pub fn list_log_tail(
     })
 }
 
+/// `list_calendar_truth` — Week / Month view truth model.
+///
+/// Past instants: only durable recorded outcomes (JSONL events + run ledger).
+/// Future instants: schedule projections. Never fabricates past recurrence.
+///
+/// Args are individual Tauri command parameters (camelCase at the IPC
+/// boundary via the generate_handler arg mapping).
+#[tauri::command]
+pub fn list_calendar_truth(
+    state: State<'_, AppState>,
+    from: String,
+    to: String,
+    timezone: Option<String>,
+) -> Result<bellman_core::TruthWindow, String> {
+    do_list_calendar_truth(&state, &from, &to, timezone.as_deref(), Utc::now())
+}
+
+/// Testable implementation of [`list_calendar_truth`] (injectable `now`).
+fn do_list_calendar_truth(
+    state: &AppState,
+    from: &str,
+    to: &str,
+    timezone: Option<&str>,
+    now_utc: DateTime<Utc>,
+) -> Result<bellman_core::TruthWindow, String> {
+    use chrono::NaiveDate;
+
+    let from_d = NaiveDate::parse_from_str(from.trim(), "%Y-%m-%d")
+        .map_err(|e| format!("invalid from date '{from}': {e}"))?;
+    let to_d = NaiveDate::parse_from_str(to.trim(), "%Y-%m-%d")
+        .map_err(|e| format!("invalid to date '{to}': {e}"))?;
+    let tz = match timezone.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => s.to_string(),
+        None => bellman_core::system_tz_name(),
+    };
+
+    // Current + retained archives (rotation must not erase Week/Month truth).
+    let logs_dir = state.data_dir.join("logs");
+    let events = {
+        let (evs, _) =
+            bellman_core::read_log_history(&logs_dir).map_err(|e| e.to_string())?;
+        evs
+    };
+
+    let store = state.store.lock();
+    let tasks = bellman_core::tasks_from_store(&store)?;
+    // Broad claim window padded by a day so DST edges near the range still
+    // reach the truth builder (which re-filters in display tz).
+    let pad_start = from_d
+        .pred_opt()
+        .unwrap_or(from_d)
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| format!("invalid from date {from_d}"))?;
+    let pad_end = to_d
+        .succ_opt()
+        .and_then(|d| d.succ_opt())
+        .unwrap_or(to_d)
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| format!("invalid to date {to_d}"))?;
+    let range_from = DateTime::<Utc>::from_naive_utc_and_offset(pad_start, Utc);
+    let range_to = DateTime::<Utc>::from_naive_utc_and_offset(pad_end, Utc);
+    let claims = store
+        .runs_in_range(range_from, range_to)
+        .map_err(|e| e.to_string())?;
+    drop(store);
+
+    let opts = bellman_core::TruthBuildOptions {
+        from: from_d,
+        to: to_d,
+        timezone: tz,
+        now_utc,
+        caps: bellman_core::CalendarCaps::default(),
+    };
+    bellman_core::build_truth_window(&tasks, &events, &claims, &opts)
+}
+
 /// `get_pause_all` / `set_pause_all` — the global pause-all flag.
 #[tauri::command]
 pub fn get_pause_all(state: State<'_, AppState>) -> bool {
@@ -946,5 +1022,96 @@ mod tests {
         let store = state.store.lock();
         let t2 = store.get_timer(id2).unwrap().unwrap();
         assert_eq!(t2.misfire, MisfirePolicy::Skip);
+    }
+
+    /// Production path: archive JSONL + claim ledger through list_calendar_truth.
+    #[test]
+    fn list_calendar_truth_merges_archive_and_ledger() {
+        use bellman_core::events::{EventKind, EventRecord};
+        use bellman_core::store::NewTimer;
+        use bellman_core::{Occurrence, OccurrenceKind, OutcomeLabel, TruthSource};
+        use chrono::{NaiveTime, TimeZone, Utc};
+
+        let dir = tempdir().unwrap();
+        let data_dir = dir.path().to_path_buf();
+        let state = create_test_state(data_dir.clone());
+
+        let at = NaiveTime::from_hms_opt(9, 0, 0).unwrap();
+        let occ = Occurrence::new(OccurrenceKind::Daily { at }, "UTC").unwrap();
+        let mut nt = NewTimer::new("NEW CURRENT NAME", occ);
+        nt.enabled = false;
+
+        let (tid, run_fail_id, run_ledger_id) = {
+            let mut store = state.store.lock();
+            let t = store.create_timer(nt).unwrap();
+            let sched_fail = Utc.with_ymd_and_hms(2026, 7, 10, 9, 0, 0).unwrap();
+            let sched_ledger = Utc.with_ymd_and_hms(2026, 7, 11, 9, 0, 0).unwrap();
+            let c_fail = store.claim_run(t.id, sched_fail).unwrap();
+            store.complete_run(c_fail.run_id).unwrap();
+            let c_ledger = store.claim_run(t.id, sched_ledger).unwrap();
+            store.complete_run(c_ledger.run_id).unwrap();
+            (t.id, c_fail.run_id, c_ledger.run_id)
+        };
+
+        // Archived failure only (empty current) — simulates rotate after fire.
+        let logs = data_dir.join("logs");
+        let archive_dir = logs.join("archive");
+        fs::create_dir_all(&archive_dir).unwrap();
+        let sched_fail = Utc.with_ymd_and_hms(2026, 7, 10, 9, 0, 0).unwrap();
+        let line = serde_json::to_string(
+            &EventRecord::new(EventKind::WakeFailed)
+                .with_timer(tid, "Historical Failed")
+                .with_run(run_fail_id)
+                .with_scheduled_for(sched_fail)
+                .with_ts(sched_fail)
+                .with_error("boom"),
+        )
+        .unwrap();
+        fs::write(
+            archive_dir.join("events-2026-W28.jsonl"),
+            format!("{line}\n"),
+        )
+        .unwrap();
+        fs::write(logs.join("events.current.jsonl"), "").unwrap();
+
+        let now = Utc.with_ymd_and_hms(2026, 7, 15, 12, 0, 0).unwrap();
+        let win = do_list_calendar_truth(&state, "2026-07-01", "2026-07-31", Some("UTC"), now)
+            .expect("list_calendar_truth");
+
+        let recorded: Vec<_> = win
+            .entries
+            .iter()
+            .filter(|e| e.source == TruthSource::Recorded)
+            .collect();
+        assert_eq!(
+            recorded.len(),
+            2,
+            "one archived failed + one ledger-only unknown, got {recorded:?}"
+        );
+
+        let failed = recorded
+            .iter()
+            .find(|e| e.outcome == OutcomeLabel::Failed)
+            .expect("failed from archive");
+        assert_eq!(failed.name, "Historical Failed");
+        assert_ne!(failed.name, "NEW CURRENT NAME");
+        assert!(failed.kind.is_none());
+        assert!(failed.enabled.is_none());
+        let fail_run = run_fail_id.to_string();
+        assert_eq!(failed.run_id.as_deref(), Some(fail_run.as_str()));
+
+        let unknown = recorded
+            .iter()
+            .find(|e| e.outcome == OutcomeLabel::Unknown)
+            .expect("ledger-only unknown");
+        assert_ne!(unknown.name, "NEW CURRENT NAME");
+        assert!(unknown.kind.is_none());
+        assert!(unknown.enabled.is_none());
+        let ledger_run = run_ledger_id.to_string();
+        assert_eq!(unknown.run_id.as_deref(), Some(ledger_run.as_str()));
+
+        assert!(recorded
+            .iter()
+            .all(|e| e.outcome != OutcomeLabel::Delivered));
     }
 }

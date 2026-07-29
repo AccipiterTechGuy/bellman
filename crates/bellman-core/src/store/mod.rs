@@ -561,6 +561,30 @@ impl Store {
         Ok(out)
     }
 
+    /// Run-claim rows whose `scheduled_for` falls in `[from, to)` (UTC half-open).
+    ///
+    /// Used by the calendar truth model so past cells can surface durable
+    /// ledger evidence even when JSONL history has been pruned.
+    pub fn runs_in_range(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> StoreResult<Vec<RunClaim>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT run_id, timer_id, scheduled_for, status, claimed_at, completed_at,
+                    COALESCE(event_sequence, 0)
+             FROM runs
+             WHERE scheduled_for >= ?1 AND scheduled_for < ?2
+             ORDER BY scheduled_for ASC, run_id ASC",
+        )?;
+        let rows = stmt.query_map(params![fmt_dt(from), fmt_dt(to)], row_to_claim)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
     /// Last acknowledged event_sequence for a timer (0 if never acked).
     pub fn last_acked_sequence(&self, timer_id: TimerId) -> StoreResult<u64> {
         let mut stmt = self.conn.prepare(

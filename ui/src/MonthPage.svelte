@@ -4,11 +4,22 @@
     monthGrid,
     isoDate,
     jsIsoWeekday,
-    parseUtc,
-    daysInMonth,
-    weeklyDaysFromOccurrence,
-    kindFromOccurrence,
+    listCalendarTruth,
+    listLogTail,
+    isTauri,
+    shiftMonthYear,
+    shiftCalendarYear,
+    todayYearMonth,
+    monthTruthRange,
+    formatMonthHeading,
   } from './api.js';
+  import {
+    buildClientTruthEntries,
+    groupEntriesByDate,
+    normaliseTruthWindow,
+    sourceLabel,
+    outcomeLabel,
+  } from './calendar-truth.js';
 
   /** @type {(t:any) => void} */
   let { onEdit, onCreateDate, onToast, timers = [], tick = 0 } = $props();
@@ -16,117 +27,94 @@
   let year = $state(new Date().getFullYear());
   let month = $state(new Date().getMonth()); // 0-indexed
 
-  // Per-day list of timers scheduled to fire that day (UTC date).
+  /** @type {Record<string, any[]>} */
   let daysMap = $state({});
+  let loading = $state(false);
 
   $effect(() => {
     void tick;
-    rebuild(timers, year, month);
+    void timers;
+    void year;
+    void month;
+    const gen = (rebuild.gen = (rebuild.gen || 0) + 1);
+    rebuild(gen);
   });
 
-  // Mirror the core's `InvalidMonthDayPolicy::Clamp` semantics: a
-  // monthly day-31 timer fires on the last valid day of short months
-  // (Feb 28/29, Apr 30, etc). Implemented in JS via `daysInMonth`
-  // so the GUI matches `bellman next` for these timers.
-  function clampedDayOfMonth(year, month, day) {
-    return Math.min(day, daysInMonth(year, month));
+  async function rebuild(gen) {
+    // Same range helper the unit tests pin — leading/trailing grid days included.
+    const { from, to } = monthTruthRange(year, month);
+    loading = true;
+    try {
+      let entries = [];
+      if (isTauri()) {
+        try {
+          const win = normaliseTruthWindow(await listCalendarTruth(from, to));
+          entries = win.entries;
+        } catch (e) {
+          if (typeof onToast === 'function') {
+            onToast(`Calendar truth: ${e}`, 'err');
+          }
+          entries = await clientFallback(from, to);
+        }
+      } else {
+        entries = await clientFallback(from, to);
+      }
+      if (gen !== rebuild.gen) return;
+      daysMap = groupEntriesByDate(entries);
+    } finally {
+      if (gen === rebuild.gen) loading = false;
+    }
   }
 
-  // Build a map of `YYYY-MM-DD → [chip]` for the visible grid. Calendar
-  // kinds that match month/year/day rule fire on their clamped dates;
-  // weekly/daily appear on every visible day; once/cron/interval
-  // appear only on their next fire day inside the visible span. Matches
-  // the spec: "Month page — month calendar (year-aware grid, prev/next
-  // month + year navigation) showing monthly/yearly/once timers on
-  // their dates".
-  function rebuild(timers, year, month) {
-    const grid = monthGrid(year, month);
-    const firstIso = isoDate(grid[0]);
-    const lastIso = isoDate(grid[grid.length - 1]);
-    const map = {};
-    const safePush = (iso, chip) => {
-      (map[iso] = map[iso] || []).push(chip);
-    };
-    for (const t of timers) {
-      const occ = t.occurrence || {};
-      const occKind = kindFromOccurrence(occ);
-      if (occKind === 'monthly') {
-        const day = Number(occ.day || 0);
-        if (!day) continue;
-        const targetDay = clampedDayOfMonth(year, month, day);
-        const targetIso = `${year}-${String(month + 1).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`;
-        // Always render the chip on the clamped date even if it's outside
-        // the visible 6×7 grid (so the user sees the timer in its month
-        // and can navigate to it via Today/this-month buttons).
-        safePush(targetIso, { timer: t, kind: 'monthly', monthDayClamped: targetDay !== day });
-      } else if (occKind === 'yearly') {
-        const mo = Number(occ.month || 0);
-        const day = Number(occ.day || 0);
-        if (!mo || !day || mo - 1 !== month) continue;
-        const targetDay = clampedDayOfMonth(year, month, day);
-        const targetIso = `${year}-${String(month + 1).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`;
-        safePush(targetIso, { timer: t, kind: 'yearly' });
-      } else if (occKind === 'once' && t.nextFireUtc) {
-        const d = parseUtc(t.nextFireUtc);
-        if (!d) continue;
-        const iso = isoDate(d);
-        if (iso >= firstIso && iso <= lastIso) {
-          safePush(iso, { timer: t, kind: 'once' });
-        }
-      } else if ((occKind === 'cron' || occKind === 'interval') && t.nextFireUtc) {
-        const d = parseUtc(t.nextFireUtc);
-        if (!d) continue;
-        const iso = isoDate(d);
-        if (iso >= firstIso && iso <= lastIso) {
-          safePush(iso, { timer: t, kind: occKind });
-        }
-      } else if (occKind === 'weekly' || occKind === 'daily') {
-        // Weekly fires land on its chosen weekdays; daily fires on every
-        // day of the visible grid. Single chip per cell keeps the grid
-        // readable; multiple weekly timers accumulate.
-        const matchingDays = new Set();
-        if (occKind === 'weekly') {
-          // Push the visible grid into the same ISO-week convention the
-          // timer uses. Each cell IS an ISO date, but the timer fires in
-          // its own tz: we conservatively place on the matching ISO weekday
-          // here, matching what the Week page shows for the same window.
-          const dowSet = new Set(weeklyDaysFromOccurrence(occ));
-          for (const cell of grid) {
-            if (dowSet.has(jsIsoWeekday(cell))) {
-              matchingDays.add(isoDate(cell));
-            }
-          }
-        } else {
-          for (const cell of grid) matchingDays.add(isoDate(cell));
-        }
-        for (const iso of matchingDays) {
-          safePush(iso, { timer: t, kind: occKind });
-        }
+  async function clientFallback(from, to) {
+    let events = [];
+    if (isTauri()) {
+      try {
+        const log = await listLogTail(null, 2000);
+        events = log.events || [];
+      } catch {
+        events = [];
       }
     }
-    daysMap = map;
+    return buildClientTruthEntries({
+      timers,
+      events,
+      from,
+      to,
+      now: new Date(),
+    });
   }
 
   function shiftMonth(delta) {
-    let m = month + delta;
-    let y = year;
-    while (m < 0) { m += 12; y -= 1; }
-    while (m > 11) { m -= 12; y += 1; }
-    month = m;
-    year = y;
+    const next = shiftMonthYear(year, month, delta);
+    year = next.year;
+    month = next.month;
   }
 
-  function shiftYear(delta) { year += delta; }
+  function shiftYear(delta) {
+    year = shiftCalendarYear(year, delta);
+  }
   function jumpToday() {
-    const now = new Date();
-    year = now.getFullYear();
-    month = now.getMonth();
+    const t = todayYearMonth(new Date());
+    year = t.year;
+    month = t.month;
   }
 
-  let monthLabel = $derived(
-    new Date(year, month, 1).toLocaleString(undefined, { month: 'long', year: 'numeric' }),
-  );
+  function onChipClick(entry) {
+    if (!entry?.timerId || typeof onEdit !== 'function') return;
+    const t = (timers || []).find((x) => x.id === entry.timerId);
+    if (t) onEdit(t);
+  }
+
+  function chipAria(entry) {
+    const src = sourceLabel(entry.source);
+    const out = outcomeLabel(entry.outcome);
+    return `${src}: ${entry.name}, ${entry.time}, ${out}`;
+  }
+
+  let monthLabel = $derived(formatMonthHeading(year, month));
   let grid = $derived(monthGrid(year, month));
+  let todayIso = $derived(isoDate(new Date()));
 </script>
 
 <section class="section-title">
@@ -140,6 +128,9 @@
   <button class="btn" onclick={jumpToday}>Today</button>
   <button class="btn" onclick={() => shiftMonth(1)} aria-label="next month">Month ▶</button>
   <button class="btn" onclick={() => shiftYear(1)} aria-label="next year">Year »</button>
+  {#if loading}
+    <span class="muted" aria-live="polite">Updating…</span>
+  {/if}
 </div>
 
 <div class="month-grid">
@@ -149,7 +140,7 @@
   {#each grid as d, i}
     {@const iso = isoDate(d)}
     {@const inMonth = d.getMonth() === month}
-    {@const isToday = iso === isoDate(new Date())}
+    {@const isToday = iso === todayIso}
     {@const chips = daysMap[iso] || []}
     {@const crowded = chips.length >= 3}
     <div class="month-cell"
@@ -168,17 +159,27 @@
       </div>
       {#if chips.length > 0}
         <div class="month-chip-wrap">
-          {#each chips.slice(0, 3) as chip}
-            <button class="month-chip kind-{chip.kind} name-text"
-                    onclick={() => onEdit(chip.timer)}
-                    title={chip.timer.name}>
-              {chip.timer.name}
+          {#each chips.slice(0, 3) as entry}
+            <button
+              type="button"
+              class="month-chip truth-{entry.source} outcome-{entry.outcome} kind-{entry.kind || 'unknown'} name-text"
+              onclick={() => onChipClick(entry)}
+              title={chipAria(entry)}
+              aria-label={chipAria(entry)}
+            >
+              <span class="month-chip-source" data-source={entry.source}>{sourceLabel(entry.source)}</span>
+              {entry.name}
+              {#if entry.source === 'recorded'}
+                <span class="month-chip-outcome">{outcomeLabel(entry.outcome)}</span>
+              {/if}
             </button>
           {/each}
           {#if chips.length > 3}
             <div class="month-chip-more">+{chips.length - 3} more</div>
           {/if}
         </div>
+      {:else if iso < todayIso}
+        <div class="month-empty-past muted" aria-label="No recorded events">No recorded events</div>
       {/if}
       <!-- Real <button> so AT-SPI/WebKit exposes a clickable create path (role=div fails). -->
       <button type="button"

@@ -814,6 +814,67 @@ main {
   border-left: 3px solid var(--status-warn);
 }
 
+/* Recorded vs Upcoming truth distinction (Week chips). */
+.chip.truth-recorded {
+  border-left: 3px solid var(--status-ok, #22c55e);
+  background: color-mix(in srgb, var(--status-ok, #22c55e) 8%, var(--bg-surface-elevated));
+}
+.chip.truth-upcoming {
+  border-left: 3px solid var(--accent-primary, #3b82f6);
+}
+.chip.outcome-failed {
+  border-left-color: var(--status-err, #ef4444);
+  background: color-mix(in srgb, var(--status-err, #ef4444) 10%, var(--bg-surface-elevated));
+}
+.chip.outcome-skipped,
+.chip.outcome-late,
+.chip.outcome-coalesced,
+.chip.outcome-unknown {
+  border-left-color: var(--status-warn, #f59e0b);
+}
+
+.chip-meta {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+  margin-bottom: 2px;
+  flex-wrap: wrap;
+}
+.chip-source {
+  font-size: 0.65rem;
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  line-height: 1.4;
+}
+.chip-source[data-source="recorded"] {
+  color: var(--status-ok, #16a34a);
+  background: color-mix(in srgb, var(--status-ok, #22c55e) 18%, transparent);
+}
+.chip-source[data-source="upcoming"] {
+  color: var(--accent-primary, #2563eb);
+  background: color-mix(in srgb, var(--accent-primary, #3b82f6) 16%, transparent);
+}
+.chip-outcome {
+  font-size: 0.65rem;
+  color: var(--fg-secondary);
+  text-transform: lowercase;
+}
+.chip-outcome.outcome-failed { color: var(--status-err, #ef4444); }
+.chip-outcome.outcome-late,
+.chip-outcome.outcome-skipped,
+.chip-outcome.outcome-coalesced { color: var(--status-warn, #d97706); }
+
+.empty-truth-hint,
+.month-empty-past {
+  font-size: var(--text-xs);
+  color: var(--fg-secondary);
+  margin-top: var(--space-1);
+  font-style: italic;
+}
+
 .chip-time {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
@@ -835,6 +896,38 @@ main {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Month chip truth badges */
+.month-chip.truth-recorded {
+  border-left: 2px solid var(--status-ok, #22c55e);
+}
+.month-chip.truth-upcoming {
+  border-left: 2px solid var(--accent-primary, #3b82f6);
+}
+.month-chip.outcome-failed {
+  border-left-color: var(--status-err, #ef4444);
+}
+.month-chip-source {
+  display: block;
+  font-size: 0.6rem;
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+  opacity: 0.9;
+}
+.month-chip.truth-recorded .month-chip-source {
+  color: var(--status-ok, #16a34a);
+}
+.month-chip.truth-upcoming .month-chip-source {
+  color: var(--accent-primary, #2563eb);
+}
+.month-chip-outcome {
+  display: block;
+  font-size: 0.6rem;
+  color: var(--fg-secondary);
+  text-transform: lowercase;
 }
 
 /* --- Month Page Surface ------------------------------------------- */
@@ -932,7 +1025,9 @@ main {
   cursor: pointer;
   min-height: var(--target-min);
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
 }
 
 .month-chip.kind-monthly {

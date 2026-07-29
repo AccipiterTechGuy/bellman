@@ -13,6 +13,7 @@ mod build;
 mod period;
 mod png;
 mod svg;
+mod truth;
 mod types;
 
 #[cfg(test)]
@@ -27,6 +28,9 @@ pub use period::{
 };
 pub use png::{count_dark_pixels, count_pixels_near, svg_to_png, svg_to_pixmap};
 pub use svg::render_svg;
+pub use truth::{
+    build_truth_window, OutcomeLabel, TruthBuildOptions, TruthEntry, TruthSource, TruthWindow,
+};
 pub use types::{
     CalendarBuildOptions, CalendarCaps, CalendarDay, CalendarEntry, CalendarFormat,
     CalendarSnapshot, CalendarStatus, WeekStart, MONTH_ABBREV, MONTH_NAMES,

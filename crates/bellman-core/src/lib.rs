@@ -45,7 +45,9 @@ pub use scheduler::{
     SchedulerConfig, SchedulerError, SchedulerResult, SimulatedClock, SystemClock, TickResult,
     HIGH_FREQ_PERIOD_SECS,
 };
-pub use service::log_query::{current_log_path, read_log_tail, LogPath};
+pub use service::log_query::{
+    current_log_path, logs_dir_from_data, read_log_history, read_log_tail, LogPath,
+};
 pub use service::run_now::{
     open_store, publish_fire_slot_response, resolve_logs_dir, resolve_slots_root_optional,
     run_now, slot_record_for_timer, RunNowError, RunNowOptions, RunNowOutcome,
@@ -72,8 +74,9 @@ pub use visible::{
     ScanResult, SourceFilter, SourceKind, TaskChange, TaskId, WritePlan,
 };
 pub use calendar::{
-    build_snapshot, local_date, month_bounds, parse_date, parse_tz, render_svg, resolve_day_phrase,
-    resolve_month, snapshot_month_from_store, svg_to_png, system_tz_name, tasks_from_store,
-    CalendarBuildOptions, CalendarCaps, CalendarDay, CalendarEntry, CalendarFormat,
-    CalendarSnapshot, CalendarStatus, ExpandableTask, WeekStart, MONTH_NAMES,
+    build_snapshot, build_truth_window, local_date, month_bounds, parse_date, parse_tz, render_svg,
+    resolve_day_phrase, resolve_month, snapshot_month_from_store, svg_to_png, system_tz_name,
+    tasks_from_store, CalendarBuildOptions, CalendarCaps, CalendarDay, CalendarEntry,
+    CalendarFormat, CalendarSnapshot, CalendarStatus, ExpandableTask, OutcomeLabel,
+    TruthBuildOptions, TruthEntry, TruthSource, TruthWindow, WeekStart, MONTH_NAMES,
 };
