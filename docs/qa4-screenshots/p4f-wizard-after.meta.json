@@ -1,19 +1,19 @@
 {
   "file": "p4f-wizard-after.png",
   "size": [
-    876,
-    569
+    960,
+    640
   ],
-  "bytes": 58383,
-  "mean_luma": 18.9,
-  "stdev": 18.99,
-  "unique_colors_cap200k": 1033,
-  "window_id": "0x4800003",
+  "bytes": 59037,
+  "mean_luma": 17.25,
+  "stdev": 17.49,
+  "unique_colors_cap200k": 1110,
+  "window_id": "0x5a00003",
   "wmctrl_geom": [
-    20,
-    83,
-    876,
-    569
+    110,
+    172,
+    960,
+    640
   ],
   "expect": "First-run Wizard overlay with backdrop and 32px checkboxes"
 }

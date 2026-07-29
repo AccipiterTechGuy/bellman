@@ -1,19 +1,19 @@
 {
   "file": "p4f-dialog-monthly.png",
   "size": [
-    876,
-    569
+    960,
+    640
   ],
-  "bytes": 54802,
-  "mean_luma": 35.62,
-  "stdev": 10.95,
-  "unique_colors_cap200k": 1933,
-  "window_id": "0x4800003",
+  "bytes": 58556,
+  "mean_luma": 34.8,
+  "stdev": 10.42,
+  "unique_colors_cap200k": 1811,
+  "window_id": "0x5a00003",
   "wmctrl_geom": [
-    20,
-    83,
-    876,
-    569
+    110,
+    172,
+    960,
+    640
   ],
   "expect": "Timer Dialog showing monthly occurrence kind fields"
 }

@@ -227,19 +227,21 @@
     <p class="status-line" data-testid="wake-status">{status?.statusLine ?? '…'}</p>
 
     <div class="settings-row">
-      <label for="s-wake" class:disabled-opt={masterGreyed}>
-        Allow Bellman to wake this machine
-        {#if masterGreyed && wakeDisabledReason}
-          <span class="hint-inline">— {wakeDisabledReason}</span>
-        {/if}
+      <label for="s-wake" class="checkbox-label" class:disabled-opt={masterGreyed}>
+        <input
+          id="s-wake"
+          type="checkbox"
+          checked={!!status?.masterEnabled}
+          disabled={busy || masterGreyed}
+          onchange={toggleWake}
+        />
+        <span>
+          Allow Bellman to wake this machine
+          {#if masterGreyed && wakeDisabledReason}
+            <span class="hint-inline">— {wakeDisabledReason}</span>
+          {/if}
+        </span>
       </label>
-      <input
-        id="s-wake"
-        type="checkbox"
-        checked={!!status?.masterEnabled}
-        disabled={busy || masterGreyed}
-        onchange={toggleWake}
-      />
     </div>
 
     {#if status?.fixHint}
@@ -298,14 +300,16 @@
       see the wake fix-it options above if wake is Disabled.
     </p>
     <div class="settings-row">
-      <label for="s-auto">Launch Bellman when I log in</label>
-      <input
-        id="s-auto"
-        type="checkbox"
-        checked={!!info?.autostartEnabled}
-        disabled={busy || !isTauri()}
-        onchange={toggleAutostart}
-      />
+      <label for="s-auto" class="checkbox-label">
+        <input
+          id="s-auto"
+          type="checkbox"
+          checked={!!info?.autostartEnabled}
+          disabled={busy || !isTauri()}
+          onchange={toggleAutostart}
+        />
+        <span>Launch Bellman when I log in</span>
+      </label>
     </div>
   </section>
 
@@ -340,8 +344,10 @@
   <section class="settings-section">
     <h3>Engine</h3>
     <div class="settings-row">
-      <label for="s-pause">Pause all timers (vacation mode)</label>
-      <input id="s-pause" type="checkbox" checked={pauseAll} disabled={busy} onchange={togglePause} />
+      <label for="s-pause" class="checkbox-label">
+        <input id="s-pause" type="checkbox" checked={pauseAll} disabled={busy} onchange={togglePause} />
+        <span>Pause all timers (vacation mode)</span>
+      </label>
     </div>
     <div class="settings-row">
       <label for="s-max">max_concurrent_actions</label>

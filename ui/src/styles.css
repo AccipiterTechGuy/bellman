@@ -95,6 +95,7 @@
   --space-4: 16px;
   --space-5: 20px;
   --space-6: 24px;
+  --space-7: 28px;
   --space-8: 32px;
 
   /* --- Border Radii --- */
@@ -273,7 +274,6 @@ input[type="radio"] {
   height: 18px;
   min-width: 18px;
   min-height: 18px;
-  margin: 0;
   cursor: pointer;
   background-color: var(--bg-input) !important;
   border: 1px solid var(--border-default);
@@ -281,13 +281,18 @@ input[type="radio"] {
   align-items: center;
   justify-content: center;
   vertical-align: middle;
-  box-sizing: border-box;
+  box-sizing: content-box;
+  padding: 7px;
+  margin: -7px 0;
   transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 label:has(input[type="checkbox"]),
 label:has(input[type="radio"]),
-.settings-row label {
+.checkbox-label,
+.settings-row label,
+.wizard-row,
+.q label {
   min-height: var(--target-min);
   display: inline-flex;
   align-items: center;
@@ -648,10 +653,38 @@ main {
   font-size: var(--text-sm);
   color: var(--fg-primary);
   box-shadow: var(--shadow-md);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.toast-badge {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-primary);
+  border: 1px solid var(--accent-primary);
+  flex-shrink: 0;
 }
 
 .toast.err {
   border-left-color: var(--status-err);
+  background: var(--status-err-soft);
+}
+
+.toast.err .toast-badge {
+  background: rgba(255, 123, 114, 0.2);
+  color: var(--status-err);
+  border-color: var(--status-err);
+}
+
+.toast-text {
+  color: var(--fg-primary);
+  font-size: var(--text-sm);
 }
 
 /* --- Week Page Surface -------------------------------------------- */
@@ -1657,7 +1690,7 @@ main {
 /* --- Settings Page Surface (P7) ----------------------------------- */
 .settings-page {
   max-width: 44rem;
-  padding: var(--space-4) var(--space-5) var(--space-8);
+  padding: var(--space-4) var(--space-4) var(--space-8);
 }
 
 .settings-page h2 {

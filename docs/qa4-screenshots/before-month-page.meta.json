@@ -1,0 +1,18 @@
+{
+  "file": "before-month-page.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 100378,
+  "mean_luma": 42.29,
+  "stdev": 13.89,
+  "unique_colors_cap200k": 1553,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ]
+}

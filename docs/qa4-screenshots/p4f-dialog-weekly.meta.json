@@ -1,19 +1,19 @@
 {
   "file": "p4f-dialog-weekly.png",
   "size": [
-    876,
-    569
+    960,
+    640
   ],
-  "bytes": 54802,
-  "mean_luma": 35.62,
-  "stdev": 10.95,
-  "unique_colors_cap200k": 1933,
-  "window_id": "0x4800003",
+  "bytes": 61853,
+  "mean_luma": 35.05,
+  "stdev": 10.55,
+  "unique_colors_cap200k": 2131,
+  "window_id": "0x5a00003",
   "wmctrl_geom": [
-    20,
-    83,
-    876,
-    569
+    110,
+    172,
+    960,
+    640
   ],
   "expect": "Timer Dialog showing weekly occurrence kind fields"
 }

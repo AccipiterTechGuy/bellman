@@ -202,5 +202,3 @@
     </div>
   {/each}
 </div>
-
-<svelte:options accessors={true} />

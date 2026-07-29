@@ -1,0 +1,18 @@
+{
+  "file": "before-week-page.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 124791,
+  "mean_luma": 43.36,
+  "stdev": 14.38,
+  "unique_colors_cap200k": 1470,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ]
+}

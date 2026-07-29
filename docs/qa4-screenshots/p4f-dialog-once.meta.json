@@ -1,19 +1,19 @@
 {
   "file": "p4f-dialog-once.png",
   "size": [
-    876,
-    569
+    960,
+    640
   ],
-  "bytes": 54939,
-  "mean_luma": 35.62,
-  "stdev": 10.95,
-  "unique_colors_cap200k": 1937,
-  "window_id": "0x4800003",
+  "bytes": 60021,
+  "mean_luma": 35.09,
+  "stdev": 10.68,
+  "unique_colors_cap200k": 1995,
+  "window_id": "0x5a00003",
   "wmctrl_geom": [
-    20,
-    83,
-    876,
-    569
+    110,
+    172,
+    960,
+    640
   ],
   "expect": "Timer Dialog showing once occurrence kind fields"
 }

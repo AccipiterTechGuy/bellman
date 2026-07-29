@@ -1,19 +1,19 @@
 {
   "file": "p4f-history-after.png",
   "size": [
-    876,
-    569
+    960,
+    640
   ],
-  "bytes": 76164,
-  "mean_luma": 30.78,
-  "stdev": 12.72,
-  "unique_colors_cap200k": 1595,
-  "window_id": "0x4800003",
+  "bytes": 106747,
+  "mean_luma": 29.89,
+  "stdev": 11.33,
+  "unique_colors_cap200k": 1601,
+  "window_id": "0x5a00003",
   "wmctrl_geom": [
-    20,
-    83,
-    876,
-    569
+    110,
+    172,
+    960,
+    640
   ],
   "expect": "Run history surface with log filter controls and event tail"
 }

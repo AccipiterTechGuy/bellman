@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
-"""QA P4f — Official capture script for Visual Polish AFTER screenshots.
+"""QA P4f — Official capture script for Visual Polish BEFORE & AFTER screenshots.
 
-Drives the real WebKitGTK / Tauri application on DISPLAY via AT-SPI and X11
-to capture comprehensive AFTER surface evidence for all pages, dialog occurrence variants,
-empty filter state, toast states, and settings page surfaces.
+This script:
+1. Generates authentic BEFORE screenshots from pre-polish CSS (git commit 86e3019)
+   into docs/qa4-screenshots/before/.
+2. Restores updated design system CSS, rebuilds ui/dist and bellman-app.
+3. Launches a fresh bellman-app binary on DISPLAY :0 with canonical 960x640 resolution.
+4. Captures AFTER surface evidence into docs/qa4-screenshots/ and docs/qa4-screenshots/after/:
+   - Main navigation pages (All timers, Week, Month, Run history, Settings top & below-the-fold)
+   - First-run Wizard overlay
+   - Zero-result empty filter state (typing non-matching query)
+   - Toast notification states with text badges
+   - All 7 dialog occurrence kind variants (once, interval, daily, weekly, monthly, yearly, cron)
 
-Outputs under docs/qa4-screenshots/, docs/qa4-screenshots/after/, and docs/qa4-screenshots/before/.
+NO mock fakes, NO byte-copying AFTER to BEFORE.
 """
 from __future__ import annotations
 
@@ -27,6 +35,48 @@ OUT = ROOT / "docs" / "qa4-screenshots"
 AFTER_DIR = OUT / "after"
 BEFORE_DIR = OUT / "before"
 
+def run_cmd(cmd: list[str], cwd: Path = ROOT):
+    subprocess.run(cmd, cwd=cwd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+def dismiss_wizard(app):
+    try:
+        safe_click(app, "Next")
+        time.sleep(0.3)
+        safe_click(app, "No thanks")
+        time.sleep(0.3)
+        safe_click(app, "Continue")
+        time.sleep(0.4)
+    except Exception:
+        pass
+
+def restart_app(d) -> tuple:
+    # Kill any existing bellman-app
+    subprocess.run(["pkill", "-9", "-f", "bellman-app"], stderr=subprocess.DEVNULL)
+    time.sleep(0.8)
+
+    # Launch fresh binary
+    proc = subprocess.Popen([str(ROOT / "target/release/bellman-app")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(2.0)
+
+    # Resize window to canonical 960x640
+    try:
+        subprocess.run(["wmctrl", "-r", "Bellman", "-e", "0,100,100,960,640"], check=False)
+        time.sleep(0.5)
+    except Exception:
+        pass
+
+    app = p4b.find_app("bellman-app")
+    p4b.raise_and_geom(d)
+    time.sleep(0.5)
+
+    # Dismiss wizard if open
+    dismiss_wizard(app)
+
+    # Dismiss any open dialog
+    p4b.key_tap(d, XK.string_to_keysym("Escape"))
+    time.sleep(0.4)
+    return app, proc
+
 def safe_click(app, name: str):
     for role in (None, "push button", "button", "page tab"):
         try:
@@ -35,36 +85,90 @@ def safe_click(app, name: str):
             pass
     raise RuntimeError(f"Could not click {name!r}")
 
+def capture_before_set(d):
+    print("\n--- Generating Authentic BEFORE Screenshots ---")
+    css_path = ROOT / "ui" / "src" / "styles.css"
+    current_css = css_path.read_text()
+
+    try:
+        # Checkout pre-polish styles.css from 86e3019
+        pre_css = subprocess.check_output(["git", "show", "86e3019:ui/src/styles.css"], text=True)
+        css_path.write_text(pre_css)
+
+        # Rebuild frontend
+        run_cmd(["npm", "run", "build", "--prefix", "ui"])
+
+        # Restart app with pre-polish CSS
+        app, _ = restart_app(d)
+
+        # Capture BEFORE shots
+        safe_click(app, "All timers")
+        time.sleep(0.5)
+        p4b.capture(d, "before-all-timers")
+        shutil.copy2(OUT / "before-all-timers.png", BEFORE_DIR / "before-all-timers.png")
+
+        safe_click(app, "Week")
+        time.sleep(0.5)
+        p4b.capture(d, "before-week-page")
+        shutil.copy2(OUT / "before-week-page.png", BEFORE_DIR / "before-week-page.png")
+
+        safe_click(app, "Month")
+        time.sleep(0.5)
+        p4b.capture(d, "before-month-page")
+        shutil.copy2(OUT / "before-month-page.png", BEFORE_DIR / "before-month-page.png")
+
+        safe_click(app, "Run history")
+        time.sleep(0.5)
+        p4b.capture(d, "before-history-page")
+        shutil.copy2(OUT / "before-history-page.png", BEFORE_DIR / "before-history-page.png")
+
+        safe_click(app, "Settings")
+        time.sleep(0.5)
+        p4b.capture(d, "before-settings-page")
+        shutil.copy2(OUT / "before-settings-page.png", BEFORE_DIR / "before-settings-page.png")
+
+        safe_click(app, "Run setup again")
+        time.sleep(0.5)
+        p4b.capture(d, "before-wizard-overlay")
+        shutil.copy2(OUT / "before-wizard-overlay.png", BEFORE_DIR / "before-wizard-overlay.png")
+        dismiss_wizard(app)
+
+        safe_click(app, "All timers")
+        time.sleep(0.4)
+        safe_click(app, "+ New timer")
+        time.sleep(0.5)
+        p4b.capture(d, "before-timer-dialog")
+        shutil.copy2(OUT / "before-timer-dialog.png", BEFORE_DIR / "before-timer-dialog.png")
+        safe_click(app, "Cancel")
+        time.sleep(0.4)
+
+        print("BEFORE screenshot generation complete.")
+
+    finally:
+        # Restore current design system CSS
+        css_path.write_text(current_css)
+        run_cmd(["npm", "run", "build", "--prefix", "ui"])
+
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     AFTER_DIR.mkdir(parents=True, exist_ok=True)
     BEFORE_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Remove obsolete files
+    for old_f in ["p4f-history-page.png", "p4f-settings-page.png", "p4f-wizard-overlay.png",
+                  "p4f-history-page.meta.json", "p4f-settings-page.meta.json", "p4f-wizard-overlay.meta.json"]:
+        p = OUT / old_f
+        if p.exists():
+            p.unlink()
+
     d = p4b.xdisp()
-    
-    # Ensure bellman-app is running and visible
-    app = None
-    for name in ("bellman-app", "bellman", "Bellman"):
-        try:
-            app = p4b.find_app(name)
-            break
-        except Exception:
-            pass
 
-    if app is None:
-        print("Launching target/release/bellman-app...")
-        subprocess.Popen([str(ROOT / "target/release/bellman-app")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(1.5)
-        app = p4b.find_app("bellman-app")
+    # Step 1: Capture BEFORE set from pre-polish CSS
+    capture_before_set(d)
 
-    p4b.raise_and_geom(d)
-    time.sleep(0.5)
-
-    # Escape any active dialog
-    p4b.key_tap(d, XK.string_to_keysym("Escape"))
-    time.sleep(0.4)
-
-    print("=== QA P4f Evidence Capture ===")
+    # Step 2: Capture AFTER set with current updated code
+    print("\n--- Capturing AFTER Screenshots from Fresh Build ---")
+    app, proc = restart_app(d)
 
     # 1. Main Navigation Surfaces
     print("Capturing All timers surface...")
@@ -114,44 +218,59 @@ def main() -> int:
     shutil.copy2(p, AFTER_DIR / p.name)
 
     # Close Wizard
-    try:
-        safe_click(app, "Next")
-        time.sleep(0.3)
-        safe_click(app, "No thanks")
-        time.sleep(0.3)
-        safe_click(app, "Continue")
-        time.sleep(0.4)
-    except Exception as e:
-        print("Wizard close:", e)
+    dismiss_wizard(app)
 
-    # 3. All Timers Filter & Empty States
+    # 3. All Timers Filter & Zero-Result Empty State
     safe_click(app, "All timers")
     time.sleep(0.4)
 
-    # Filter search with no results
     print("Capturing No results after filter state...")
     try:
         search_inputs = p4b.walk_find(app, lambda a: "Filter" in (a.name or "") or a.getRoleName() in ("entry", "text"))
         if search_inputs:
             p4b.do_action(search_inputs[0])
             time.sleep(0.3)
-            p4b.type_string(d, "nonexistent_query_xyz")
-            time.sleep(0.6)
-            p = p4b.capture(d, "p4f-empty-filter", {"expect": "Empty state when search filter returns no matching timers"})
+            p4b.type_string(d, "nonexistent_query_xyz_123")
+            time.sleep(0.8)
+            p = p4b.capture(d, "p4f-empty-filter", {"expect": "Zero-result empty filter state showing 0 of 7 timers"})
             shutil.copy2(p, AFTER_DIR / p.name)
-            p4b.key_tap(d, XK.string_to_keysym("BackSpace"), ctrl=True)
-            p4b.key_tap(d, XK.string_to_keysym("Escape"))
+            p4b.key_tap(d, XK.string_to_keysym("a"), ctrl=True)
+            p4b.key_tap(d, XK.string_to_keysym("BackSpace"))
+            p4b.key_tap(d, XK.string_to_keysym("Return"))
             time.sleep(0.4)
     except Exception as e:
         print("Filter state error:", e)
 
-    # 4. Timer Dialog Occurrence Kinds
-    kinds = ["once", "interval", "daily", "weekly", "monthly", "yearly", "cron"]
-    for k in kinds:
-        print(f"Capturing Dialog variant: {k}...")
+    # 4. Timer Dialog Occurrence Kinds (once, interval, daily, weekly, monthly, yearly, cron)
+    kind_indices = {
+        "once": 0,
+        "interval": 1,
+        "daily": 2,
+        "weekly": 3,
+        "monthly": 4,
+        "yearly": 5,
+        "cron": 6,
+    }
+
+    for k, index in kind_indices.items():
+        print(f"Capturing Dialog variant: {k} (index {index})...")
         try:
             safe_click(app, "+ New timer")
             time.sleep(0.6)
+
+            # Focus Occurrence kind select box and change option using keyboard
+            kind_combos = p4b.walk_find(app, lambda a: a.getRoleName() in ("combo box", "drop down list") or "Occurrence" in (a.name or ""))
+            if kind_combos:
+                p4b.do_action(kind_combos[0])
+                time.sleep(0.2)
+                # Press Home then Down index times
+                p4b.key_tap(d, XK.string_to_keysym("Home"))
+                time.sleep(0.1)
+                for _ in range(index):
+                    p4b.key_tap(d, XK.string_to_keysym("Down"))
+                    time.sleep(0.1)
+                p4b.key_tap(d, XK.string_to_keysym("Return"))
+                time.sleep(0.3)
 
             p = p4b.capture(d, f"p4f-dialog-{k}", {"expect": f"Timer Dialog showing {k} occurrence kind fields"})
             shutil.copy2(p, AFTER_DIR / p.name)
@@ -160,22 +279,6 @@ def main() -> int:
             time.sleep(0.4)
         except Exception as e:
             print(f"Dialog variant {k} error:", e)
-
-    # 5. Copy BEFORE images if not present
-    print("Ensuring BEFORE/AFTER image pairs exist...")
-    pair_sources = [
-        ("p4f-list-after.png", "before-all-timers.png"),
-        ("p4f-week-after.png", "before-week-page.png"),
-        ("p4f-month-after.png", "before-month-page.png"),
-        ("p4f-history-after.png", "before-history-page.png"),
-        ("p4f-settings-after.png", "before-settings-page.png"),
-        ("p4f-wizard-after.png", "before-wizard-overlay.png"),
-        ("p4e-dialog-collision-names-three.png", "before-timer-dialog.png"),
-    ]
-    for src_name, dst_name in pair_sources:
-        src_path = OUT / src_name
-        if src_path.exists():
-            shutil.copy2(src_path, BEFORE_DIR / dst_name)
 
     print("=== QA P4f Evidence Capture Complete ===")
     return 0
