@@ -471,7 +471,7 @@ pub fn cmd_task_new(
                 &tz,
             )
             .map_err(|e| CliError::new(CMD, "invalid_args", e))?;
-            let mut new = NewTimer::new(format!("task-{}", &cron.replace(' ', "-")), occ);
+            let mut new = NewTimer::new(format!("task-{}", cron.replace(' ', "-")), occ);
             new.action = bellman_core::Action::Launch {
                 command: command.to_string(),
                 args: vec![],

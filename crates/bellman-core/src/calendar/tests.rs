@@ -70,7 +70,7 @@ fn determinism_svg_byte_identical() {
         now_utc: Utc.with_ymd_and_hms(2026, 7, 15, 12, 0, 0).unwrap(),
         caps: CalendarCaps::default(),
     };
-    let a = build_snapshot(&[task.clone()], &opts).unwrap();
+    let a = build_snapshot(std::slice::from_ref(&task), &opts).unwrap();
     let b = build_snapshot(&[task], &opts).unwrap();
     assert_eq!(render_svg(&a), render_svg(&b));
     assert_eq!(
@@ -165,7 +165,7 @@ fn commands_absent_unless_opt_in() {
     let task = daily("secret-job", 12, 0, "UTC");
     let (from, to) = month_bounds(2026, 8).unwrap();
     let hidden = build_snapshot(
-        &[task.clone()],
+        std::slice::from_ref(&task),
         &CalendarBuildOptions {
             from,
             to,

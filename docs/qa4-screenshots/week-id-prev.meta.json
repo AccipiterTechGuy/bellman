@@ -1,0 +1,22 @@
+{
+  "file": "week-id-prev.png",
+  "size": [
+    1280,
+    763
+  ],
+  "bytes": 38545,
+  "mean_luma": 29.02,
+  "stdev": 8.32,
+  "unique_colors_cap200k": 1547,
+  "window_id": "0x400003",
+  "wmctrl_geom": [
+    26,
+    97,
+    1280,
+    763
+  ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
+  "expect": "back to prior week",
+  "heading": "Week 31 \u00b7 27 July \u2013 2 August 2026"
+}

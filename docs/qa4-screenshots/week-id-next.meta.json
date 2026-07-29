@@ -1,0 +1,22 @@
+{
+  "file": "week-id-next.png",
+  "size": [
+    1280,
+    763
+  ],
+  "bytes": 36563,
+  "mean_luma": 28.31,
+  "stdev": 7.41,
+  "unique_colors_cap200k": 1243,
+  "window_id": "0x400003",
+  "wmctrl_geom": [
+    26,
+    97,
+    1280,
+    763
+  ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
+  "expect": "week number/range advanced; no today highlight",
+  "heading": "Week 32 \u00b7 3\u20139 August 2026"
+}

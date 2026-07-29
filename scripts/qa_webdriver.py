@@ -824,7 +824,9 @@ def raise_and_geom(d):
     parts = line.split()
     wid = int(parts[0], 16)
     x, y, w, h = map(int, parts[2:6])
-    win = d.create_resource_object("window", wid)
+    # Xlib window resource — must come from the X Display, not the WebDriver `d`.
+    xd = xdisp()
+    win = xd.create_resource_object("window", wid)
     return win, x, y, w, h, wid
 
 

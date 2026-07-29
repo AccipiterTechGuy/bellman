@@ -198,10 +198,8 @@ pub fn split_lines(text: &str) -> Vec<String> {
 /// Rejoin lines with `\n` and restore trailing newline if `had_trailing_nl`.
 pub fn join_lines(lines: &[String], had_trailing_nl: bool) -> String {
     let mut s = lines.join("\n");
-    if had_trailing_nl {
-        if !s.ends_with('\n') {
-            s.push('\n');
-        }
+    if had_trailing_nl && !s.ends_with('\n') {
+        s.push('\n');
     }
     s
 }

@@ -258,9 +258,11 @@ mod tests {
 
     #[test]
     fn misfire_for_occurrence_applies_calendar_defaults() {
-        let mut c = AppConfig::default();
-        c.default_misfire_policy = "skip".into();
-        c.default_misfire_grace_secs = 120;
+        let mut c = AppConfig {
+            default_misfire_policy: "skip".into(),
+            default_misfire_grace_secs: 120,
+            ..Default::default()
+        };
         let daily = Occurrence::new(
             OccurrenceKind::Daily {
                 at: NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
@@ -290,9 +292,11 @@ mod tests {
 
     #[test]
     fn misfire_for_occurrence_interval_always_skip() {
-        let mut c = AppConfig::default();
-        c.default_misfire_policy = "coalesce".into();
-        c.default_misfire_grace_secs = 99;
+        let c = AppConfig {
+            default_misfire_policy: "coalesce".into(),
+            default_misfire_grace_secs: 99,
+            ..Default::default()
+        };
         let interval = Occurrence::new(
             OccurrenceKind::Interval {
                 every_secs: 60,

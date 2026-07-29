@@ -1,0 +1,22 @@
+{
+  "file": "week-id-current.png",
+  "size": [
+    1280,
+    763
+  ],
+  "bytes": 38462,
+  "mean_luma": 29.01,
+  "stdev": 8.28,
+  "unique_colors_cap200k": 1490,
+  "window_id": "0x400003",
+  "wmctrl_geom": [
+    26,
+    97,
+    1280,
+    763
+  ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
+  "expect": "Week N \u00b7 date range visible; today column highlighted",
+  "heading": "Week 31 \u00b7 27 July \u2013 2 August 2026"
+}

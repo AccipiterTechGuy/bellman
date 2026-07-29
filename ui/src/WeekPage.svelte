@@ -7,6 +7,7 @@
     isoDate,
     clockToSeconds,
     parseUtc,
+    formatIsoWeekHeading,
   } from './api.js';
 
   /** @type {(t:any) => void} */
@@ -113,11 +114,18 @@
     weekAnchor = new Date();
   }
 
-  let weekLabel = $derived(`${isoDate(weekAnchor)} – ${isoDate(addDays(weekAnchor, 6))}`);
+  // Heading is always derived from the displayed ISO week (Mon–Sun), not the
+  // raw anchor day-of-week — so Prev/Next/This week move number + range together.
+  let weekLabel = $derived(formatIsoWeekHeading(weekAnchor));
+  let todayIso = $derived(isoDate(new Date()));
 
   function dayIsoForCol(colIndex) {
     const weekStart = isoWeekStart(weekAnchor);
     return isoDate(addDays(weekStart, colIndex));
+  }
+
+  function isTodayCol(colIndex) {
+    return dayIsoForCol(colIndex) === todayIso;
   }
 
   function onEmptyDayClick(colIndex) {
@@ -127,9 +135,9 @@
   }
 </script>
 
-<section class="section-title">
+<section class="section-title week-section-title">
   <span>Week</span>
-  <span class="subtitle-meta">{weekLabel}</span>
+  <span class="subtitle-meta week-identity" data-testid="week-identity">{weekLabel}</span>
 </section>
 
 <div class="week-toolbar">
@@ -140,7 +148,13 @@
 
 <div class="week-grid">
   {#each WEEKDAY_LABELS as label, i}
-    <div class="week-col">
+    {@const colIsToday = isTodayCol(i)}
+    <div
+      class="week-col"
+      class:today={colIsToday}
+      aria-current={colIsToday ? 'date' : undefined}
+      data-day={dayIsoForCol(i)}
+    >
       <header>
         <span>{label}</span>
         <span class="day-count" title="{cells[i].length} fire(s) this day">

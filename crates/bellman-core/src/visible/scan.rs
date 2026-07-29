@@ -169,17 +169,16 @@ fn scan_linux(
         }
     }
 
-    if want(SourceKind::CronRunParts)
-        || matches!(filter, SourceFilter::Cron | SourceFilter::RunParts)
-    {
-        if matches!(
+    if (want(SourceKind::CronRunParts)
+        || matches!(filter, SourceFilter::Cron | SourceFilter::RunParts))
+        && matches!(
             filter,
             SourceFilter::All | SourceFilter::Cron | SourceFilter::RunParts
-        ) {
-            let (t, w) = cron::discover_run_parts();
-            tasks.extend(filter_user(t, user_filter));
-            warnings.extend(w);
-        }
+        )
+    {
+        let (t, w) = cron::discover_run_parts();
+        tasks.extend(filter_user(t, user_filter));
+        warnings.extend(w);
     }
 
     if want(SourceKind::Anacron) {

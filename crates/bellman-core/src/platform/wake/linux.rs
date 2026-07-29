@@ -328,12 +328,10 @@ pub fn plan_sysfs_restore(
         return None;
     }
     // Some(epoch) = write that epoch; Some(0) sentinel handled by caller as clear.
-    // We return the epoch to write, or None meaning clear (0).
-    match displaced_foreign {
-        Some(f) => Some(f),
-        None if sysfs_owned => None, // clear
-        None => None,
-    }
+    // We return the epoch to write, or None meaning clear (0). After the early
+    // return above (`sysfs_owned` gates entry only), both former match arms
+    // collapse to this value.
+    displaced_foreign
 }
 
 /// Cooperative sysfs protocol (synthesis §1 #3):

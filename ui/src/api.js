@@ -315,6 +315,88 @@ export function isoWeekStart(date) {
   return d;
 }
 
+const MONTH_NAMES_LONG = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/**
+ * ISO-8601 week number and week-year for a local Date.
+ * Week 1 is the week containing the first Thursday (equivalently, 4 January).
+ * The week-year can differ from the calendar year near Dec/Jan boundaries.
+ *
+ * @returns {{ week: number, year: number, weekStart: Date, weekEnd: Date }}
+ */
+export function isoWeekParts(date) {
+  const weekStart = isoWeekStart(date);
+  // Thursday of this ISO week determines the week-year.
+  const thursday = addDays(weekStart, 3);
+  const year = thursday.getFullYear();
+  // Week 1 Monday = Monday of the week that contains 4 January of `year`.
+  const week1Start = isoWeekStart(new Date(year, 0, 4));
+  const diffDays = Math.round((weekStart.getTime() - week1Start.getTime()) / 86_400_000);
+  const week = Math.floor(diffDays / 7) + 1;
+  return {
+    week,
+    year,
+    weekStart,
+    weekEnd: addDays(weekStart, 6),
+  };
+}
+
+/** ISO week number 1..53 for a local Date. */
+export function isoWeekNumber(date) {
+  return isoWeekParts(date).week;
+}
+
+/** ISO week-year for a local Date (may differ from getFullYear near year edges). */
+export function isoWeekYear(date) {
+  return isoWeekParts(date).year;
+}
+
+/**
+ * Human-readable range for an ISO week, e.g.:
+ *   "13–19 July 2026"
+ *   "27 July – 2 August 2026"
+ *   "29 December 2025 – 4 January 2026"
+ */
+export function formatIsoWeekRange(weekStart, weekEnd) {
+  const sD = weekStart.getDate();
+  const eD = weekEnd.getDate();
+  const sM = weekStart.getMonth();
+  const eM = weekEnd.getMonth();
+  const sY = weekStart.getFullYear();
+  const eY = weekEnd.getFullYear();
+  if (sY === eY && sM === eM) {
+    return `${sD}–${eD} ${MONTH_NAMES_LONG[sM]} ${sY}`;
+  }
+  if (sY === eY) {
+    return `${sD} ${MONTH_NAMES_LONG[sM]} – ${eD} ${MONTH_NAMES_LONG[eM]} ${sY}`;
+  }
+  return `${sD} ${MONTH_NAMES_LONG[sM]} ${sY} – ${eD} ${MONTH_NAMES_LONG[eM]} ${eY}`;
+}
+
+/**
+ * Visible Week-page heading derived from the *displayed* week anchor
+ * (not "today"), e.g. "Week 29 · 13–19 July 2026".
+ */
+export function formatIsoWeekHeading(date) {
+  const { week, weekStart, weekEnd } = isoWeekParts(date);
+  return `Week ${week} · ${formatIsoWeekRange(weekStart, weekEnd)}`;
+}
+
+/**
+ * True when `date`'s local civil day falls inside the ISO week containing
+ * `weekAnchor` (Mon 00:00 inclusive … next Mon exclusive).
+ */
+export function dateInIsoWeek(date, weekAnchor) {
+  const start = isoWeekStart(weekAnchor);
+  const end = addDays(start, 7);
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  d.setHours(0, 0, 0, 0);
+  return d >= start && d < end;
+}
+
 /** Add `days` calendar days to a Date, returning a new Date. */
 export function addDays(date, days) {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());

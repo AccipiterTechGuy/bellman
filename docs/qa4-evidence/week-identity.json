@@ -1,0 +1,54 @@
+{
+  "steps": [
+    {
+      "name": "current_week",
+      "heading": "Week 31 \u00b7 27 July \u2013 2 August 2026",
+      "heading_matches": true,
+      "today_cols": [
+        {
+          "day": "2026-07-29",
+          "aria_current": "date",
+          "class": "week-col today"
+        }
+      ],
+      "today_count": 1
+    },
+    {
+      "name": "next_week",
+      "heading": "Week 32 \u00b7 3\u20139 August 2026",
+      "heading_matches": true,
+      "changed_from_current": true,
+      "today_cols": [],
+      "today_count": 0
+    },
+    {
+      "name": "prev_week",
+      "heading": "Week 31 \u00b7 27 July \u2013 2 August 2026",
+      "restored_current": true
+    },
+    {
+      "name": "this_week",
+      "heading": "Week 31 \u00b7 27 July \u2013 2 August 2026",
+      "matches_current": true,
+      "today_cols": [
+        {
+          "day": "2026-07-29",
+          "aria_current": "date",
+          "class": "week-col today"
+        }
+      ],
+      "today_count": 1
+    },
+    {
+      "name": "desktop_readable",
+      "rect": {
+        "x": 64,
+        "y": 61,
+        "width": 1199,
+        "height": 16
+      },
+      "text_len": 33
+    }
+  ],
+  "ok": true
+}

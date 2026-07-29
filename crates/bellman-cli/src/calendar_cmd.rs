@@ -121,18 +121,17 @@ pub fn cmd_agenda(db: &Path, args: AgendaArgs) -> Result<CalendarOutcome, CliErr
     emit_snapshot(CMD, &snap, fmt, args.out.as_deref())
 }
 
+type CalendarRange = (
+    chrono::NaiveDate,
+    chrono::NaiveDate,
+    Option<(i32, u32)>,
+);
+
 fn resolve_range(
     args: &CalendarArgs,
     now_local: chrono::NaiveDate,
     cmd: &'static str,
-) -> Result<
-    (
-        chrono::NaiveDate,
-        chrono::NaiveDate,
-        Option<(i32, u32)>,
-    ),
-    CliError,
-> {
+) -> Result<CalendarRange, CliError> {
     match (&args.month, &args.from, &args.to) {
         (Some(m), None, None) => {
             let (y, mon) = resolve_month(m, now_local)
