@@ -4,16 +4,16 @@
     960,
     640
   ],
-  "bytes": 88191,
-  "mean_luma": 31.52,
-  "stdev": 14.74,
-  "unique_colors_cap200k": 4779,
-  "window_id": "0x5c00003",
+  "bytes": 38672,
+  "mean_luma": 28.85,
+  "stdev": 10.41,
+  "unique_colors_cap200k": 1125,
+  "window_id": "0x4800003",
   "wmctrl_geom": [
-    110,
-    172,
+    100,
+    162,
     960,
     640
   ],
-  "expect": "Settings page scrolled to bottom showing misfire defaults and engine settings"
+  "expect": "Settings scrolled via wheel to misfire/engine"
 }

@@ -115,6 +115,7 @@ def capture(d, name: str, annotate: dict | None = None) -> Path:
     raw = win.get_image(0, 0, w, h, X.ZPixmap, 0xFFFFFFFF)
     img = Image.frombytes("RGBA", (w, h), raw.data, "raw", "BGRA").convert("RGB")
     path = OUT / f"{name}.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
     img.save(path)
     # Pixel stats so a blind auditor can still see non-empty
     small = img.resize((64, 64))

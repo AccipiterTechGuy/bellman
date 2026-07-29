@@ -1,0 +1,19 @@
+{
+  "file": "p4f-toast-info.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 86949,
+  "mean_luma": 32.26,
+  "stdev": 14.02,
+  "unique_colors_cap200k": 1724,
+  "window_id": "0x5a00003",
+  "wmctrl_geom": [
+    110,
+    172,
+    960,
+    640
+  ],
+  "expect": "Settings save info toast with \u2139 Info badge (non-colour encoding)"
+}

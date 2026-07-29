@@ -4,16 +4,16 @@
     960,
     640
   ],
-  "bytes": 100264,
-  "mean_luma": 40.38,
-  "stdev": 13.69,
-  "unique_colors_cap200k": 6344,
-  "window_id": "0x5c00003",
+  "bytes": 73762,
+  "mean_luma": 38.07,
+  "stdev": 16.1,
+  "unique_colors_cap200k": 2055,
+  "window_id": "0x5a00003",
   "wmctrl_geom": [
     110,
     172,
     960,
     640
   ],
-  "expect": "All timers surface with design tokens, hit targets, tabular numbers"
+  "expect": "All timers surface with design tokens, hit targets, tabular numbers, Sort label visible"
 }
