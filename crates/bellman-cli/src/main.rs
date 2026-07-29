@@ -8,6 +8,7 @@ mod commands;
 mod output;
 mod parse;
 mod resolve;
+mod visible_cmd;
 
 use clap::error::ErrorKind;
 use clap::{Parser, Subcommand};
@@ -185,6 +186,97 @@ enum Commands {
         #[arg(long, env = "BELLMAN_SLOTS", value_name = "DIR")]
         slots: Option<PathBuf>,
     },
+
+    /// Discover every schedule on this machine (cron, systemd, at, Bellman, …).
+    Scan {
+        /// Filter: all|cron|cron.d|systemd|at|bellman|anacron|run-parts
+        #[arg(long, value_name = "SRC")]
+        source: Option<String>,
+
+        /// Only tasks owned by this user.
+        #[arg(long, value_name = "USER")]
+        user: Option<String>,
+
+        /// Diff against the previous scan snapshot (drift detection).
+        #[arg(long)]
+        diff: bool,
+    },
+
+    /// Inspect or safely mutate a discovered task (`bellman scan` ids).
+    Task {
+        #[command(subcommand)]
+        action: TaskCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum TaskCommands {
+    /// Show full fields for a task id.
+    Show {
+        /// Task id from `bellman scan`.
+        id: String,
+    },
+    /// Human explanation of the schedule.
+    Explain {
+        id: String,
+    },
+    /// Best-effort logs (journal for systemd; honest unknown for cron).
+    Logs {
+        id: String,
+        #[arg(long, default_value_t = 50)]
+        lines: usize,
+    },
+    /// Enable a disabled task (user crontab / Bellman). Default is dry-run.
+    Enable {
+        id: String,
+        /// Preview only (default behaviour when --apply is absent).
+        #[arg(long)]
+        dry_run: bool,
+        /// Actually write (backs up first). Required to change anything.
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Disable a task (user crontab / Bellman). Default is dry-run.
+    Disable {
+        id: String,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Run the task command now (requires --confirm).
+    Run {
+        id: String,
+        /// Explicit confirmation — never implied.
+        #[arg(long)]
+        confirm: bool,
+    },
+    /// Create a new scheduled task (cron fence or Bellman store).
+    New {
+        #[arg(long)]
+        command: String,
+        #[arg(long)]
+        cron: String,
+        /// cron (user crontab fence) or bellman (store timer).
+        #[arg(long, default_value = "cron")]
+        source: String,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Edit a writable task's schedule/command. Default is dry-run.
+    Edit {
+        id: String,
+        #[arg(long)]
+        command: Option<String>,
+        #[arg(long)]
+        cron: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -195,6 +287,87 @@ fn main() -> ExitCode {
         Err(err) => return handle_clap_error(&err),
     };
     let db_path = resolve_db_path(cli.db.as_ref());
+
+    // Visible Scheduler commands use a parallel payload type.
+    let visible = match &cli.command {
+        Commands::Scan {
+            source,
+            user,
+            diff,
+        } => Some(visible_cmd::cmd_scan(
+            &db_path,
+            source.as_deref(),
+            user.as_deref(),
+            *diff,
+        )),
+        Commands::Task { action } => Some(match action {
+            TaskCommands::Show { id } => visible_cmd::cmd_task_show(&db_path, id),
+            TaskCommands::Explain { id } => visible_cmd::cmd_task_explain(&db_path, id),
+            TaskCommands::Logs { id, lines } => {
+                visible_cmd::cmd_task_logs(&db_path, id, *lines)
+            }
+            TaskCommands::Enable {
+                id,
+                dry_run,
+                apply,
+            } => {
+                let do_apply = *apply && !*dry_run;
+                visible_cmd::cmd_task_enable(&db_path, id, do_apply)
+            }
+            TaskCommands::Disable {
+                id,
+                dry_run,
+                apply,
+            } => {
+                let do_apply = *apply && !*dry_run;
+                visible_cmd::cmd_task_disable(&db_path, id, do_apply)
+            }
+            TaskCommands::Run { id, confirm } => {
+                visible_cmd::cmd_task_run(&db_path, id, *confirm)
+            }
+            TaskCommands::New {
+                command,
+                cron,
+                source,
+                dry_run,
+                apply,
+            } => {
+                let do_apply = *apply && !*dry_run;
+                visible_cmd::cmd_task_new(&db_path, command, cron, Some(source), do_apply)
+            }
+            TaskCommands::Edit {
+                id,
+                command,
+                cron,
+                dry_run,
+                apply,
+            } => {
+                let do_apply = *apply && !*dry_run;
+                visible_cmd::cmd_task_edit(
+                    &db_path,
+                    id,
+                    command.as_deref(),
+                    cron.as_deref(),
+                    do_apply,
+                )
+            }
+        }),
+        _ => None,
+    };
+
+    if let Some(result) = visible {
+        return match result {
+            Ok(payload) => {
+                emit_visible(cli.json, &payload);
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                output::emit_error(cli.json, err.command, &err);
+                ExitCode::FAILURE
+            }
+        };
+    }
+
     let result = match cli.command {
         Commands::Add {
             name,
@@ -256,6 +429,7 @@ fn main() -> ExitCode {
             let slots_dir = resolve_slots_dir(slots.as_ref());
             commands::slot_submit(&db_path, &request, &slots_dir)
         }
+        Commands::Scan { .. } | Commands::Task { .. } => unreachable!("handled above"),
     };
 
     match result {
@@ -267,6 +441,23 @@ fn main() -> ExitCode {
             output::emit_error(cli.json, err.command, &err);
             ExitCode::FAILURE
         }
+    }
+}
+
+fn emit_visible(as_json: bool, payload: &visible_cmd::VisiblePayload) {
+    if as_json {
+        let mut body = payload.to_json();
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("ok".into(), serde_json::json!(true));
+        }
+        let s = if std::env::var_os("BELLMAN_JSON_PRETTY").is_some() {
+            serde_json::to_string_pretty(&body).unwrap_or_else(|_| body.to_string())
+        } else {
+            serde_json::to_string(&body).unwrap_or_else(|_| body.to_string())
+        };
+        println!("{s}");
+    } else {
+        println!("{}", payload.to_human());
     }
 }
 
@@ -333,6 +524,8 @@ where
         "pause",
         "resume",
         "slot-submit",
+        "scan",
+        "task",
     ];
     // Options that consume the next argv token as a value (global + common).
     const VALUE_OPTS: &[&str] = &[
@@ -349,9 +542,23 @@ where
         "--tag",
         "--enabled",
         "--slots",
+        "--source",
+        "--user",
+        "--command",
+        "--lines",
     ];
     // Boolean / count flags that do not take a value.
-    const FLAG_OPTS: &[&str] = &["--json", "-h", "--help", "-V", "--version"];
+    const FLAG_OPTS: &[&str] = &[
+        "--json",
+        "-h",
+        "--help",
+        "-V",
+        "--version",
+        "--diff",
+        "--apply",
+        "--dry-run",
+        "--confirm",
+    ];
 
     let args: Vec<String> = args.into_iter().map(|s| s.as_ref().to_string()).collect();
     let mut i = 0usize;
