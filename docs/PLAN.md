@@ -4,7 +4,10 @@ Status: SPEC LOCKED — research synthesis adopted; implementation tracks
 `docs/BUILD_PLAN.md` and the status table in `README.md`. Historical research
 lives under `docs/research/`. Shipped post-P7 add-ons (Visible Scheduler,
 Calendar Snapshot) are documented in `docs/CLI.md` and archived goal cards in
-`docs/archive/`.
+`docs/archive/`. Developer launch is root `launch.sh` (freshness-aware) plus
+`scripts/install_desktop.sh`; wake status lives in Settings / first-run wizard
+(see BUILD_PLAN); `bellman run-now` uses the production action runner
+(see `docs/CLI.md`).
 Project home: `~/bellman/` (standalone git repo).
 Date: 2026-07-27 (status header refreshed 2026-07-29)
 

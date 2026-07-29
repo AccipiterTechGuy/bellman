@@ -95,8 +95,14 @@ bellman/                                (one Cargo workspace)
 │                   XPC schedule_wake/cancel_my_wakes, client code-sig check,
 │                   IOPMSchedulePowerEvent one-shots tagged "com.bellman.wake";
 │                   never pmset repeat / cancelall. Bundled + signed in P6.
+├─ launch.sh             freshness-aware desktop launcher (never silent stale
+│                        target/* binaries; BELLMAN_ALLOW_STALE=1 opt-in only)
+├─ scripts/install_desktop.sh  repo-controlled XDG .desktop → launch.sh +
+│                        src-tauri/icons (Categories=Utility; only)
+├─ scripts/repo_hygiene.sh     prune absent git worktree records only
 ├─ src-tauri/            tray, single-instance, autostart, on-demand windows,
-│                        first-run wizard (see "First-run wizard" below)
+│                        first-run wizard (see "First-run wizard" below);
+│                        linux/bellman.desktop = packaged desktopTemplate
 └─ ui/  (Svelte 5)       tabs: All timers | Week | Month | Run history | Settings
 
 data dir: ~/.bellman/ on Linux (AppData/Application Support equivalents):
