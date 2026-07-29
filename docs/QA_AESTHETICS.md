@@ -38,25 +38,28 @@ This document provides complete, verified evidence for the visual polish pass ac
 
 ## 2. Measurable Text Contrast Ratios (WCAG AA Standard)
 
-Calculated using standard relative luminance \( L = 0.2126 R + 0.7152 G + 0.0722 B \):
+Computed with the WCAG 2.x relative-luminance formula
+\( L = 0.2126 R + 0.7152 G + 0.0722 B \) (sRGB channel linearisation threshold
+`0.03928`, ratio \( (L_1+0.05)/(L_2+0.05) \)). All 15 rows remeasured against the
+shipped tokens in `ui/src/styles.css` (rework #7) — no colour tokens changed.
 
 | Surface / Element | Foreground | Background | Ratio | Standard | Result |
 |---|---|---|---|---|---|
-| Primary Body Text | `#e6edf3` | `#12161b` (Base) | 14.8:1 | >= 4.5:1 | **PASS (AAA)** |
-| Primary Table Text | `#e6edf3` | `#181d24` (Surface) | 13.8:1 | >= 4.5:1 | **PASS (AAA)** |
+| Primary Body Text | `#e6edf3` | `#12161b` (Base) | 15.37:1 | >= 4.5:1 | **PASS (AAA)** |
+| Primary Table Text | `#e6edf3` | `#181d24` (Surface) | 14.33:1 | >= 4.5:1 | **PASS (AAA)** |
 | Secondary Labels | `#919eab` | `#12161b` (Base) | 6.64:1 | >= 4.5:1 | **PASS (AAA)** |
 | Secondary Table Text | `#919eab` | `#181d24` (Surface) | 6.20:1 | >= 4.5:1 | **PASS (AA)** |
 | Out-of-Month Day Num | `#919eab` | `#12161b` (Base) | 6.64:1 | >= 4.5:1 | **PASS (AAA)** |
 | Out-of-Month Chip Text | `#919eab` | `#181d24` (Surface) | 6.20:1 | >= 4.5:1 | **PASS (AA)** |
 | Input Placeholder Text | `#8c97a5` | `#12161b` (Input) | 6.13:1 | >= 4.5:1 | **PASS (AA)** |
-| Select Dropdown Text | `#e6edf3` | `#12161b` (Input) | 14.8:1 | >= 4.5:1 | **PASS (AAA)** |
-| Primary Button Text | `#12161b` | `#4ec9b0` (Accent) | 8.6:1 | >= 4.5:1 | **PASS (AAA)** |
-| Accent Link / Time Text | `#4ec9b0` | `#12161b` (Base) | 8.6:1 | >= 4.5:1 | **PASS (AAA)** |
-| Active Tab Text | `#4ec9b0` | `#2e3744` (Row Active) | 5.2:1 | >= 4.5:1 | **PASS (AA)** |
-| Status Warning Text | `#f0b73f` | `#181d24` (Surface) | 6.5:1 | >= 4.5:1 | **PASS (AAA)** |
-| Warning Badge Text | `#f0b73f` | `rgba(240,183,63,0.15)` on `#1f252e` | 5.8:1 | >= 4.5:1 | **PASS (AA)** |
-| Status Error Text | `#ff7b72` | `#181d24` (Surface) | 5.8:1 | >= 4.5:1 | **PASS (AA)** |
-| Status Ok Text | `#3fb950` | `#181d24` (Surface) | 6.1:1 | >= 4.5:1 | **PASS (AA)** |
+| Select Dropdown Text | `#e6edf3` | `#12161b` (Input) | 15.37:1 | >= 4.5:1 | **PASS (AAA)** |
+| Primary Button Text | `#12161b` | `#4ec9b0` (Accent) | 8.91:1 | >= 4.5:1 | **PASS (AAA)** |
+| Accent Link / Time Text | `#4ec9b0` | `#12161b` (Base) | 8.91:1 | >= 4.5:1 | **PASS (AAA)** |
+| Active Tab Text | `#4ec9b0` | `#2e3744` (Row Active) | 5.90:1 | >= 4.5:1 | **PASS (AA)** |
+| Status Warning Text | `#f0b73f` | `#181d24` (Surface) | 9.31:1 | >= 4.5:1 | **PASS (AAA)** |
+| Warning Badge Text | `#f0b73f` | composite `rgba(240,183,63,0.15)` on `#1f252e` → `#3e3b31` | 6.16:1 | >= 4.5:1 | **PASS (AA)** |
+| Status Error Text | `#ff7b72` | `#181d24` (Surface) | 6.72:1 | >= 4.5:1 | **PASS (AA)** |
+| Status Ok Text | `#3fb950` | `#181d24` (Surface) | 6.67:1 | >= 4.5:1 | **PASS (AA)** |
 
 ---
 
