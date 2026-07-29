@@ -205,6 +205,7 @@ fn register_commands(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<taur
         commands::set_enabled,
         commands::run_now,
         commands::list_log_tail,
+        commands::list_calendar_truth,
         commands::create_timer,
         commands::update_timer,
         commands::delete_timer,

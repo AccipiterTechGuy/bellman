@@ -72,8 +72,9 @@ pub use visible::{
     ScanResult, SourceFilter, SourceKind, TaskChange, TaskId, WritePlan,
 };
 pub use calendar::{
-    build_snapshot, local_date, month_bounds, parse_date, parse_tz, render_svg, resolve_day_phrase,
-    resolve_month, snapshot_month_from_store, svg_to_png, system_tz_name, tasks_from_store,
-    CalendarBuildOptions, CalendarCaps, CalendarDay, CalendarEntry, CalendarFormat,
-    CalendarSnapshot, CalendarStatus, ExpandableTask, WeekStart, MONTH_NAMES,
+    build_snapshot, build_truth_window, local_date, month_bounds, parse_date, parse_tz, render_svg,
+    resolve_day_phrase, resolve_month, snapshot_month_from_store, svg_to_png, system_tz_name,
+    tasks_from_store, CalendarBuildOptions, CalendarCaps, CalendarDay, CalendarEntry,
+    CalendarFormat, CalendarSnapshot, CalendarStatus, ExpandableTask, OutcomeLabel,
+    TruthBuildOptions, TruthEntry, TruthSource, TruthWindow, WeekStart, MONTH_NAMES,
 };

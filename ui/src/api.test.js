@@ -378,6 +378,15 @@ describe('api.js — C8 calendar UI command surface', () => {
     expect(state.invokes[0].args.id).toBe('abc');
   });
 
+  it('listCalendarTruth invokes list_calendar_truth with from/to/timezone', async () => {
+    const { listCalendarTruth } = await import('./api.js');
+    await listCalendarTruth('2026-07-27', '2026-08-02', 'Europe/Helsinki');
+    expect(state.invokes[0].cmd).toBe('list_calendar_truth');
+    expect(state.invokes[0].args.from).toBe('2026-07-27');
+    expect(state.invokes[0].args.to).toBe('2026-08-02');
+    expect(state.invokes[0].args.timezone).toBe('Europe/Helsinki');
+  });
+
   it('previewFires invokes preview_fires with the flat WebOccurrenceDto + n', async () => {
     const { previewFires } = await import('./api.js');
     // The dialog sends the deliberate WebOccurrenceDto shape (flat

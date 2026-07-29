@@ -1,107 +1,85 @@
 <script>
   import {
     WEEKDAY_LABELS,
-    WEEKDAY_FROM_KEY,
     isoWeekStart,
     addDays,
     isoDate,
-    clockToSeconds,
-    parseUtc,
     formatIsoWeekHeading,
+    listCalendarTruth,
+    listLogTail,
+    isTauri,
   } from './api.js';
+  import {
+    buildClientTruthEntries,
+    groupEntriesByWeekday,
+    normaliseTruthWindow,
+    sourceLabel,
+    outcomeLabel,
+  } from './calendar-truth.js';
 
   /** @type {(t:any) => void} */
   let { onEdit, onCreateDate, onToast, timers = [], tick = 0 } = $props();
 
   let weekAnchor = $state(new Date());
-
-  // ISO weekday → array of timed buckets in that column for the current week.
+  /** @type {any[][]} */
   let cells = $state(WEEKDAY_LABELS.map(() => []));
+  let loading = $state(false);
 
   $effect(() => {
     void tick;
-    rebuild(timers, weekAnchor);
+    void timers;
+    void weekAnchor;
+    // Async rebuild — keep latest request only via generation counter.
+    const gen = (rebuild.gen = (rebuild.gen || 0) + 1);
+    rebuild(gen);
   });
 
-  // Pull weekly days out of the structured occurrence. chrono serializes
-  // `Weekdays` as a bitmask object: { mon: true, wed: true, fri: true }
-  // for each day set. Returns ISO weekday numbers (Mon=1..Sun=7).
-  function weeklyDaysFromOccurrence(occ) {
-    const days = occ && occ.days ? occ.days : {};
-    const out = [];
-    for (const k of Object.keys(days)) {
-      if (days[k]) {
-        const dow = WEEKDAY_FROM_KEY[k.toLowerCase()];
-        if (dow) out.push(dow);
-      }
-    }
-    return out.sort();
-  }
-
-  function timeStringFromOccurrence(occ) {
-    return typeof occ.at === 'string' ? occ.at : '00:00:00';
-  }
-
-  // Fill `cells` with a per-weekday list of timer chips. Daily timers that
-  // fire every day show up in every column; weekly timers only on their
-  // weekdays; interval/cron show in their anchor weekday at their local time;
-  // once/monthly/yearly show on the DOW of their next fire inside the
-  // displayed week (so the user can see what's coming). Matches the
-  // spec's "Week page — 7-column DOW grid showing weekly repeating timers".
-  function rebuild(timers, anchor) {
-    const weekStart = isoWeekStart(anchor);
-    const weekEnd = addDays(weekStart, 7);
-    const next = WEEKDAY_LABELS.map(() => []);
-    for (const t of timers) {
-      const occ = t.occurrence || {};
-      const occKind = occ.occ || '';
-      if (occKind === 'weekly') {
-        const days = weeklyDaysFromOccurrence(occ);
-        const time = timeStringFromOccurrence(occ);
-        for (const dow of days) {
-          if (dow >= 1 && dow <= 7) {
-            next[dow - 1].push({ timer: t, localTime: time });
+  async function rebuild(gen) {
+    const weekStart = isoWeekStart(weekAnchor);
+    const weekEnd = addDays(weekStart, 6);
+    const from = isoDate(weekStart);
+    const to = isoDate(weekEnd);
+    loading = true;
+    try {
+      let entries = [];
+      if (isTauri()) {
+        try {
+          const win = normaliseTruthWindow(await listCalendarTruth(from, to));
+          entries = win.entries;
+        } catch (e) {
+          // Fall back to client merge if command missing mid-upgrade.
+          if (typeof onToast === 'function') {
+            onToast(`Calendar truth: ${e}`, 'err');
           }
+          entries = await clientFallback(from, to);
         }
-      } else if (occKind === 'daily') {
-        const time = timeStringFromOccurrence(occ);
-        for (let d = 0; d < 7; d++) {
-          next[d].push({ timer: t, localTime: time });
-        }
-      } else if (occKind === 'interval') {
-        // Show on today's column with the configured every_secs badge.
-        const every = occ.everySecs || 60;
-        const now = new Date();
-        const dow = ((now.getDay() + 6) % 7) + 1;
-        const mins = Math.floor(every / 60);
-        const secs = every % 60;
-        const badge = mins >= 1
-          ? `every ${mins}m`
-          : `every ${secs}s`;
-        next[dow - 1].push({ timer: t, localTime: badge, intervalBadge: true });
-      } else if (occKind === 'cron') {
-        const now = new Date();
-        const dow = ((now.getDay() + 6) % 7) + 1;
-        next[dow - 1].push({
-          timer: t,
-          localTime: (occ.expr || 'cron').slice(0, 16),
-          intervalBadge: true,
-        });
-      } else if (t.nextFireUtc) {
-        const d = parseUtc(t.nextFireUtc);
-        if (d && d >= weekStart && d < weekEnd) {
-          const dow = ((d.getDay() + 6) % 7) + 1;
-          const hh = String(d.getHours()).padStart(2, '0');
-          const mm = String(d.getMinutes()).padStart(2, '0');
-          const ss = String(d.getSeconds()).padStart(2, '0');
-          next[dow - 1].push({ timer: t, localTime: `${hh}:${mm}:${ss}` });
-        }
+      } else {
+        entries = await clientFallback(from, to);
+      }
+      if (gen !== rebuild.gen) return;
+      cells = groupEntriesByWeekday(entries, weekAnchor);
+    } finally {
+      if (gen === rebuild.gen) loading = false;
+    }
+  }
+
+  async function clientFallback(from, to) {
+    let events = [];
+    if (isTauri()) {
+      try {
+        const log = await listLogTail(null, 2000);
+        events = log.events || [];
+      } catch {
+        events = [];
       }
     }
-    for (const col of next) {
-      col.sort((a, b) => clockToSeconds(a.localTime) - clockToSeconds(b.localTime));
-    }
-    cells = next;
+    return buildClientTruthEntries({
+      timers,
+      events,
+      from,
+      to,
+      now: new Date(),
+    });
   }
 
   function shiftWeek(delta) {
@@ -114,8 +92,6 @@
     weekAnchor = new Date();
   }
 
-  // Heading is always derived from the displayed ISO week (Mon–Sun), not the
-  // raw anchor day-of-week — so Prev/Next/This week move number + range together.
   let weekLabel = $derived(formatIsoWeekHeading(weekAnchor));
   let todayIso = $derived(isoDate(new Date()));
 
@@ -133,6 +109,18 @@
       onCreateDate(dayIsoForCol(colIndex));
     }
   }
+
+  function onChipClick(entry) {
+    if (!entry?.timerId || typeof onEdit !== 'function') return;
+    const t = (timers || []).find((x) => x.id === entry.timerId);
+    if (t) onEdit(t);
+  }
+
+  function chipAria(entry) {
+    const src = sourceLabel(entry.source);
+    const out = outcomeLabel(entry.outcome);
+    return `${src}: ${entry.name}, ${entry.time}, ${out}`;
+  }
 </script>
 
 <section class="section-title week-section-title">
@@ -144,6 +132,9 @@
   <button class="btn" onclick={() => shiftWeek(-1)} aria-label="previous week">◀ Prev</button>
   <button class="btn" onclick={jumpToday}>This week</button>
   <button class="btn" onclick={() => shiftWeek(1)} aria-label="next week">Next ▶</button>
+  {#if loading}
+    <span class="muted" aria-live="polite">Updating…</span>
+  {/if}
 </div>
 
 <div class="week-grid">
@@ -167,13 +158,28 @@
                 onclick={() => onEmptyDayClick(i)}>
           <span class="empty-day-hint">+ New</span>
           <span class="muted mono">{dayIsoForCol(i)}</span>
+          {#if dayIsoForCol(i) < todayIso}
+            <span class="empty-truth-hint">No recorded events</span>
+          {/if}
         </button>
       {:else}
-        {#each cells[i] as chip}
-          <button class="chip" class:interval={chip.intervalBadge} onclick={() => onEdit(chip.timer)}>
-            <div class="chip-time">{chip.localTime}</div>
-            <div class="chip-name name-text" title={chip.timer.name}>{chip.timer.name}</div>
-            <div class="chip-summary">{chip.timer.summary}</div>
+        {#each cells[i] as entry}
+          <button
+            type="button"
+            class="chip truth-{entry.source} outcome-{entry.outcome}"
+            class:interval={entry.kind === 'interval' || entry.kind === 'cron'}
+            onclick={() => onChipClick(entry)}
+            aria-label={chipAria(entry)}
+            title={chipAria(entry)}
+          >
+            <div class="chip-meta">
+              <span class="chip-source" data-source={entry.source}>{sourceLabel(entry.source)}</span>
+              {#if entry.source === 'recorded'}
+                <span class="chip-outcome outcome-{entry.outcome}">{outcomeLabel(entry.outcome)}</span>
+              {/if}
+            </div>
+            <div class="chip-time">{entry.time}</div>
+            <div class="chip-name name-text" title={entry.name}>{entry.name}</div>
           </button>
         {/each}
         <button type="button" class="empty-day-create subtle"

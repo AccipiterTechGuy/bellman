@@ -157,6 +157,72 @@ pub fn list_log_tail(
     })
 }
 
+/// `list_calendar_truth` — Week / Month view truth model.
+///
+/// Past instants: only durable recorded outcomes (JSONL events + run ledger).
+/// Future instants: schedule projections. Never fabricates past recurrence.
+///
+/// Args are individual Tauri command parameters (camelCase at the IPC
+/// boundary via the generate_handler arg mapping).
+#[tauri::command]
+pub fn list_calendar_truth(
+    state: State<'_, AppState>,
+    from: String,
+    to: String,
+    timezone: Option<String>,
+) -> Result<bellman_core::TruthWindow, String> {
+    use chrono::NaiveDate;
+    use std::path::Path;
+
+    let from_d = NaiveDate::parse_from_str(from.trim(), "%Y-%m-%d")
+        .map_err(|e| format!("invalid from date '{from}': {e}"))?;
+    let to_d = NaiveDate::parse_from_str(to.trim(), "%Y-%m-%d")
+        .map_err(|e| format!("invalid to date '{to}': {e}"))?;
+    let tz = match timezone.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => s.to_string(),
+        None => bellman_core::system_tz_name(),
+    };
+
+    let path = state.data_dir.join("logs").join("events.current.jsonl");
+    let events = if Path::new(&path).exists() {
+        let (evs, _) = bellman_core::read_log_tail(&path, None, None).map_err(|e| e.to_string())?;
+        evs
+    } else {
+        vec![]
+    };
+
+    let store = state.store.lock();
+    let tasks = bellman_core::tasks_from_store(&store)?;
+    // Broad claim window padded by a day so DST edges near the range still
+    // reach the truth builder (which re-filters in display tz).
+    let pad_start = from_d
+        .pred_opt()
+        .unwrap_or(from_d)
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| format!("invalid from date {from_d}"))?;
+    let pad_end = to_d
+        .succ_opt()
+        .and_then(|d| d.succ_opt())
+        .unwrap_or(to_d)
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| format!("invalid to date {to_d}"))?;
+    let range_from = DateTime::<Utc>::from_naive_utc_and_offset(pad_start, Utc);
+    let range_to = DateTime::<Utc>::from_naive_utc_and_offset(pad_end, Utc);
+    let claims = store
+        .runs_in_range(range_from, range_to)
+        .map_err(|e| e.to_string())?;
+    drop(store);
+
+    let opts = bellman_core::TruthBuildOptions {
+        from: from_d,
+        to: to_d,
+        timezone: tz,
+        now_utc: Utc::now(),
+        caps: bellman_core::CalendarCaps::default(),
+    };
+    bellman_core::build_truth_window(&tasks, &events, &claims, &opts)
+}
+
 /// `get_pause_all` / `set_pause_all` — the global pause-all flag.
 #[tauri::command]
 pub fn get_pause_all(state: State<'_, AppState>) -> bool {

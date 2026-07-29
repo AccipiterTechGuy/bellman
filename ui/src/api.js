@@ -174,6 +174,19 @@ export async function runNow(id) {
 export async function listLogTail(timerId, limit) {
   return await invoke('list_log_tail', { timerId, limit });
 }
+/**
+ * Week/Month truth model for a civil date range.
+ * @param {string} from YYYY-MM-DD
+ * @param {string} to YYYY-MM-DD
+ * @param {string} [timezone] IANA tz; omit for system local
+ */
+export async function listCalendarTruth(from, to, timezone) {
+  return await invoke('list_calendar_truth', {
+    from,
+    to,
+    timezone: timezone ?? null,
+  });
+}
 export async function createTimer(input) {
   return await invoke('create_timer', { input });
 }
