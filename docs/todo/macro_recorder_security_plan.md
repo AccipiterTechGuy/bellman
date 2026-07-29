@@ -145,6 +145,55 @@ cards already on the board have shipped.
   model needs revisiting from first principles: review, step caps and audit hashes all stop
   meaning anything once a macro can branch.
 
+## D-9. Loops: a fixed count is allowed, a condition is never (answers Q6)
+
+**Allowed: repeat N times, where N is a plain integer typed by a human.**
+
+A fixed count keeps every security property intact — review still shows exactly what will
+happen, the step and time caps are computable before the run, the audit hash still covers
+the whole thing, and it cannot run forever.
+
+**Never allowed: conditions.** `repeat until…`, `if…then…`. Once a macro can branch, nobody
+can say what it will do, review becomes guesswork, and the step cap is the only thing left
+between the operator and a runaway.
+
+**The count is an integer, not an expression.** No arithmetic, no variables, no
+`rows.count`. An expression needs evaluation, evaluation needs a parser, and that is the
+Turing-complete door — the same door whether it is reached via `while` or via maths.
+
+Requirements:
+
+- **The count belongs to the reviewed macro.** No caller — slot, timer or CLI — may override
+  it at trigger time. Otherwise something passes `repeat=100000` and an approved macro
+  becomes a weapon. It is content, and the audit hash covers it.
+- **Hard ceiling** on N, configurable up to a hard limit, never beyond.
+- **Caps multiply**: max steps and max runtime are checked as `steps × N`, not per iteration.
+- **Delay between iterations**, with a minimum — applications need time to settle.
+- **Stop on failure by default.** If iteration 2 fails, 3/4/5 do not run.
+- **The panic key aborts the whole loop**, not the current iteration.
+- **Dry-run expands it** — "40 actions, about 12 seconds", not "5 iterations".
+- **No nesting.** Flat loops only.
+
+Timers remain the right tool for spread-out repetition (the scheduler works in seconds);
+in-macro repeat is for tight sequences.
+
+## D-10. While a macro runs, the operator loses their machine
+
+Input injection means the macro owns the mouse and keyboard, and the human does not. This is
+inherent, not a defect — so run duration is a **usability** limit, not only a safety cap.
+
+- **Default total runtime cap measured in seconds, not minutes.** A ten-minute macro locks
+  the operator out for ten minutes.
+- **The review screen states the duration**: "this will take about 12 seconds, during which
+  you cannot use the machine." D-9's repeat count is exactly where this becomes non-obvious.
+- **Timer-triggered macros default to idle-only** — the failure case is one firing at 3pm
+  in the middle of an email.
+- **A visible countdown with the abort key shown on screen** for the whole run, so taking
+  the machine back never requires remembering anything.
+- **The panic key must keep working during injection.** It must not be swallowed by our own
+  synthetic events, and must not be triggered by them. Prove it with a test; the research
+  notes `enigo`'s event-marking is documented only on Windows and macOS.
+
 ## D-7. Honest scope of what this protects
 
 This is **agent containment**, not anti-malware. An attacker who already has code execution
