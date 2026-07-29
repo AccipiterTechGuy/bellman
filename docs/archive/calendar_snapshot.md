@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-29 — shipped; card bellman-cal1-calendar-snapshot-render-any-month-as-an-image, run 2026-07-29_0003, merge afde3dc.
+
 # Calendar Snapshot — render any month as a clean calendar image
 
 Repo: `~/bellman`
