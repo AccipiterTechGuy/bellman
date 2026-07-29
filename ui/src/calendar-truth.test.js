@@ -356,42 +356,67 @@ describe('buildClientTruthEntries', () => {
     expect(nextMonth.every((e) => e.source === 'upcoming')).toBe(true);
   });
 
-  it('MonthPage shiftMonth / jumpToday math moves year-month correctly', async () => {
-    // Pure recreation of MonthPage.shiftMonth / jumpToday without mounting Svelte.
-    function shiftMonth(year, month, delta) {
-      let m = month + delta;
-      let y = year;
-      while (m < 0) { m += 12; y -= 1; }
-      while (m > 11) { m -= 12; y += 1; }
-      return { year: y, month: m };
-    }
-    let y = 2026;
-    let m = 6; // July (0-indexed)
-    // Prev month → June
-    ({ year: y, month: m } = shiftMonth(y, m, -1));
-    expect(y).toBe(2026);
-    expect(m).toBe(5);
-    // Next ×2 → August
-    ({ year: y, month: m } = shiftMonth(y, m, 1));
-    ({ year: y, month: m } = shiftMonth(y, m, 1));
-    expect(y).toBe(2026);
-    expect(m).toBe(7);
-    // Year boundary: Jan prev → Dec previous year
-    ({ year: y, month: m } = shiftMonth(2026, 0, -1));
-    expect(y).toBe(2025);
-    expect(m).toBe(11);
-    // jumpToday
-    const now = new Date(2026, 6, 15);
-    y = now.getFullYear();
-    m = now.getMonth();
-    expect(y).toBe(2026);
-    expect(m).toBe(6);
+  it('MonthPage nav helpers (imported by MonthPage) drive past/current/future ranges', async () => {
+    // Exact helpers MonthPage.svelte imports — not a stand-in copy.
+    const {
+      shiftMonthYear,
+      shiftCalendarYear,
+      todayYearMonth,
+      monthTruthRange,
+      formatMonthHeading,
+    } = await import('./api.js');
 
-    // Grid range for MonthPage rebuild uses monthGrid first/last ISO.
-    const { monthGrid, isoDate } = await import('./api.js');
-    const grid = monthGrid(2026, 6); // July 2026
-    expect(isoDate(grid[0]) <= '2026-07-01').toBe(true);
-    expect(isoDate(grid[grid.length - 1]) >= '2026-07-31').toBe(true);
+    // Start on July 2026 (current-ish for the card's acceptance date).
+    let { year, month } = { year: 2026, month: 6 };
+
+    // ◀ Month → June (past month relative to July)
+    ({ year, month } = shiftMonthYear(year, month, -1));
+    expect(year).toBe(2026);
+    expect(month).toBe(5);
+    expect(formatMonthHeading(year, month)).toBe('June 2026');
+    const pastRange = monthTruthRange(year, month);
+    // Visible grid spans adjacent days; truth query uses those bounds.
+    expect(pastRange.from <= '2026-06-01').toBe(true);
+    expect(pastRange.to >= '2026-06-30').toBe(true);
+    // Past month truth content: empty without records.
+    const pastEntries = buildClientTruthEntries({
+      timers: [dailyTimer('t-month', 'nav', '11:00:00')],
+      events: [],
+      from: pastRange.from,
+      to: pastRange.to,
+      now: new Date(2026, 6, 15, 12, 0, 0),
+    });
+    // No fabricated past recurrence in June (empty history → empty cells).
+    expect(
+      pastEntries.filter((e) => e.date >= '2026-06-01' && e.date <= '2026-06-30'),
+    ).toHaveLength(0);
+
+    // Today → July
+    ({ year, month } = todayYearMonth(new Date(2026, 6, 15)));
+    expect(formatMonthHeading(year, month)).toBe('July 2026');
+    const curRange = monthTruthRange(year, month);
+    expect(curRange.from <= '2026-07-01').toBe(true);
+    expect(curRange.to >= '2026-07-31').toBe(true);
+
+    // Month ▶ → August (future)
+    ({ year, month } = shiftMonthYear(year, month, 1));
+    expect(formatMonthHeading(year, month)).toBe('August 2026');
+    const futRange = monthTruthRange(year, month);
+    const futEntries = buildClientTruthEntries({
+      timers: [dailyTimer('t-month', 'nav', '11:00:00')],
+      events: [],
+      from: futRange.from,
+      to: futRange.to,
+      now: new Date(2026, 6, 15, 12, 0, 0),
+    });
+    expect(futEntries.length).toBeGreaterThan(0);
+    expect(futEntries.every((e) => e.source === 'upcoming')).toBe(true);
+
+    // Year boundary via the same helper MonthPage uses for ◀ Month from January.
+    expect(shiftMonthYear(2026, 0, -1)).toEqual({ year: 2025, month: 11 });
+    // Year » / « Year
+    expect(shiftCalendarYear(2026, 1)).toBe(2027);
+    expect(shiftCalendarYear(2026, -1)).toBe(2025);
   });
 
   it('recorded without event name does not rewrite from live timer', () => {

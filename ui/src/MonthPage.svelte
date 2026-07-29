@@ -7,6 +7,11 @@
     listCalendarTruth,
     listLogTail,
     isTauri,
+    shiftMonthYear,
+    shiftCalendarYear,
+    todayYearMonth,
+    monthTruthRange,
+    formatMonthHeading,
   } from './api.js';
   import {
     buildClientTruthEntries,
@@ -36,24 +41,23 @@
   });
 
   async function rebuild(gen) {
-    const grid = monthGrid(year, month);
-    const firstIso = isoDate(grid[0]);
-    const lastIso = isoDate(grid[grid.length - 1]);
+    // Same range helper the unit tests pin — leading/trailing grid days included.
+    const { from, to } = monthTruthRange(year, month);
     loading = true;
     try {
       let entries = [];
       if (isTauri()) {
         try {
-          const win = normaliseTruthWindow(await listCalendarTruth(firstIso, lastIso));
+          const win = normaliseTruthWindow(await listCalendarTruth(from, to));
           entries = win.entries;
         } catch (e) {
           if (typeof onToast === 'function') {
             onToast(`Calendar truth: ${e}`, 'err');
           }
-          entries = await clientFallback(firstIso, lastIso);
+          entries = await clientFallback(from, to);
         }
       } else {
-        entries = await clientFallback(firstIso, lastIso);
+        entries = await clientFallback(from, to);
       }
       if (gen !== rebuild.gen) return;
       daysMap = groupEntriesByDate(entries);
@@ -82,19 +86,18 @@
   }
 
   function shiftMonth(delta) {
-    let m = month + delta;
-    let y = year;
-    while (m < 0) { m += 12; y -= 1; }
-    while (m > 11) { m -= 12; y += 1; }
-    month = m;
-    year = y;
+    const next = shiftMonthYear(year, month, delta);
+    year = next.year;
+    month = next.month;
   }
 
-  function shiftYear(delta) { year += delta; }
+  function shiftYear(delta) {
+    year = shiftCalendarYear(year, delta);
+  }
   function jumpToday() {
-    const now = new Date();
-    year = now.getFullYear();
-    month = now.getMonth();
+    const t = todayYearMonth(new Date());
+    year = t.year;
+    month = t.month;
   }
 
   function onChipClick(entry) {
@@ -109,9 +112,7 @@
     return `${src}: ${entry.name}, ${entry.time}, ${out}`;
   }
 
-  let monthLabel = $derived(
-    new Date(year, month, 1).toLocaleString(undefined, { month: 'long', year: 'numeric' }),
-  );
+  let monthLabel = $derived(formatMonthHeading(year, month));
   let grid = $derived(monthGrid(year, month));
   let todayIso = $derived(isoDate(new Date()));
 </script>
