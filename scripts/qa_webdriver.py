@@ -155,6 +155,9 @@ def start_session(*, application: str | None = None) -> Any:
     env.setdefault("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
     env["GIO_USE_VFS"] = "local"
     env["GTK_USE_PORTAL"] = "0"
+    # Marker so stop_session / run_gui_qa can reap only QA-owned drivers.
+    env["BELLMAN_QA"] = "1"
+    env.setdefault("BELLMAN_QA_DATA", str(DATA_DIR))
 
     port = _pick_free_port()
     _active_port = port
@@ -173,6 +176,8 @@ def start_session(*, application: str | None = None) -> Any:
     logf = open(_driver_log_path, "w")
     # Private D-Bus session so tauri_plugin_single_instance does not attach to a
     # live operator instance. The app is a child of tauri-driver → dbus-run-session.
+    # start_new_session=True puts the whole tree in its own process group so
+    # stop_session can killpg (dbus-run-session + tauri-driver + WebKitWebDriver).
     use_private_bus = os.environ.get("BELLMAN_QA_PRIVATE_BUS", "1") != "0"
     full_cmd = (["dbus-run-session", "--"] + driver_cmd) if use_private_bus else driver_cmd
     _driver_proc = subprocess.Popen(
@@ -181,6 +186,7 @@ def start_session(*, application: str | None = None) -> Any:
         stdout=logf,
         stderr=subprocess.STDOUT,
         text=True,
+        start_new_session=True,
     )
     atexit.register(stop_session)
 
@@ -266,6 +272,10 @@ def driver():
 
 
 def stop_session():
+    """Tear down WebDriver client + the whole driver process group.
+
+    Must not leave tauri-driver / WebKitWebDriver listening (card G7).
+    """
     global _driver, _driver_proc, _active_port
     if _driver is not None:
         try:
@@ -273,30 +283,76 @@ def stop_session():
         except Exception:
             pass
         _driver = None
+
     if _driver_proc is not None:
+        pgid = None
         try:
-            # Kill process group members: dbus-run-session + tauri-driver + app.
-            os.kill(_driver_proc.pid, signal.SIGTERM)
+            pgid = os.getpgid(_driver_proc.pid)
+        except Exception:
+            pgid = None
+        # Prefer process-group kill: covers dbus-run-session → tauri-driver →
+        # WebKitWebDriver → bellman-app. Plain kill(pid) only hits the wrapper
+        # and leaves orphans reparented to init with LISTENING ports.
+        try:
+            if pgid is not None and pgid > 1:
+                os.killpg(pgid, signal.SIGTERM)
+            else:
+                os.kill(_driver_proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except Exception:
             try:
-                _driver_proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                os.kill(_driver_proc.pid, signal.SIGKILL)
+                os.kill(_driver_proc.pid, signal.SIGTERM)
+            except Exception:
+                pass
+        try:
+            _driver_proc.wait(timeout=4)
+        except subprocess.TimeoutExpired:
+            try:
+                if pgid is not None and pgid > 1:
+                    os.killpg(pgid, signal.SIGKILL)
+                else:
+                    os.kill(_driver_proc.pid, signal.SIGKILL)
+            except Exception:
+                pass
+            try:
+                _driver_proc.wait(timeout=2)
+            except Exception:
+                pass
         except Exception:
             pass
         _driver_proc = None
     _active_port = None
-    # Orphaned bellman-app children of the private bus may linger.
-    # Best-effort: only kill apps whose env points at our QA data dir.
+
+    # Sweep any remaining QA-owned processes (env guard so operator instances live).
     try:
-        data = str(DATA_DIR)
+        data = str(DATA_DIR).encode()
         out = subprocess.check_output(["ps", "-eo", "pid,cmd"], text=True)
         for line in out.splitlines():
-            if "bellman-app" in line and "grep" not in line:
+            low = line.lower()
+            if not any(
+                k in low
+                for k in ("bellman-app", "tauri-driver", "webkitwebdriver")
+            ):
+                continue
+            if "grep" in low:
+                continue
+            try:
                 pid = int(line.split()[0])
+            except (ValueError, IndexError):
+                continue
+            try:
+                envp = Path(f"/proc/{pid}/environ").read_bytes()
+            except Exception:
+                continue
+            if (
+                data in envp
+                or b"bellman-qa" in envp
+                or b"BELLMAN_QA" in envp
+                or b"qa-p4" in envp
+            ):
                 try:
-                    envp = Path(f"/proc/{pid}/environ").read_bytes()
-                    if data.encode() in envp or b"bellman-qa" in envp or b"qa-p4" in envp:
-                        os.kill(pid, signal.SIGTERM)
+                    os.kill(pid, signal.SIGTERM)
                 except Exception:
                     pass
     except Exception:
@@ -313,9 +369,11 @@ def _by():
 
 
 def click_button(label: str, *, exact: bool = True, timeout: float = 8.0):
-    """Click a <button> (or role=button) whose visible text matches label."""
-    from selenium.webdriver.support.ui import WebDriverWait
+    """Click a <button> (or role=button) whose visible text matches label.
 
+    Falls back to JS click when the native click is intercepted (e.g. wizard
+    backdrop still fading out).
+    """
     d = driver()
     By = _by()
     end = time.time() + timeout
@@ -326,16 +384,23 @@ def click_button(label: str, *, exact: bool = True, timeout: float = 8.0):
             for b in buttons:
                 try:
                     text = (b.text or "").strip()
-                    # aria-label fallback
                     al = (b.get_attribute("aria-label") or "").strip()
-                    if exact:
-                        if text == label or al == label:
-                            b.click()
-                            return b
-                    else:
-                        if label.lower() in text.lower() or label.lower() in al.lower():
-                            b.click()
-                            return b
+                    match = (
+                        (text == label or al == label)
+                        if exact
+                        else (
+                            label.lower() in text.lower()
+                            or label.lower() in al.lower()
+                        )
+                    )
+                    if not match:
+                        continue
+                    try:
+                        b.click()
+                    except Exception as click_err:
+                        last_err = click_err
+                        d.execute_script("arguments[0].click()", b)
+                    return b
                 except Exception as e:
                     last_err = e
                     continue

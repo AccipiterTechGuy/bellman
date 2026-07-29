@@ -1,4 +1,9 @@
 {
-  "candidates": [],
-  "next": {}
+  "next": {
+    "qa-collide-alpha-backup": "{\"command\":\"next\",\"fires\":[\"2026-07-30T09:00:00+00:00\",\"2026-07-31T09:00:00+00:00\",\"2026-08-01T09:00:00+00:00\"],\"id\":\"0cda5bce-1e92-47b9-95ed-6ada8340bbb3\",\"n\":3,\"name\":\"qa-collide-alpha-backup\",\"ok\":true}\n",
+    "qa-collide-beta-launch-heavy-workload": "{\"command\":\"next\",\"fires\":[\"2026-07-30T09:00:00+00:00\",\"2026-07-31T09:00:00+00:00\",\"2026-08-01T09:00:00+00:00\"],\"id\":\"406a0a6d-2936-4e25-a259-c569291717fd\",\"n\":3,\"name\":\"qa-collide-beta-launch-heavy-workload\",\"ok\":true}\n",
+    "qa-collide-gamma-notify": "{\"command\":\"next\",\"fires\":[\"2026-07-30T09:00:00+00:00\",\"2026-07-31T09:00:00+00:00\",\"2026-08-01T09:00:00+00:00\"],\"id\":\"867fb35b-16d7-4636-bf9f-1876db2fac5d\",\"n\":3,\"name\":\"qa-collide-gamma-notify\",\"ok\":true}\n",
+    "qa-long-name-morning-backup-and-sync-pipeline-with-extra-descriptive-words-end": "{\"command\":\"next\",\"fires\":[\"2026-07-29T14:30:00+00:00\",\"2026-07-30T14:30:00+00:00\",\"2026-07-31T14:30:00+00:00\"],\"id\":\"9c4bd88d-0e6e-46ba-97a6-4fb5ba1df1f6\",\"n\":3,\"name\":\"qa-long-name-morning-backup-and-sync-pipeline-with-extra-descriptive-words-end\",\"ok\":true}\n",
+    "qa-nearby-two-min": "{\"command\":\"next\",\"fires\":[\"2026-07-30T09:02:00+00:00\",\"2026-07-31T09:02:00+00:00\",\"2026-08-01T09:02:00+00:00\"],\"id\":\"883c7c1c-4a7e-487b-a5fd-8adb600edd0f\",\"n\":3,\"name\":\"qa-nearby-two-min\",\"ok\":true}\n"
+  }
 }

@@ -1,0 +1,26 @@
+{
+  "display": ":97",
+  "data_dir": "/tmp/bellman-qa-session/share/io.bellman.desktop",
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "screenshots": [
+    "p4d-all-after-create.png",
+    "p4d-all-after-delete.png",
+    "p4d-all-after-edit.png",
+    "p4d-all-final.png",
+    "p4d-cron-named-fields-create-enabled.png",
+    "p4d-cron-named-nth-create-enabled.png",
+    "p4d-dst-advisory.png",
+    "p4d-field-error-invalid-date.png",
+    "p4d-keyboard-create-result.png",
+    "p4d-layout-1280x800.png",
+    "p4d-layout-960x640.png",
+    "p4d-once-echo-24-12-2026.png",
+    "p4d-preview-error-invalid-cron.png",
+    "p4d-webkit-native-date-time-probe.png",
+    "p4d-weekly-chips-create.png",
+    "p4d-widget-date-time.png",
+    "p4d-widget-timezone.png",
+    "p4d-widget-wall-time.png",
+    "p4d-widget-weekday-chips.png"
+  ]
+}

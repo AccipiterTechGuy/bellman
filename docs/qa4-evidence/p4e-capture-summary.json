@@ -1,7 +1,9 @@
 {
-  "elapsed_s": 76.7,
-  "cli": "/tmp/bellman-cli-schema3",
-  "data_dir": "/tmp/qa-p4e-session/share/io.bellman.desktop",
+  "elapsed_s": 88.54,
+  "cli": "/home/sami/bellman/target/release/bellman",
+  "data_dir": "/tmp/bellman-qa-session/share/io.bellman.desktop",
+  "display": ":97",
+  "input_backend": "tauri-driver+WebKitWebDriver",
   "shots": [
     "p4e-dialog-collision-1280x800.png",
     "p4e-dialog-collision-50plus.png",

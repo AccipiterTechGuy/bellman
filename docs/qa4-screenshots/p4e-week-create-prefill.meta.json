@@ -4,16 +4,18 @@
     960,
     640
   ],
-  "bytes": 63375,
-  "mean_luma": 35.5,
-  "stdev": 10.77,
-  "unique_colors_cap200k": 2230,
-  "window_id": "0x4800003",
+  "bytes": 53134,
+  "mean_luma": 34.84,
+  "stdev": 10.55,
+  "unique_colors_cap200k": 1878,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    50,
-    112,
+    66,
+    137,
     960,
     640
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
   "expect": "dialog prefilled from week day"
 }

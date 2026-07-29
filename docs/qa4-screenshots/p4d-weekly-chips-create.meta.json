@@ -1,13 +1,13 @@
 {
-  "file": "p4d-widget-weekday-chips.png",
+  "file": "p4d-weekly-chips-create.png",
   "size": [
     960,
     640
   ],
-  "bytes": 63707,
-  "mean_luma": 36.05,
-  "stdev": 12.48,
-  "unique_colors_cap200k": 1967,
+  "bytes": 69768,
+  "mean_luma": 36.18,
+  "stdev": 12.26,
+  "unique_colors_cap200k": 1959,
   "window_id": "0x400003",
   "wmctrl_geom": [
     66,
@@ -17,7 +17,5 @@
   ],
   "input_backend": "tauri-driver+WebKitWebDriver",
   "display": ":97",
-  "widgets": [
-    "weekday-chips"
-  ]
+  "phase": "weekly-chips"
 }

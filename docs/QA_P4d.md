@@ -64,7 +64,10 @@ C8b capped `max-height: min(92vh, 600px)` with `overflow: hidden`. Chips + tz li
 
 ## Evidence ledger
 
-All PNG evidence is **real WebKitGTK** via `scripts/capture_qa_p4d.py` (tauri-driver + WebKitWebDriver + Xlib GetImage on an isolated Xvfb). See `docs/QA_P4b.md`. No mocked harness, no Chromium, no hand-edited images.
+All PNG evidence under `docs/qa4-screenshots/p4d-*` is **real WebKitGTK** via
+`scripts/capture_qa_p4d.py` (tauri-driver + WebKitWebDriver + Xlib GetImage on
+an isolated Xvfb from `scripts/run_gui_qa.sh p4d`, re-captured 2026-07-29).
+No mocked harness, no Chromium, no hand-edited images.
 
 ### Screenshots opened and described
 

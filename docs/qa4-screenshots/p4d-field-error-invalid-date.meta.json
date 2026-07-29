@@ -4,17 +4,19 @@
     960,
     640
   ],
-  "bytes": 58315,
-  "mean_luma": 29.98,
-  "stdev": 11.67,
-  "unique_colors_cap200k": 5868,
-  "window_id": "0x4800003",
+  "bytes": 53120,
+  "mean_luma": 35.05,
+  "stdev": 11.06,
+  "unique_colors_cap200k": 1846,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    50,
-    112,
+    66,
+    137,
     960,
     640
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
   "phase": "field-error",
   "expect": "inline field error + Create disabled"
 }

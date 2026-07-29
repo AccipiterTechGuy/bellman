@@ -97,14 +97,14 @@ kill $pid
 | Metric | Value | Notes |
 |---|---|---|
 | Engine RSS (P5 gate, above) | **7092 KiB median** | engine-only harness |
-| Tray shell RSS (window open) | **187024 KiB (~183 MiB)** | `target/release/bellman-app`, operator-session-display, isolated HOME/XDG |
+| Tray shell RSS (window open) | **187024 KiB (~183 MiB)** | `target/release/bellman-app`, local interactive display (historical measurement), isolated HOME/XDG |
 | Tray shell RSS (**GUI closed**, BUILD_PLAN gate) | **184544–184600 KiB (~180 MiB)** | after `wmctrl -c Bellman`; five samples over ~25 s |
 
 ### P6 headed sample (2026-07-28) — GUI closed
 
 ```
 binary = target/release/bellman-app
-env    = isolated HOME + XDG_* under target/perf-tray-closed/, operator-session-display
+env    = isolated HOME + XDG_* under target/perf-tray-closed/, local interactive display (historical measurement)
 close  = wmctrl -c Bellman  (window no longer listed by wmctrl -l)
 
 window open:            VmRSS 187024 kB

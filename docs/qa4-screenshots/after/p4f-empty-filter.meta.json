@@ -4,16 +4,18 @@
     960,
     640
   ],
-  "bytes": 25026,
+  "bytes": 22919,
   "mean_luma": 27.48,
   "stdev": 10.87,
-  "unique_colors_cap200k": 1198,
-  "window_id": "0x5a00003",
+  "unique_colors_cap200k": 1171,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    110,
-    172,
+    66,
+    137,
     960,
     640
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
   "expect": "Zero-result empty filter state showing 0 of N timers and Sort label"
 }

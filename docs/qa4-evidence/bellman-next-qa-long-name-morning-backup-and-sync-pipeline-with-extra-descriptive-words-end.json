@@ -1,1 +1,1 @@
-{"command":"next","error":{"code":"invalid_args","message":"error: unexpected argument '-n' found tip: to pass '-n' as a value, use '-- -n'"},"ok":false}
+{"command":"next","fires":["2026-07-29T14:30:00+00:00","2026-07-30T14:30:00+00:00","2026-07-31T14:30:00+00:00"],"id":"9c4bd88d-0e6e-46ba-97a6-4fb5ba1df1f6","n":3,"name":"qa-long-name-morning-backup-and-sync-pipeline-with-extra-descriptive-words-end","ok":true}

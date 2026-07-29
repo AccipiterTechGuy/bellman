@@ -20,11 +20,37 @@ set -euo pipefail
 
 QA_STATE="${BELLMAN_QA_STATE:-/tmp/bellman-qa-display.state}"
 QA_ROOT="${BELLMAN_QA_ROOT:-/tmp/bellman-qa-session}"
-# Prefer :97 (stale :99 has been left around by prior crews).
-QA_DISPLAY_CANDIDATES="${BELLMAN_QA_DISPLAY_CANDIDATES:-97 98 96 95 94 93 92 91 90}"
+# Prefer high numbers; widen so crash leftovers do not exhaust the list.
+QA_DISPLAY_CANDIDATES="${BELLMAN_QA_DISPLAY_CANDIDATES:-97 98 96 95 94 93 92 91 90 89 88 87 86 85}"
+
+_qa_reap_stale_display() {
+  # If a lock/socket exists but no live Xvfb owns it, remove the leftovers so
+  # aborted runs do not permanently burn a display number.
+  local n="$1"
+  local lock="/tmp/.X${n}-lock"
+  local sock="/tmp/.X11-unix/X${n}"
+  local pid=""
+  if [ -f "$lock" ]; then
+    pid=$(tr -d ' \n' <"$lock" 2>/dev/null || true)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      # Live process — leave it alone (may not be Xvfb; still treat as busy).
+      return 1
+    fi
+    # Stale lock.
+    rm -f "$lock"
+  fi
+  if [ -e "$sock" ]; then
+    # Socket with no lock and no live owner → remove.
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+      rm -f "$sock" 2>/dev/null || true
+    fi
+  fi
+  return 0
+}
 
 _qa_is_display_free() {
   local n="$1"
+  _qa_reap_stale_display "$n" || true
   # Refuse if lock file exists OR something already listens on that display.
   if [ -e "/tmp/.X${n}-lock" ] || [ -e "/tmp/.X11-unix/X${n}" ]; then
     return 1

@@ -4,16 +4,18 @@
     960,
     640
   ],
-  "bytes": 82844,
-  "mean_luma": 31.93,
-  "stdev": 13.83,
-  "unique_colors_cap200k": 1697,
-  "window_id": "0x5a00003",
+  "bytes": 69113,
+  "mean_luma": 31.92,
+  "stdev": 13.84,
+  "unique_colors_cap200k": 1522,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    110,
-    172,
+    66,
+    137,
     960,
     640
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
   "expect": "Settings page surface with Wake from sleep and Autostart"
 }

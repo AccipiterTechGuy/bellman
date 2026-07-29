@@ -4,16 +4,18 @@
     960,
     640
   ],
-  "bytes": 58287,
-  "mean_luma": 34.72,
-  "stdev": 10.51,
-  "unique_colors_cap200k": 1797,
-  "window_id": "0x5a00003",
+  "bytes": 52303,
+  "mean_luma": 34.67,
+  "stdev": 10.66,
+  "unique_colors_cap200k": 1703,
+  "window_id": "0x400003",
   "wmctrl_geom": [
-    110,
-    172,
+    66,
+    137,
     960,
     640
   ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
   "expect": "Timer Dialog showing monthly occurrence kind fields"
 }
