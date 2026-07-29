@@ -15,6 +15,9 @@ Design: `macro_recorder_security_plan.md` D-4, D-9, D-10, D-11.
 - Repeat count field: a plain integer, bounded by the Settings ceiling (D-9, D-11).
 - Provenance shown: who authored it, when, under which token, reviewed or not.
 - Dry-run / step-through UI.
+- **Stop-key setup, with live verification** (D-14): the operator presses the combination and
+  Bellman confirms it received it. Creating the first macro is **blocked** until this passes,
+  and re-verification is required whenever the combination changes.
 
 ## Do NOT
 
@@ -27,3 +30,5 @@ Design: `macro_recorder_security_plan.md` D-4, D-9, D-10, D-11.
 - A test proves a macro **cannot** be saved without passing review.
 - Redaction actually removes the literal from the saved blob — decrypt and grep to prove it.
 - An agent-authored macro displays as `unreviewed` and the run/attach controls are disabled.
+- The first macro **cannot** be created until the stop key has been pressed and observed —
+  asserted by test, not by a docs sentence.

@@ -326,6 +326,50 @@ If Bellman dies mid-run, injection stops with the process — but **held modifie
 stuck** at the OS level. Release modifiers on every exit path that can be reached, and
 document the one that cannot.
 
+## D-14. The stop key: default Ctrl+Shift+G, remappable, and PROVEN before first use
+
+### Default and remapping
+
+- **Default: `Ctrl+Shift+G`.** (This replaces the research's suggested triple-Esc.)
+- **Fully remappable** to any combination the operator prefers, on Windows, Linux and macOS.
+- Stored in a normalised, per-OS representation — `Ctrl` and `Cmd` are not the same key and
+  a config written on one platform must not silently mean something else on another.
+- Registered as a **global** hotkey and held for the duration of a run, so it wins over
+  whatever application currently has focus.
+
+### It must be VERIFIED, not merely configured
+
+The user guide says "map your stop key before you add any macros". That is necessary and it
+is not sufficient — a guide people do not read is not a safety control.
+
+**Bellman refuses to create the first macro until the stop key has been pressed and observed
+firing.** The setup step is not "type a combination into a box"; it is "press it now, and we
+confirm we received it". A key that was configured but never tested is discovered to be
+broken at precisely the moment it is needed.
+
+Re-verification is required whenever the combination is changed.
+
+### If it cannot be registered, execution is Unavailable
+
+On some platforms a global hotkey cannot be claimed at all — the research found no panic-key
+path on wlroots/Wayland portals. Where the stop key cannot be registered and verified,
+**macro execution is `Unavailable`**, not "available without an abort path". Authoring may
+still proceed; running may not.
+
+### A third path that needs no registration
+
+Consider a **pointer failsafe** — slamming the mouse into a screen corner aborts — as a
+mechanism that depends on no hotkey registration at all and survives the case where the
+combination is claimed by another application. Evaluate it in M4; do not treat it as a
+replacement for the key.
+
+So the stop paths, in order of reliability:
+
+1. **The stop key** — primary, works while the macro holds the pointer.
+2. **The stop button** — discoverable, but the operator must chase a moving cursor (D-13).
+3. **Quitting Bellman** — always available, aborts the run (D-13).
+4. **Pointer failsafe** — optional fourth, if M4 finds it workable.
+
 ## D-7. Honest scope of what this protects
 
 This is **agent containment**, not anti-malware. An attacker who already has code execution

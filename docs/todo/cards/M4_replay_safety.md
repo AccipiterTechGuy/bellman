@@ -6,7 +6,10 @@ Design: `macro_recorder_security_plan.md` D-9, D-10, D-11.
 
 - `enigo` behind a `pub(crate)` adapter — never called directly from anywhere else.
 - `exec::replay(macro, RunToken)` — the single chokepoint from M1.
-- **Panic key** that aborts the whole run, including all remaining loop iterations.
+- **Stop key** that aborts the whole run including every remaining loop iteration (D-14).
+  Default `Ctrl+Shift+G`, remappable, normalised per OS, registered globally for the run.
+  Where it cannot be registered, execution is `Unavailable` — never "running with no abort".
+- Evaluate a **pointer failsafe** (corner slam) as a path needing no hotkey registration.
 - Caps enforced **twice**: refuse pre-flight on the estimate, hard-abort mid-run on actual
   elapsed time. One hung step defeats any estimate.
 - Modifier release on abort — never leave a stuck Ctrl or Shift.
@@ -47,3 +50,5 @@ By now it has shipped and been exercised for three cards.
 - An injected click whose coordinates fall on the stop control does **not** stop the run and
   does **not** get swallowed — whichever mechanism is chosen, prove this case.
 - Quitting Bellman mid-run aborts cleanly with no stuck modifiers.
+- A remapped stop key works; a stop key that cannot be registered downgrades execution to
+  `Unavailable` rather than running unstoppably.
