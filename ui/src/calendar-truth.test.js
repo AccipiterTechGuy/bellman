@@ -47,6 +47,44 @@ describe('buildClientTruthEntries', () => {
     expect(entries).toEqual([]);
   });
 
+  it('event + claim same run collapse (no delivered twin)', () => {
+    const now = new Date(2026, 6, 29, 12, 0, 0);
+    const tid = 'aaaaaaaa-aaaa-bbbb-bbbb-cccccccccccc';
+    const runId = '11111111-2222-3333-4444-555555555555';
+    const sched = new Date(2026, 6, 28, 15, 18, 11).toISOString();
+    // Client merge only has events (claims are core-side). Two outcome events
+    // for the same run_id must still collapse to one failed outcome.
+    const events = [
+      {
+        kind: 'fired',
+        timer_id: tid,
+        timer_name: 'audit-duplicate',
+        run_id: runId,
+        scheduled_for: sched,
+        ts: sched,
+      },
+      {
+        kind: 'wake_failed',
+        timer_id: tid,
+        timer_name: 'audit-duplicate',
+        run_id: runId,
+        scheduled_for: sched,
+        ts: sched,
+      },
+    ];
+    const entries = buildClientTruthEntries({
+      timers: [dailyTimer(tid, 'audit-duplicate')],
+      events,
+      from: '2026-07-27',
+      to: '2026-07-29',
+      now,
+    });
+    const rec = entries.filter((e) => e.source === 'recorded');
+    expect(rec).toHaveLength(1);
+    expect(rec[0].outcome).toBe('failed');
+    expect(rec[0].name).toBe('audit-duplicate');
+  });
+
   it('successful and failed recorded runs keep historical names', () => {
     const now = new Date(2026, 6, 29, 12, 0, 0);
     const tid = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';

@@ -34,6 +34,7 @@ export function outcomeLabel(outcome) {
     case 'skipped': return 'skipped';
     case 'late': return 'late';
     case 'coalesced': return 'coalesced';
+    case 'unknown': return 'unknown';
     case 'upcoming': return 'upcoming';
     default: return outcome || '';
   }

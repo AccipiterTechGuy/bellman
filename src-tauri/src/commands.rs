@@ -172,7 +172,6 @@ pub fn list_calendar_truth(
     timezone: Option<String>,
 ) -> Result<bellman_core::TruthWindow, String> {
     use chrono::NaiveDate;
-    use std::path::Path;
 
     let from_d = NaiveDate::parse_from_str(from.trim(), "%Y-%m-%d")
         .map_err(|e| format!("invalid from date '{from}': {e}"))?;
@@ -183,12 +182,12 @@ pub fn list_calendar_truth(
         None => bellman_core::system_tz_name(),
     };
 
-    let path = state.data_dir.join("logs").join("events.current.jsonl");
-    let events = if Path::new(&path).exists() {
-        let (evs, _) = bellman_core::read_log_tail(&path, None, None).map_err(|e| e.to_string())?;
+    // Current + retained archives (rotation must not erase Week/Month truth).
+    let logs_dir = state.data_dir.join("logs");
+    let events = {
+        let (evs, _) =
+            bellman_core::read_log_history(&logs_dir).map_err(|e| e.to_string())?;
         evs
-    } else {
-        vec![]
     };
 
     let store = state.store.lock();

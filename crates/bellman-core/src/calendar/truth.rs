@@ -11,7 +11,7 @@ use crate::store::{ClaimStatus, RunClaim};
 use chrono::{DateTime, Duration, NaiveDate, Timelike, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 /// Whether an entry is durable history or a schedule projection.
@@ -42,6 +42,9 @@ pub enum OutcomeLabel {
     Skipped,
     Late,
     Coalesced,
+    /// Durable evidence a run finished exists (ledger), but no outcome event
+    /// remains — never invent success from `ClaimStatus::Completed` alone.
+    Unknown,
     Upcoming,
 }
 
@@ -53,6 +56,7 @@ impl OutcomeLabel {
             Self::Skipped => "skipped",
             Self::Late => "late",
             Self::Coalesced => "coalesced",
+            Self::Unknown => "unknown",
             Self::Upcoming => "upcoming",
         }
     }
@@ -117,12 +121,16 @@ pub struct TruthBuildOptions {
 /// Build the truth model for `[from, to]` inclusive in `timezone`.
 ///
 /// * Instants **strictly before** `now_utc` → only recorded outcomes from
-///   `events` and completed `claims`. No schedule expansion into the past.
+///   `events` (and completed `claims` only when they carry/match outcome
+///   evidence). No schedule expansion into the past.
 /// * Instants **strictly after** `now_utc` → schedule projections from
 ///   `tasks`. A projection is suppressed when a recorded entry already
 ///   covers the same `(timer_id, scheduled_for)` (or run_id).
 /// * Names for recorded entries prefer the denormalized event `timer_name`
 ///   so renames/deletes do not rewrite history.
+/// * Reconciliation: match by `run_id` first, then `(timer_id, scheduled
+///   second)`. A completed claim never invents `delivered` — claim status
+///   is completed on action failure too.
 pub fn build_truth_window(
     tasks: &[ExpandableTask],
     events: &[EventRecord],
@@ -145,8 +153,13 @@ pub fn build_truth_window(
     let task_by_id: HashMap<&str, &ExpandableTask> =
         tasks.iter().map(|t| (t.id.as_str(), t)).collect();
 
-    // ── Recorded: group outcome events by (timer_id, run_id|scheduled_for) ──
-    let mut buckets: BTreeMap<RecordKey, RecordBucket> = BTreeMap::new();
+    // ── Recorded: merge outcome events + claims without double-counting ──
+    // Primary map keyed by stable bucket id (`run:`… or `ts:`…).
+    // Secondary indexes so claims and events find each other regardless of
+    // which identity field each side carries.
+    let mut buckets: HashMap<String, RecordBucket> = HashMap::new();
+    let mut by_run: HashMap<String, String> = HashMap::new(); // run_id → bucket id
+    let mut by_timer_sec: HashMap<(String, i64), String> = HashMap::new(); // (timer, sec) → bucket id
 
     for ev in events {
         if !is_outcome_event(ev.kind) {
@@ -158,20 +171,22 @@ pub fn build_truth_window(
             continue;
         }
         if when < range_start_utc || when >= range_end_utc {
-            // Also accept when event ts places it (some misfire skips may only
-            // have ts); already used scheduled_for||ts above.
             continue;
         }
-        let key = record_key(ev.timer_id, ev.run_id, when);
-        let b = buckets.entry(key).or_insert_with(|| RecordBucket {
-            timer_id: ev.timer_id.map(|u| u.to_string()),
-            run_id: ev.run_id.map(|u| u.to_string()),
-            scheduled_for: when,
-            name: None,
-            kinds: Vec::new(),
-        });
+        let bid = resolve_or_create_bucket(
+            &mut buckets,
+            &mut by_run,
+            &mut by_timer_sec,
+            ev.timer_id.map(|u| u.to_string()),
+            ev.run_id.map(|u| u.to_string()),
+            when,
+        );
+        let b = buckets.get_mut(&bid).expect("bucket just ensured");
         if b.run_id.is_none() {
             b.run_id = ev.run_id.map(|u| u.to_string());
+        }
+        if b.timer_id.is_none() {
+            b.timer_id = ev.timer_id.map(|u| u.to_string());
         }
         if b.name.is_none() {
             if let Some(n) = ev.timer_name.as_ref().filter(|s| !s.is_empty()) {
@@ -183,11 +198,13 @@ pub fn build_truth_window(
             b.scheduled_for = when;
         }
         b.kinds.push(ev.kind);
+        b.has_outcome_events = true;
     }
 
-    // Completed claims without a matching event still count as durable evidence
-    // (JSONL may have been pruned). Outcome is "delivered" — the claim ledger
-    // only records claim/complete, not late/skip/coalesce.
+    // Claims enrich matching event buckets. A claim alone (no outcome event)
+    // is NOT invented as delivered — scheduler/run-now complete claims even
+    // when the action fails. Ledger-only rows surface as `unknown` so the UI
+    // never rewrites failure as success after log rotation/pruning.
     for claim in claims {
         if claim.status != ClaimStatus::Completed {
             continue;
@@ -199,43 +216,54 @@ pub fn build_truth_window(
         if when < range_start_utc || when >= range_end_utc {
             continue;
         }
-        let key = RecordKey {
-            timer_id: Some(claim.timer_id.to_string()),
-            run_id: Some(claim.run_id.to_string()),
-            scheduled_for_nanos: when.timestamp_nanos_opt().unwrap_or(0),
-        };
-        // Also check alternate key without run_id for event-only buckets.
-        let alt = RecordKey {
-            timer_id: Some(claim.timer_id.to_string()),
-            run_id: None,
-            scheduled_for_nanos: when.timestamp_nanos_opt().unwrap_or(0),
-        };
-        if buckets.contains_key(&key) || buckets.contains_key(&alt) {
-            // Enrich existing bucket with run_id if missing.
-            if let Some(b) = buckets.get_mut(&alt) {
-                if b.run_id.is_none() {
-                    b.run_id = Some(claim.run_id.to_string());
-                }
+        let run_s = claim.run_id.to_string();
+        let tid_s = claim.timer_id.to_string();
+        let sec = when.timestamp();
+
+        let existing = by_run
+            .get(&run_s)
+            .cloned()
+            .or_else(|| by_timer_sec.get(&(tid_s.clone(), sec)).cloned());
+
+        if let Some(bid) = existing {
+            let b = buckets.get_mut(&bid).expect("indexed bucket");
+            if b.run_id.is_none() {
+                b.run_id = Some(run_s.clone());
+                by_run.insert(run_s, bid.clone());
             }
+            if b.timer_id.is_none() {
+                b.timer_id = Some(tid_s.clone());
+            }
+            // Prefer claim's scheduled_for when more precise.
+            if b.scheduled_for != when {
+                // Keep event scheduled_for if set from events; only fill if needed.
+            }
+            by_timer_sec.insert((tid_s, sec), bid);
             continue;
         }
+
+        // No matching event — durable claim without outcome detail.
+        let bid = format!("run:{run_s}");
         buckets.insert(
-            key,
+            bid.clone(),
             RecordBucket {
-                timer_id: Some(claim.timer_id.to_string()),
-                run_id: Some(claim.run_id.to_string()),
+                timer_id: Some(tid_s.clone()),
+                run_id: Some(run_s.clone()),
                 scheduled_for: when,
                 name: None,
-                kinds: Vec::new(), // empty → delivered via claim
+                kinds: Vec::new(),
+                has_outcome_events: false,
             },
         );
+        by_run.insert(run_s, bid.clone());
+        by_timer_sec.insert((tid_s, sec), bid);
     }
 
     let mut entries: Vec<TruthEntry> = Vec::new();
     let mut recorded_keys: HashSet<DedupeKey> = HashSet::new();
 
     for b in buckets.into_values() {
-        let outcome = outcome_from_kinds(&b.kinds);
+        let outcome = outcome_from_bucket(&b);
         let local = b.scheduled_for.with_timezone(&tz);
         let date = local.date_naive();
         if date < opts.from || date > opts.to {
@@ -400,13 +428,6 @@ pub fn build_truth_window(
 
 // ── internals ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct RecordKey {
-    timer_id: Option<String>,
-    run_id: Option<String>,
-    scheduled_for_nanos: i64,
-}
-
 #[derive(Debug, Clone)]
 struct RecordBucket {
     timer_id: Option<String>,
@@ -414,6 +435,8 @@ struct RecordBucket {
     scheduled_for: DateTime<Utc>,
     name: Option<String>,
     kinds: Vec<EventKind>,
+    /// True when at least one JSONL outcome event contributed.
+    has_outcome_events: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -422,26 +445,70 @@ struct DedupeKey {
     scheduled_nanos: i64,
 }
 
-fn record_key(
-    timer_id: Option<uuid::Uuid>,
-    run_id: Option<uuid::Uuid>,
+/// Find an existing bucket by run_id then (timer_id, scheduled second), or create one.
+fn resolve_or_create_bucket(
+    buckets: &mut HashMap<String, RecordBucket>,
+    by_run: &mut HashMap<String, String>,
+    by_timer_sec: &mut HashMap<(String, i64), String>,
+    timer_id: Option<String>,
+    run_id: Option<String>,
     when: DateTime<Utc>,
-) -> RecordKey {
-    // Prefer run_id for grouping when present; otherwise timer + scheduled.
-    if let Some(rid) = run_id {
-        RecordKey {
-            timer_id: timer_id.map(|u| u.to_string()),
-            run_id: Some(rid.to_string()),
-            // Zero scheduled so all events for the same run collapse.
-            scheduled_for_nanos: 0,
-        }
-    } else {
-        RecordKey {
-            timer_id: timer_id.map(|u| u.to_string()),
-            run_id: None,
-            scheduled_for_nanos: when.timestamp_nanos_opt().unwrap_or(0),
+) -> String {
+    let sec = when.timestamp();
+
+    if let Some(ref rid) = run_id {
+        if let Some(bid) = by_run.get(rid) {
+            // Keep secondary index warm.
+            if let Some(ref tid) = timer_id {
+                by_timer_sec.insert((tid.clone(), sec), bid.clone());
+            }
+            return bid.clone();
         }
     }
+    if let Some(ref tid) = timer_id {
+        if let Some(bid) = by_timer_sec.get(&(tid.clone(), sec)) {
+            if let Some(ref rid) = run_id {
+                by_run.insert(rid.clone(), bid.clone());
+                // Promote: ensure bucket carries run_id.
+                if let Some(b) = buckets.get_mut(bid) {
+                    if b.run_id.is_none() {
+                        b.run_id = Some(rid.clone());
+                    }
+                }
+            }
+            return bid.clone();
+        }
+    }
+
+    let bid = if let Some(ref rid) = run_id {
+        format!("run:{rid}")
+    } else if let Some(ref tid) = timer_id {
+        format!("ts:{tid}:{sec}")
+    } else {
+        format!(
+            "anon:{}",
+            when.timestamp_nanos_opt().unwrap_or(when.timestamp())
+        )
+    };
+
+    buckets.insert(
+        bid.clone(),
+        RecordBucket {
+            timer_id: timer_id.clone(),
+            run_id: run_id.clone(),
+            scheduled_for: when,
+            name: None,
+            kinds: Vec::new(),
+            has_outcome_events: false,
+        },
+    );
+    if let Some(rid) = run_id {
+        by_run.insert(rid, bid.clone());
+    }
+    if let Some(tid) = timer_id {
+        by_timer_sec.insert((tid, sec), bid.clone());
+    }
+    bid
 }
 
 fn is_outcome_event(kind: EventKind) -> bool {
@@ -457,12 +524,16 @@ fn is_outcome_event(kind: EventKind) -> bool {
     )
 }
 
-/// Combine multiple events for one run into a single honest label.
-fn outcome_from_kinds(kinds: &[EventKind]) -> OutcomeLabel {
-    if kinds.is_empty() {
-        // Completed claim without events.
-        return OutcomeLabel::Delivered;
+/// Honest label: event kinds win; claim-only → unknown (never invent delivered).
+fn outcome_from_bucket(b: &RecordBucket) -> OutcomeLabel {
+    if !b.has_outcome_events || b.kinds.is_empty() {
+        // Completed claim is not success — delivery path completes on failure too.
+        return OutcomeLabel::Unknown;
     }
+    outcome_from_kinds(&b.kinds)
+}
+
+fn outcome_from_kinds(kinds: &[EventKind]) -> OutcomeLabel {
     if kinds
         .iter()
         .any(|k| matches!(k, EventKind::WakeFailed | EventKind::NoAck))
@@ -831,7 +902,9 @@ mod tests {
     }
 
     #[test]
-    fn claim_ledger_fills_pruned_event_gap() {
+    fn claim_ledger_alone_is_unknown_never_delivered() {
+        // Scheduler/run-now complete claims even when the action fails — so a
+        // completed claim without outcome events must not invent "delivered".
         let tid = Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap();
         let run_id = Uuid::new_v4();
         let sched = Utc.with_ymd_and_hms(2026, 7, 21, 10, 0, 0).unwrap();
@@ -848,15 +921,98 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 7, 29, 12, 0, 0).unwrap();
         let win = build_truth_window(
             &[task],
-            &[], // events pruned
+            &[], // events pruned / rotated away
             &claims,
             &opts("2026-07-20", "2026-07-22", now, "UTC"),
         )
         .unwrap();
         assert_eq!(win.entries.len(), 1);
         assert_eq!(win.entries[0].source, TruthSource::Recorded);
-        assert_eq!(win.entries[0].outcome, OutcomeLabel::Delivered);
+        assert_eq!(win.entries[0].outcome, OutcomeLabel::Unknown);
+        assert_ne!(win.entries[0].outcome, OutcomeLabel::Delivered);
         assert_eq!(win.entries[0].name, "from-ledger");
+    }
+
+    /// Auditor FINDING 1 repro: matching WakeFailed event + Completed claim
+    /// must collapse to a single Recorded/failed entry (not failed+delivered).
+    #[test]
+    fn event_and_claim_same_run_collapse_to_one_failed() {
+        let tid = Uuid::parse_str("aaaaaaaa-aaaa-bbbb-bbbb-cccccccccccc").unwrap();
+        let run_id = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
+        let sched = Utc.with_ymd_and_hms(2026, 7, 28, 15, 18, 11).unwrap();
+        let events = vec![EventRecord::new(EventKind::WakeFailed)
+            .with_timer(tid, "audit-duplicate")
+            .with_run(run_id)
+            .with_scheduled_for(sched)
+            .with_ts(sched)
+            .with_error("launch failed")];
+        let claims = vec![RunClaim {
+            run_id,
+            timer_id: tid,
+            scheduled_for: sched,
+            status: ClaimStatus::Completed,
+            claimed_at: sched,
+            completed_at: Some(sched + Duration::seconds(1)),
+            event_sequence: 1,
+        }];
+        let task = daily_with_id(&tid.to_string(), "audit-duplicate", 15, 18, "UTC");
+        let now = Utc.with_ymd_and_hms(2026, 7, 29, 12, 0, 0).unwrap();
+        let win = build_truth_window(
+            &[task],
+            &events,
+            &claims,
+            &opts("2026-07-27", "2026-07-29", now, "UTC"),
+        )
+        .unwrap();
+        let recorded: Vec<_> = win
+            .entries
+            .iter()
+            .filter(|e| e.source == TruthSource::Recorded)
+            .collect();
+        assert_eq!(
+            recorded.len(),
+            1,
+            "expected one recorded entry, got {:?}",
+            recorded
+        );
+        assert_eq!(recorded[0].outcome, OutcomeLabel::Failed);
+        assert_eq!(recorded[0].name, "audit-duplicate");
+        let run_s = run_id.to_string();
+        assert_eq!(recorded[0].run_id.as_deref(), Some(run_s.as_str()));
+    }
+
+    #[test]
+    fn event_and_claim_match_by_timer_and_scheduled_second() {
+        // Event lacks run_id; claim has run_id — still one bucket via timer+sec.
+        let tid = Uuid::parse_str("dddddddd-dddd-dddd-dddd-dddddddddddd").unwrap();
+        let run_id = Uuid::new_v4();
+        let sched = Utc.with_ymd_and_hms(2026, 7, 28, 9, 0, 0).unwrap();
+        let events = vec![EventRecord::new(EventKind::Fired)
+            .with_timer(tid, "no-run-id-ev")
+            .with_scheduled_for(sched)
+            .with_ts(sched)];
+        // No .with_run on the event.
+        let claims = vec![RunClaim {
+            run_id,
+            timer_id: tid,
+            scheduled_for: sched,
+            status: ClaimStatus::Completed,
+            claimed_at: sched,
+            completed_at: Some(sched + Duration::seconds(1)),
+            event_sequence: 2,
+        }];
+        let now = Utc.with_ymd_and_hms(2026, 7, 29, 12, 0, 0).unwrap();
+        let win = build_truth_window(
+            &[],
+            &events,
+            &claims,
+            &opts("2026-07-28", "2026-07-28", now, "UTC"),
+        )
+        .unwrap();
+        assert_eq!(win.entries.len(), 1);
+        assert_eq!(win.entries[0].outcome, OutcomeLabel::Delivered);
+        let run_s = run_id.to_string();
+        assert_eq!(win.entries[0].run_id.as_deref(), Some(run_s.as_str()));
     }
 
     #[test]

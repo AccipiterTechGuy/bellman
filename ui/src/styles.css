@@ -828,7 +828,8 @@ main {
 }
 .chip.outcome-skipped,
 .chip.outcome-late,
-.chip.outcome-coalesced {
+.chip.outcome-coalesced,
+.chip.outcome-unknown {
   border-left-color: var(--status-warn, #f59e0b);
 }
 

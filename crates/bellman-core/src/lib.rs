@@ -45,7 +45,9 @@ pub use scheduler::{
     SchedulerConfig, SchedulerError, SchedulerResult, SimulatedClock, SystemClock, TickResult,
     HIGH_FREQ_PERIOD_SECS,
 };
-pub use service::log_query::{current_log_path, read_log_tail, LogPath};
+pub use service::log_query::{
+    current_log_path, logs_dir_from_data, read_log_history, read_log_tail, LogPath,
+};
 pub use service::run_now::{
     open_store, publish_fire_slot_response, resolve_logs_dir, resolve_slots_root_optional,
     run_now, slot_record_for_timer, RunNowError, RunNowOptions, RunNowOutcome,
