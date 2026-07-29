@@ -64,9 +64,25 @@ real suspend/resume hardware QA is still part of full-system validation.
 ### Dev launch (this tree)
 
 ```sh
-./launch.sh                    # prefers target/release/bellman-app, else tauri dev
-# desktop entry: ~/.local/share/applications/Bellman.desktop → this script
+./launch.sh                    # freshness-aware: fresh GUI binary, else rebuild / tauri dev
+scripts/install_desktop.sh     # repo-controlled ~/.local/share/applications/Bellman.desktop
 ```
+
+`launch.sh` never silently reuses a stale `target/release` or `target/debug`
+`bellman-app`. A binary is **fresh** only when its mtime is ≥ every GUI-affecting
+source root (`crates/`, `src-tauri/src`, manifests/lock, `ui/src`). Stale reuse
+requires an explicit opt-in: `BELLMAN_ALLOW_STALE=1` (alias
+`BELLMAN_APP_ALLOW_STALE=1`). Otherwise the launcher rebuilds
+(`cargo tauri build --no-bundle`) or enters `cargo tauri dev`.
+
+`scripts/install_desktop.sh` installs a developer desktop entry that **Exec**s
+this tree’s `launch.sh`, uses the Bellman icon from `src-tauri/icons` (not a
+stock theme icon), and keeps a single main `Categories=Utility;` so
+`desktop-file-validate` stays clean. Packaged deb/AppImage entries still use
+`src-tauri/linux/bellman.desktop` via Tauri’s `desktopTemplate`.
+
+Headless selection tests: `./tests/launch_freshness.sh`. Safe worktree metadata
+prune: `scripts/repo_hygiene.sh` (absent worktree records only).
 
 ### Quick package (Linux)
 
