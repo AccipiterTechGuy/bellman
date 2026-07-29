@@ -68,22 +68,21 @@ fn render_options() -> Options<'static> {
         .get_or_init(|| std::sync::Arc::new(build_fontdb()))
         .clone();
 
-    let mut opt = Options::default();
-    opt.resources_dir = None;
-    opt.font_family = DEFAULT_FONT_FAMILY.to_owned();
-    // Keep default font size sensible for unstyled text.
-    opt.fontdb = fontdb;
-    opt
+    Options {
+        resources_dir: None,
+        font_family: DEFAULT_FONT_FAMILY.to_owned(),
+        // Keep default font size sensible for unstyled text.
+        fontdb,
+        ..Options::default()
+    }
 }
 
 fn build_fontdb() -> resvg::usvg::fontdb::Database {
     let mut db = resvg::usvg::fontdb::Database::new();
     let mut loaded_any = false;
     for path in PINNED_FONT_FILES {
-        if Path::new(path).is_file() {
-            if db.load_font_file(path).is_ok() {
-                loaded_any = true;
-            }
+        if Path::new(path).is_file() && db.load_font_file(path).is_ok() {
+            loaded_any = true;
         }
     }
     // Always also load the system set so machines without the pinned paths

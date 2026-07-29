@@ -632,6 +632,7 @@ mod tests {
         assert_eq!(NEIGHBOUR_WINDOW_SECS, 300);
         assert_eq!(NEIGHBOUR_HORIZON_SECS, 14 * 24 * 3600);
         assert_eq!(NEIGHBOUR_MAX_FIRES_PER_TIMER, 48);
-        assert!(NEIGHBOUR_COLLISION_TO_SECOND);
+        // Compile-time check: collision granularity is to-the-second (product pin).
+        const { assert!(NEIGHBOUR_COLLISION_TO_SECOND); }
     }
 }

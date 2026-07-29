@@ -115,6 +115,19 @@ fn run_with_timeout(
     }
 }
 
+/// Map run outcome into last-result (for callers that want to display it).
+pub fn outcome_to_last_result(outcome: &RunOutcome) -> LastResult {
+    if outcome.exit_code == 0 {
+        LastResult::Ok {
+            exit_code: outcome.exit_code,
+        }
+    } else {
+        LastResult::Failed {
+            exit_code: outcome.exit_code,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,18 +177,5 @@ mod tests {
         let t = task_with_cmd("true");
         let err = run_task(&t, false, 5).unwrap_err();
         assert!(err.contains("--confirm"), "{err}");
-    }
-}
-
-/// Map run outcome into last-result (for callers that want to display it).
-pub fn outcome_to_last_result(outcome: &RunOutcome) -> LastResult {
-    if outcome.exit_code == 0 {
-        LastResult::Ok {
-            exit_code: outcome.exit_code,
-        }
-    } else {
-        LastResult::Failed {
-            exit_code: outcome.exit_code,
-        }
     }
 }

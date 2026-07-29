@@ -25,7 +25,7 @@ pub fn render_svg(snap: &CalendarSnapshot) -> String {
     let rows = if snap.days.is_empty() {
         0
     } else {
-        ((snap.days.len() + 6) / 7) as u32
+        snap.days.len().div_ceil(7) as u32
     };
     let rows = rows.max(weeks);
     let height = PAD + HEADER_H + WEEKDAY_H + rows * CELL_H + PAD;
@@ -229,17 +229,16 @@ mod tests {
     use crate::calendar::types::{CalendarCaps, CalendarEntry, CalendarStatus, WeekStart};
 
     fn empty_snap() -> CalendarSnapshot {
-        // Minimal empty August 2026 grid (42 cells) without entries.
-        let mut days = Vec::new();
-        // Just two days for unit test of renderer determinism.
-        days.push(CalendarDay {
+        // Minimal empty August 2026 grid without entries — one day is enough
+        // for unit tests of renderer determinism.
+        let days = vec![CalendarDay {
             date: "2026-08-01".into(),
             day: 1,
             in_month: true,
             entries: vec![],
             overflow: 0,
             total: 0,
-        });
+        }];
         CalendarSnapshot {
             from: "2026-08-01".into(),
             to: "2026-08-01".into(),

@@ -406,6 +406,7 @@ fn end_of_week(date: NaiveDate, week_start: WeekStart) -> NaiveDate {
 }
 
 /// Convenience: snapshot a month from store timers.
+#[allow(clippy::too_many_arguments)] // thin wrapper over CalendarBuildOptions fields
 pub fn snapshot_month_from_store(
     store: &crate::store::Store,
     year: i32,
