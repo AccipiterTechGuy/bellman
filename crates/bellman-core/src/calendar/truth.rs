@@ -149,10 +149,6 @@ pub fn build_truth_window(
     let mut warnings = Vec::new();
     let (range_start_utc, range_end_utc) = local_range_bounds(opts.from, opts.to, tz)?;
 
-    // Live task lookup for kind/enabled/name fallback (never overrides historical name).
-    let task_by_id: HashMap<&str, &ExpandableTask> =
-        tasks.iter().map(|t| (t.id.as_str(), t)).collect();
-
     // ── Recorded: merge outcome events + claims without double-counting ──
     // Primary map keyed by stable bucket id (`run:`… or `ts:`…).
     // Secondary indexes so claims and events find each other regardless of
@@ -270,16 +266,15 @@ pub fn build_truth_window(
             continue;
         }
         let tid = b.timer_id.as_deref();
-        let task = tid.and_then(|id| task_by_id.get(id).copied());
-        let name = b
-            .name
-            .or_else(|| task.map(|t| t.name.clone()))
-            .unwrap_or_else(|| {
-                tid.map(short_id)
-                    .unwrap_or_else(|| "(unknown)".into())
-            });
-        let kind = task.map(|t| occurrence_kind_str(&t.occurrence));
-        let enabled = task.map(|t| t.enabled);
+        // Recorded history must never rewrite from the live timer definition
+        // (rename / edit recurrence / pause). Only immutable event fields are
+        // allowed; otherwise stable id and null kind/enabled.
+        let name = b.name.clone().unwrap_or_else(|| {
+            tid.map(short_id)
+                .unwrap_or_else(|| "(unknown)".into())
+        });
+        let kind = None;
+        let enabled = None;
         let time = format!(
             "{:02}:{:02}:{:02}",
             local.hour(),
@@ -930,7 +925,149 @@ mod tests {
         assert_eq!(win.entries[0].source, TruthSource::Recorded);
         assert_eq!(win.entries[0].outcome, OutcomeLabel::Unknown);
         assert_ne!(win.entries[0].outcome, OutcomeLabel::Delivered);
-        assert_eq!(win.entries[0].name, "from-ledger");
+        // No event name → stable id prefix, never live "from-ledger".
+        assert_eq!(win.entries[0].name, short_id(&tid.to_string()));
+        assert!(win.entries[0].kind.is_none());
+        assert!(win.entries[0].enabled.is_none());
+    }
+
+    /// Renamed / edited / paused live timer must not rewrite claim-only history.
+    #[test]
+    fn renamed_edited_paused_after_prune_does_not_rewrite_history() {
+        let tid = Uuid::parse_str("bbbbbbbb-cccc-dddd-eeee-ffffffffffff").unwrap();
+        let run_id = Uuid::new_v4();
+        let sched = Utc.with_ymd_and_hms(2026, 7, 21, 10, 0, 0).unwrap();
+        let claims = vec![RunClaim {
+            run_id,
+            timer_id: tid,
+            scheduled_for: sched,
+            status: ClaimStatus::Completed,
+            claimed_at: sched,
+            completed_at: Some(sched + Duration::seconds(1)),
+            event_sequence: 1,
+        }];
+        // Live definition was renamed, switched to interval, and paused.
+        let mut task = daily_with_id(&tid.to_string(), "NEW CURRENT NAME", 10, 0, "UTC");
+        task.occurrence = Occurrence::new(
+            OccurrenceKind::Interval {
+                every_secs: 60,
+                anchor: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            },
+            "UTC",
+        )
+        .unwrap();
+        task.enabled = false;
+        let now = Utc.with_ymd_and_hms(2026, 7, 29, 12, 0, 0).unwrap();
+        let win = build_truth_window(
+            &[task],
+            &[], // events pruned
+            &claims,
+            &opts("2026-07-20", "2026-07-22", now, "UTC"),
+        )
+        .unwrap();
+        assert_eq!(win.entries.len(), 1);
+        let e = &win.entries[0];
+        assert_eq!(e.outcome, OutcomeLabel::Unknown);
+        assert_ne!(e.name, "NEW CURRENT NAME");
+        assert_eq!(e.name, short_id(&tid.to_string()));
+        assert!(
+            e.kind.is_none(),
+            "must not copy live kind, got {:?}",
+            e.kind
+        );
+        assert!(
+            e.enabled.is_none(),
+            "must not copy live enabled/paused, got {:?}",
+            e.enabled
+        );
+    }
+
+    #[test]
+    fn event_name_survives_live_rename() {
+        let tid = Uuid::parse_str("cccccccc-dddd-eeee-ffff-000000000001").unwrap();
+        let run_id = Uuid::new_v4();
+        let sched = Utc.with_ymd_and_hms(2026, 7, 22, 8, 0, 0).unwrap();
+        let events = vec![EventRecord::new(EventKind::Fired)
+            .with_timer(tid, "Historical Name")
+            .with_run(run_id)
+            .with_scheduled_for(sched)
+            .with_ts(sched)];
+        let mut task = daily_with_id(&tid.to_string(), "NEW CURRENT NAME", 8, 0, "UTC");
+        task.enabled = false;
+        let now = Utc.with_ymd_and_hms(2026, 7, 29, 12, 0, 0).unwrap();
+        let win = build_truth_window(
+            &[task],
+            &events,
+            &[],
+            &opts("2026-07-20", "2026-07-28", now, "UTC"),
+        )
+        .unwrap();
+        let rec = win
+            .entries
+            .iter()
+            .find(|e| e.source == TruthSource::Recorded)
+            .unwrap();
+        assert_eq!(rec.name, "Historical Name");
+        assert!(rec.kind.is_none());
+        assert!(rec.enabled.is_none());
+    }
+
+    #[test]
+    fn browse_past_current_future_month() {
+        let tid = Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0001").unwrap();
+        let task = daily_with_id(&tid.to_string(), "month-browse", 11, 0, "UTC");
+        let now = Utc.with_ymd_and_hms(2026, 7, 15, 12, 0, 0).unwrap();
+
+        // Past month (June): no records → empty.
+        let past = build_truth_window(
+            std::slice::from_ref(&task),
+            &[],
+            &[],
+            &opts("2026-06-01", "2026-06-30", now, "UTC"),
+        )
+        .unwrap();
+        assert!(past.entries.is_empty());
+
+        // Current month: one recorded + upcoming after now.
+        let rec_sched = Utc.with_ymd_and_hms(2026, 7, 10, 11, 0, 0).unwrap();
+        let events = vec![EventRecord::new(EventKind::Fired)
+            .with_timer(tid, "month-browse")
+            .with_run(Uuid::new_v4())
+            .with_scheduled_for(rec_sched)
+            .with_ts(rec_sched)];
+        let cur = build_truth_window(
+            std::slice::from_ref(&task),
+            &events,
+            &[],
+            &opts("2026-07-01", "2026-07-31", now, "UTC"),
+        )
+        .unwrap();
+        assert_eq!(
+            cur.entries
+                .iter()
+                .filter(|e| e.source == TruthSource::Recorded)
+                .count(),
+            1
+        );
+        assert!(cur
+            .entries
+            .iter()
+            .filter(|e| e.source == TruthSource::Upcoming)
+            .all(|e| e.scheduled_for > now));
+
+        // Future month (August): only projections.
+        let fut = build_truth_window(
+            &[task],
+            &[],
+            &[],
+            &opts("2026-08-01", "2026-08-31", now, "UTC"),
+        )
+        .unwrap();
+        assert!(!fut.entries.is_empty());
+        assert!(fut
+            .entries
+            .iter()
+            .all(|e| e.source == TruthSource::Upcoming));
     }
 
     /// Auditor FINDING 1 repro: matching WakeFailed event + Completed claim

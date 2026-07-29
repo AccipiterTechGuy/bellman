@@ -303,6 +303,123 @@ describe('buildClientTruthEntries', () => {
     expect(fut.length).toBeGreaterThan(0);
     expect(fut.every((e) => e.source === 'upcoming')).toBe(true);
   });
+
+  it('browse past / current / future month shapes (MonthPage nav ranges)', () => {
+    const now = new Date(2026, 6, 15, 12, 0, 0); // mid-July
+    const tid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0001';
+    const t = dailyTimer(tid, 'month-browse', '11:00:00');
+
+    // Previous month (June grid span still only June dates for this test).
+    const pastMonth = buildClientTruthEntries({
+      timers: [t],
+      events: [],
+      from: '2026-06-01',
+      to: '2026-06-30',
+      now,
+    });
+    expect(pastMonth).toEqual([]);
+
+    const events = [
+      {
+        kind: 'fired',
+        timer_id: tid,
+        timer_name: 'month-browse',
+        run_id: 'rm1',
+        scheduled_for: new Date(2026, 6, 10, 11, 0, 0).toISOString(),
+        ts: new Date(2026, 6, 10, 11, 0, 0).toISOString(),
+      },
+    ];
+    // Current month: recorded past day + upcoming after now.
+    const curMonth = buildClientTruthEntries({
+      timers: [t],
+      events,
+      from: '2026-07-01',
+      to: '2026-07-31',
+      now,
+    });
+    expect(curMonth.some((e) => e.source === 'recorded' && e.date === '2026-07-10')).toBe(true);
+    expect(
+      curMonth
+        .filter((e) => e.source === 'upcoming')
+        .every((e) => Date.parse(e.scheduledFor) > now.getTime()),
+    ).toBe(true);
+
+    // Next month: projections only.
+    const nextMonth = buildClientTruthEntries({
+      timers: [t],
+      events: [],
+      from: '2026-08-01',
+      to: '2026-08-31',
+      now,
+    });
+    expect(nextMonth.length).toBeGreaterThan(0);
+    expect(nextMonth.every((e) => e.source === 'upcoming')).toBe(true);
+  });
+
+  it('MonthPage shiftMonth / jumpToday math moves year-month correctly', async () => {
+    // Pure recreation of MonthPage.shiftMonth / jumpToday without mounting Svelte.
+    function shiftMonth(year, month, delta) {
+      let m = month + delta;
+      let y = year;
+      while (m < 0) { m += 12; y -= 1; }
+      while (m > 11) { m -= 12; y += 1; }
+      return { year: y, month: m };
+    }
+    let y = 2026;
+    let m = 6; // July (0-indexed)
+    // Prev month → June
+    ({ year: y, month: m } = shiftMonth(y, m, -1));
+    expect(y).toBe(2026);
+    expect(m).toBe(5);
+    // Next ×2 → August
+    ({ year: y, month: m } = shiftMonth(y, m, 1));
+    ({ year: y, month: m } = shiftMonth(y, m, 1));
+    expect(y).toBe(2026);
+    expect(m).toBe(7);
+    // Year boundary: Jan prev → Dec previous year
+    ({ year: y, month: m } = shiftMonth(2026, 0, -1));
+    expect(y).toBe(2025);
+    expect(m).toBe(11);
+    // jumpToday
+    const now = new Date(2026, 6, 15);
+    y = now.getFullYear();
+    m = now.getMonth();
+    expect(y).toBe(2026);
+    expect(m).toBe(6);
+
+    // Grid range for MonthPage rebuild uses monthGrid first/last ISO.
+    const { monthGrid, isoDate } = await import('./api.js');
+    const grid = monthGrid(2026, 6); // July 2026
+    expect(isoDate(grid[0]) <= '2026-07-01').toBe(true);
+    expect(isoDate(grid[grid.length - 1]) >= '2026-07-31').toBe(true);
+  });
+
+  it('recorded without event name does not rewrite from live timer', () => {
+    const now = new Date(2026, 6, 29, 12, 0, 0);
+    const tid = 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff';
+    const events = [
+      {
+        kind: 'fired',
+        timer_id: tid,
+        // no timer_name
+        run_id: 'r1',
+        scheduled_for: new Date(2026, 6, 22, 8, 0, 0).toISOString(),
+        ts: new Date(2026, 6, 22, 8, 0, 0).toISOString(),
+      },
+    ];
+    const entries = buildClientTruthEntries({
+      timers: [dailyTimer(tid, 'NEW CURRENT NAME')],
+      events,
+      from: '2026-07-20',
+      to: '2026-07-28',
+      now,
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].name).not.toBe('NEW CURRENT NAME');
+    expect(entries[0].name.startsWith('bbbbbbbb')).toBe(true);
+    expect(entries[0].kind).toBeNull();
+    expect(entries[0].enabled).toBeNull();
+  });
 });
 
 describe('grouping', () => {

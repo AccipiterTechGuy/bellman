@@ -149,7 +149,8 @@ export function buildClientTruthEntries({ timers = [], events = [], from, to, no
     }
     seen.add(key);
     if (timerId) seen.add(dedupeKey(timerId, when.toISOString()));
-    const name = ev.timer_name || ev.timerName || fallbackName(timerId, timers);
+    // Immutable event name only — never live timer name (rename rewrite).
+    const name = ev.timer_name || ev.timerName || shortStableId(timerId);
     entries.push({
       _key: key,
       timerId,
@@ -243,11 +244,11 @@ function mergeOutcome(a, b) {
   return (OUTCOME_RANK[b] || 0) >= (OUTCOME_RANK[a] || 0) ? b : a;
 }
 
-function fallbackName(timerId, timers) {
+/** Stable id label when historical name is unavailable (no live rewrite). */
+function shortStableId(timerId) {
   if (!timerId) return '(unknown)';
-  const t = (timers || []).find((x) => x.id === timerId);
-  if (t) return t.name;
-  return String(timerId).slice(0, 8) + '…';
+  const s = String(timerId);
+  return s.length > 8 ? `${s.slice(0, 8)}…` : s;
 }
 
 function formatLocalTime(d) {
