@@ -35,6 +35,56 @@ Scan JSON (stable keys): `ok`, `command`, `scanned_at`, `platform`, `filter`,
 `source`, `owner`, `command`, `schedule_expr`, `human_explanation`, `next_run`,
 `last_run`, `last_result`, `enabled`, `writable`, etc.
 
+## Calendar Snapshot (`calendar` / `agenda`)
+
+Render any month (or date range) as a clean calendar image — **SVG or PNG** —
+or the same data as **JSON**. Pure Rust path: expand Bellman timers → snapshot
+contract → deterministic SVG → optional `resvg` PNG. **No webview, no display,
+no GPU.** Works with `DISPLAY` unset over SSH.
+
+```text
+bellman calendar --month 2026-08 [--format svg|png|json] [--out PATH]
+bellman calendar --from 2026-08-01 --to 2026-08-14 --format json
+bellman calendar --month next --week-start mon --tz Europe/Helsinki
+bellman agenda "next tuesday" --json
+bellman agenda today --format json --tz UTC
+```
+
+| Flag | Description |
+|------|-------------|
+| `--month SPEC` | `YYYY-MM`, `this` / `next`, or bare English month name (`August`). Default when no range: this month. |
+| `--from` / `--to` | Inclusive `YYYY-MM-DD` range (alternative to `--month`). |
+| `--format` | `svg` (default for `calendar`), `png`, or `json` (default for `agenda`). |
+| `--out PATH` | Write file; without it SVG/JSON go to stdout (pipeable). PNG is raw bytes on stdout. |
+| `--week-start` | `mon` (default, Europe) or `sun`. |
+| `--tz` | IANA timezone for displayed times (default: system local). Shown in the header. |
+| `--show-commands` | **Opt-in.** Cells show task *names* only by default; full command lines can leak tokens/paths. |
+| `--max-per-cell N` | Cap drawn items per day; overflow becomes `+N more` (default 5). |
+
+**Natural-language boundary:** only the fixed phrases above (`today`,
+`tomorrow`, `this month`, `next month`, `next <weekday>`, bare weekday, bare
+month name, `YYYY-MM` / `YYYY-MM-DD`). Richer phrasing is the calling agent's
+job to translate into flags — Bellman does not run an NL engine.
+
+**Determinism:** same inputs ⇒ byte-identical SVG (no render timestamp, no
+random ids, fixed English month/weekday labels). PNG is rasterised from that
+SVG via `resvg`/`tiny-skia`.
+
+**Bounds:** max items per cell, max fires per task, max total entries, max
+tasks considered — a month with thousands of interval fires stays fast.
+
+JSON shape (stable): `ok`, `command`, `from`, `to`, `year`, `month`,
+`timezone`, `week_start`, `show_commands`, `days[]` (grid cells with
+`entries`, `overflow`, `in_month`), `entries[]` (flat list — same set the
+image views), `caps`, `warnings[]`. Each entry has `task_id`, `name`, `time`
+(`HH:MM`), `date`, `repeats`, `status`
+(`upcoming`|`ok`|`failed`|`disabled`|`unknown`), optional `command`,
+`source_kind`.
+
+Day-one data source: Bellman store timers, expanded through the occurrence
+engine. The query is source-agnostic (`ExpandableTask`) so Visible Scheduler
+cron/systemd/at rows can join the same grid when fed through that shape.
+
 ## Global options
 
 | Flag | Env | Description |

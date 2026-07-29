@@ -4,6 +4,7 @@
 //! Every command accepts `--json` for a stable machine-readable envelope
 //! documented in `docs/CLI.md`.
 
+mod calendar_cmd;
 mod commands;
 mod output;
 mod parse;
@@ -207,6 +208,72 @@ enum Commands {
         #[command(subcommand)]
         action: TaskCommands,
     },
+
+    /// Render a month (or date range) as a calendar snapshot (SVG / PNG / JSON).
+    ///
+    /// Pure Rust, headless — no display or GPU required. JSON is the contract;
+    /// SVG/PNG are views of the same data. Commands are hidden unless
+    /// `--show-commands`. Natural language is limited to fixed phrases
+    /// (`this`/`next` month, bare month names) — richer phrasing is the
+    /// calling agent's job.
+    Calendar {
+        /// Month: `YYYY-MM`, `this`, `next`, or bare English month name.
+        #[arg(long, value_name = "SPEC")]
+        month: Option<String>,
+
+        /// Range start (`YYYY-MM-DD`). Use with `--to` instead of `--month`.
+        #[arg(long, value_name = "DATE")]
+        from: Option<String>,
+
+        /// Range end (`YYYY-MM-DD`), inclusive.
+        #[arg(long, value_name = "DATE")]
+        to: Option<String>,
+
+        /// Output format: svg | png | json (default: svg).
+        #[arg(long, default_value = "svg", value_name = "FMT")]
+        format: String,
+
+        /// Write to this path instead of stdout.
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+
+        /// First day of week: mon (default) | sun.
+        #[arg(long, default_value = "mon", value_name = "DAY")]
+        week_start: String,
+
+        /// IANA timezone for displayed times (default: system local).
+        #[arg(long, value_name = "TZ")]
+        tz: Option<String>,
+
+        /// Include full command lines (private; opt-in).
+        #[arg(long)]
+        show_commands: bool,
+
+        /// Max items drawn per day cell before `+N more` (default 5).
+        #[arg(long, value_name = "N")]
+        max_per_cell: Option<usize>,
+    },
+
+    /// One-day agenda for a fixed relative phrase or `YYYY-MM-DD`.
+    ///
+    /// Phrases: `today`, `tomorrow`, `next <weekday>`, bare weekday, or a date.
+    Agenda {
+        /// Day phrase or `YYYY-MM-DD`.
+        phrase: String,
+
+        /// Output format: svg | png | json (default: json).
+        #[arg(long, default_value = "json", value_name = "FMT")]
+        format: String,
+
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+
+        #[arg(long, value_name = "TZ")]
+        tz: Option<String>,
+
+        #[arg(long)]
+        show_commands: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -368,6 +435,95 @@ fn main() -> ExitCode {
         };
     }
 
+    // Calendar / agenda — may write binary or raw SVG to stdout.
+    let calendar = match &cli.command {
+        Commands::Calendar {
+            month,
+            from,
+            to,
+            format,
+            out,
+            week_start,
+            tz,
+            show_commands,
+            max_per_cell,
+        } => Some(calendar_cmd::cmd_calendar(
+            &db_path,
+            calendar_cmd::CalendarArgs {
+                month: month.clone(),
+                from: from.clone(),
+                to: to.clone(),
+                format: format.clone(),
+                out: out.clone(),
+                week_start: week_start.clone(),
+                tz: tz.clone(),
+                show_commands: *show_commands,
+                max_per_cell: *max_per_cell,
+            },
+        )),
+        Commands::Agenda {
+            phrase,
+            format,
+            out,
+            tz,
+            show_commands,
+        } => Some(calendar_cmd::cmd_agenda(
+            &db_path,
+            calendar_cmd::AgendaArgs {
+                phrase: phrase.clone(),
+                format: format.clone(),
+                out: out.clone(),
+                tz: tz.clone(),
+                show_commands: *show_commands,
+            },
+        )),
+        _ => None,
+    };
+
+    if let Some(result) = calendar {
+        return match result {
+            Ok(calendar_cmd::CalendarOutcome::Written { format, path }) => {
+                // Raw SVG/PNG already went to stdout when `path` is None — do not
+                // append a JSON envelope (would corrupt the stream). When a file
+                // was written, optionally acknowledge.
+                if let Some(p) = path {
+                    if cli.json {
+                        let body = serde_json::json!({
+                            "ok": true,
+                            "command": "calendar",
+                            "format": format,
+                            "path": p.display().to_string(),
+                            "written": true,
+                        });
+                        println!("{}", serde_json::to_string(&body).unwrap_or_default());
+                    } else {
+                        eprintln!("wrote {format} → {}", p.display());
+                    }
+                }
+                ExitCode::SUCCESS
+            }
+            Ok(calendar_cmd::CalendarOutcome::Json(body)) => {
+                // format=json path (stdout).
+                let s = if std::env::var_os("BELLMAN_JSON_PRETTY").is_some() || !cli.json {
+                    // Pretty when human mode or pretty env; compact with --json.
+                    if cli.json && std::env::var_os("BELLMAN_JSON_PRETTY").is_none() {
+                        serde_json::to_string(&body).unwrap_or_else(|_| body.to_string())
+                    } else {
+                        serde_json::to_string_pretty(&body).unwrap_or_else(|_| body.to_string())
+                    }
+                } else {
+                    serde_json::to_string(&body).unwrap_or_else(|_| body.to_string())
+                };
+                println!("{s}");
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                output::emit_error(cli.json, err.command, &err);
+                ExitCode::FAILURE
+            }
+        };
+    }
+
     let result = match cli.command {
         Commands::Add {
             name,
@@ -429,7 +585,10 @@ fn main() -> ExitCode {
             let slots_dir = resolve_slots_dir(slots.as_ref());
             commands::slot_submit(&db_path, &request, &slots_dir)
         }
-        Commands::Scan { .. } | Commands::Task { .. } => unreachable!("handled above"),
+        Commands::Scan { .. }
+        | Commands::Task { .. }
+        | Commands::Calendar { .. }
+        | Commands::Agenda { .. } => unreachable!("handled above"),
     };
 
     match result {
@@ -526,6 +685,8 @@ where
         "slot-submit",
         "scan",
         "task",
+        "calendar",
+        "agenda",
     ];
     // Options that consume the next argv token as a value (global + common).
     const VALUE_OPTS: &[&str] = &[
@@ -546,6 +707,12 @@ where
         "--user",
         "--command",
         "--lines",
+        "--format",
+        "--out",
+        "--week-start",
+        "--max-per-cell",
+        "--from",
+        "--to",
     ];
     // Boolean / count flags that do not take a value.
     const FLAG_OPTS: &[&str] = &[
@@ -558,6 +725,7 @@ where
         "--apply",
         "--dry-run",
         "--confirm",
+        "--show-commands",
     ];
 
     let args: Vec<String> = args.into_iter().map(|s| s.as_ref().to_string()).collect();
