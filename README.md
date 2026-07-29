@@ -70,10 +70,12 @@ scripts/install_desktop.sh     # repo-controlled ~/.local/share/applications/Bel
 
 `launch.sh` never silently reuses a stale `target/release` or `target/debug`
 `bellman-app`. A binary is **fresh** only when its mtime is ≥ every GUI-affecting
-source root (`crates/`, `src-tauri/src`, manifests/lock, `ui/src`). Stale reuse
+input (`crates/`, `src-tauri/{src,capabilities,icons,linux}`, manifests/lock,
+`ui/src`, `ui/index.html`, vite/svelte configs, package files). Stale reuse
 requires an explicit opt-in: `BELLMAN_ALLOW_STALE=1` (alias
 `BELLMAN_APP_ALLOW_STALE=1`). Otherwise the launcher rebuilds
-(`cargo tauri build --no-bundle`) or enters `cargo tauri dev`.
+(`cargo tauri build --no-bundle`) or enters `cargo tauri dev` — and still will
+**not** exec a still-stale binary after a no-op rebuild unless that opt-in is set.
 
 `scripts/install_desktop.sh` installs a developer desktop entry that **Exec**s
 this tree’s `launch.sh`, uses the Bellman icon from `src-tauri/icons` (not a

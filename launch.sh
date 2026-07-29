@@ -6,8 +6,9 @@
 #
 # Freshness rule (deterministic):
 #   A candidate is FRESH iff it is executable and its mtime is >= the newest
-#   mtime among GUI-affecting source roots (Cargo manifests/lock, crates/,
-#   src-tauri/{src,Cargo.toml,tauri.conf.json,build.rs}, ui/src + package files).
+#   mtime among GUI-affecting inputs: Cargo manifests/lock, crates/,
+#   src-tauri/{src,capabilities,icons,linux,Cargo.toml,tauri.conf.json,build.rs},
+#   ui/{src,public,index.html,vite/svelte configs,package files}.
 #   Missing stamp roots are ignored; if no stamp files exist, any executable
 #   candidate is treated as fresh (fixture / empty tree edge case).
 #
@@ -58,6 +59,8 @@ allow_stale() {
 }
 
 # Newest mtime (epoch seconds) among GUI-affecting sources. Prints 0 if none.
+# Includes Rust/core crates, Tauri shell (src, conf, capabilities, icons), and
+# the full frontend inputs that embed into the GUI binary (ui/src + entry/config).
 source_stamp() {
   local root="$1"
   local newest=0
@@ -66,10 +69,17 @@ source_stamp() {
     "$root/Cargo.toml"
     "$root/Cargo.lock"
     "$root/src-tauri/Cargo.toml"
+    "$root/src-tauri/Cargo.lock"
     "$root/src-tauri/tauri.conf.json"
     "$root/src-tauri/build.rs"
     "$root/ui/package.json"
     "$root/ui/package-lock.json"
+    "$root/ui/index.html"
+    "$root/ui/vite.config.js"
+    "$root/ui/vite.config.ts"
+    "$root/ui/svelte.config.js"
+    "$root/ui/jsconfig.json"
+    "$root/ui/tsconfig.json"
   )
   local p
   for p in "${paths[@]}"; do
@@ -85,8 +95,12 @@ source_stamp() {
   done < <(
     {
       [ -d "$root/src-tauri/src" ] && find "$root/src-tauri/src" -type f -print0
+      [ -d "$root/src-tauri/capabilities" ] && find "$root/src-tauri/capabilities" -type f -print0
+      [ -d "$root/src-tauri/icons" ] && find "$root/src-tauri/icons" -type f -print0
+      [ -d "$root/src-tauri/linux" ] && find "$root/src-tauri/linux" -type f -print0
       [ -d "$root/crates" ] && find "$root/crates" -type f \( -name '*.rs' -o -name 'Cargo.toml' \) -print0
       [ -d "$root/ui/src" ] && find "$root/ui/src" -type f -print0
+      [ -d "$root/ui/public" ] && find "$root/ui/public" -type f -print0
     } 2>/dev/null
   )
   echo "$newest"
@@ -182,7 +196,8 @@ try_rebuild() {
   cargo tauri --version >/dev/null 2>&1 || return 1
   echo "bellman: binary stale or missing — rebuilding GUI (cargo tauri build --no-bundle)…" >&2
   (cd "$root" && cargo tauri build --no-bundle) || return 1
-  # Re-select after rebuild.
+  # Re-select after rebuild — only exec a *fresh* binary.
+  # Never fall back to a still-stale candidate without explicit BELLMAN_ALLOW_STALE=1.
   local stamp
   stamp=$(source_stamp "$root")
   local c
@@ -192,13 +207,15 @@ try_rebuild() {
       exec "$c"
     fi
   done < <(candidates "$root")
-  # Rebuild produced something but stamp race / unexpected layout — take newest existing.
-  while IFS= read -r c; do
-    if [ -x "$c" ]; then
-      echo "bellman: launching rebuilt $c" >&2
-      exec "$c"
-    fi
-  done < <(candidates "$root")
+  if allow_stale; then
+    while IFS= read -r c; do
+      if [ -x "$c" ]; then
+        echo "bellman: WARNING rebuild left binary stale; launching with BELLMAN_ALLOW_STALE=1: $c" >&2
+        exec "$c"
+      fi
+    done < <(candidates "$root")
+  fi
+  echo "bellman: rebuild finished but no fresh GUI binary found — refusing silent stale launch" >&2
   return 1
 }
 
