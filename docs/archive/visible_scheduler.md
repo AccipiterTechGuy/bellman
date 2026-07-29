@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-29 — shipped; card bellman-vs1-visible-scheduler-discover-control-every-schedule-on-the-machine, run 2026-07-29_0002, merge f40a418.
+
 # Visible Scheduler — one honest list of everything scheduled on this machine
 
 Repo: `~/bellman`
