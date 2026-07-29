@@ -15,6 +15,7 @@ pub mod scheduler;
 pub mod service;
 pub mod slots;
 pub mod store;
+pub mod visible;
 
 pub use actions::{
     notify_stub, run_launch, run_parallel_under_cap, write_output_slot, ActionLimiter, ActionRunner,
@@ -62,4 +63,10 @@ pub use store::{
     Action, ClaimStatus, Meta, MisfirePolicy, NewTimer, OpenOptions, OverlapPolicy, RetryPolicy,
     RunClaim, SlotRequestRecord, Store, StoreError, StoreResult, Timer, TimerId, TimerPatch,
     TimerUpdate,
+};
+pub use visible::{
+    default_backup_dir, default_snapshot_path, diff_scans, disable_task, edit_task, enable_task,
+    find_task, load_snapshot, new_cron_task, outcome_to_last_result, platform_name, refuse_system_write,
+    run_task, save_snapshot, scan, timer_logs, DiscoveredTask, LastResult, RunOutcome, ScanDiff,
+    ScanResult, SourceFilter, SourceKind, TaskChange, TaskId, WritePlan,
 };

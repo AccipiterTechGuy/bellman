@@ -6,6 +6,35 @@ directly (headless — no daemon required). Binary name: **`bellman`**.
 Primary consumer: AI agents. Pass **`--json`** on every command and parse the
 stable envelope described below.
 
+## Visible Scheduler (`scan` / `task`)
+
+One honest list of **every** schedule on the machine (Linux v1): user/system
+crontabs, `/etc/cron.d`, run-parts dirs, anacron, systemd timers (system +
+user), `at` jobs, and Bellman store timers. Windows/macOS return an explicit
+"not implemented" note rather than an empty list.
+
+```text
+bellman scan [--source cron|cron.d|systemd|at|bellman|anacron|run-parts|all] [--user U] [--diff] [--json]
+bellman task show|explain|logs <id>
+bellman task enable|disable|edit <id> [--dry-run] [--apply]
+bellman task new --command "…" --cron "…" [--source cron|bellman] [--apply]
+bellman task run <id> --confirm
+```
+
+**Safety:** reads are free. Mutations default to dry-run; **`--apply`** is
+required to write. Only the invoking user's own crontab (and Bellman store) are
+writable. System files and system systemd units are display-only — Bellman
+prints what would be needed and **never** calls `sudo`/`pkexec`. Crontab writes
+back up to `~/.bellman/crontab-backups/` first and preserve non-managed lines
+byte-for-byte. Disable comments a line with a recoverable marker; enable
+restores the original line exactly. Cron `last_result` is `unknown` unless a
+real exit status exists — absence of errors is not success.
+
+Scan JSON (stable keys): `ok`, `command`, `scanned_at`, `platform`, `filter`,
+`count`, `tasks[]`, `warnings[]`. Each task includes `id`, `source_kind`,
+`source`, `owner`, `command`, `schedule_expr`, `human_explanation`, `next_run`,
+`last_run`, `last_result`, `enabled`, `writable`, etc.
+
 ## Global options
 
 | Flag | Env | Description |
