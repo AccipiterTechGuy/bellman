@@ -57,6 +57,10 @@ it would tell nobody anything they were not about to be told anyway. At 1× it i
 warning; at 2× it is a judgement. **The label never fires an event** — no log line, no state
 change, nothing but pixels.
 
+**A re-sent `expected_secs` replaces the old one** (IK3): the label recalculates from the
+unchanged `fired_at` with the latest accepted value — an app that learns mid-run the job is
+bigger moves its own warning later, and that is correct, not drift.
+
 **The label's clock starts at `fired_at`.** `overdue` ⇔ `now − fired_at > expected_secs`,
 both from `status.json`. This is deliberately a *different* anchor from the watchdog, which
 counts on Bellman's monotonic clock from the moment it received the reply (R8) — and that is

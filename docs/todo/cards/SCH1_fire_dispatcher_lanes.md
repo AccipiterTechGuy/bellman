@@ -56,13 +56,30 @@ slot/file writes.
   IK contract ("a new firing always proceeds"). Only the *action* — the process launch —
   waits its turn in the timer's lane. Queuing the publication behind a 15-minute action would
   leave the folder claiming the old run is current for 15 minutes, which breaks IK3's mirror.
-- **Same timer's ACTIONS stay ordered.** Two action executions for one timer never run
-  concurrently or out of order. The existing `in_flight` set in `runner.rs:301` and the
-  overlap policy are the seed of this — extend them, do not duplicate.
+- **Same-timer dispatch is OVERLAP-POLICY-AWARE, not blanket-serial.** `OverlapPolicy`
+  already exists (`store/models.rs`): `Skip` (default) · `QueueOne` · `Parallel { cap }` ·
+  `Replace`. A lane that hard-serialises every timer silently overrides `Parallel` and
+  `Replace` — a configured policy the dispatcher ignores is a lie in the settings UI. Per
+  policy, when a fire arrives while a previous action runs:
+  - `Skip` — the new action is not started (existing behaviour, now enforced at dispatch);
+  - `QueueOne` — at most one follow-up waits in the lane; further fires collapse into it;
+  - `Parallel { cap }` — up to `cap` actions of this timer run concurrently, still inside
+    the global `max_concurrent_actions`;
+  - `Replace` — the in-flight action is cancelled, then the new one starts.
+  "Never concurrently, in order" is the rule **for the serial policies only** (`Skip`,
+  `QueueOne`, `Replace`); asserting it for `Parallel` would assert the bug. **Publication is
+  immediate for every policy** — the policy governs the action, never the record.
 - **Different timers run in parallel**, up to the cap.
 - **The queue is bounded, and a full queue never drops a fire.** The claim is already durable
   in SQLite before enqueue, so backpressure means "stays pending", never "lost". If the queue
   is full the scheduler still records the firing and keeps computing times.
+- **Pending claims have a LIVE feeder, not just a boot-time one.** Today pending-claim
+  scanning happens only at scheduler startup (`delivery.rs`) — under this card, a claim
+  persisted while the queue was full would wait for a restart that may never come. The
+  dispatcher pump runs on three triggers: **worker completion** (a slot freed), **enqueue
+  failure** (retry path), and **startup** (crash recovery). Claims carry an explicit state —
+  `pending → enqueued → active → finished` — so the pump can tell what needs feeding and a
+  crash can tell what needs re-queuing, without double-running anything.
 - **The event log and `status.json` keep single-writer discipline** (`json_normalization.md`
   R11). Several lanes finishing at once must not become several writers — this is the most
   likely way to break IK3 while implementing this card.
@@ -85,7 +102,12 @@ the scope has slipped.
   card; it fails today.
 - Peak in-flight actually reaches the cap under a mass-fire, and never exceeds it —
   `LimiterStats::peak_in_flight` already reports this.
-- Two fires of the **same** timer execute their actions in order, never concurrently.
+- Two fires of the **same** timer execute their actions in order, never concurrently —
+  **asserted for `Skip`/`QueueOne`/`Replace` only.** A `Parallel { cap: 2 }` timer runs two
+  actions concurrently (asserted), never three (asserted), and stays inside the global cap.
+- **A full queue drains without a restart:** fill the queue, persist one more claim, let a
+  worker finish — the pending claim is dispatched by the pump, with Bellman never restarted
+  during the test.
 - **A second fire publishes immediately even while the first action still runs**: fire a
   timer whose action takes 30 s, fire it again at 10 s — at ~10 s the folder already shows
   the new `run_id` and `superseded` is already logged, while the first action is still

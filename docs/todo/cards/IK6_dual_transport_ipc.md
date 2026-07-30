@@ -43,10 +43,21 @@ Per timer:
   files. **The choice is made at fire, recorded on the run, and never changes mid-firing.**
   The next firing chooses fresh.
 
-If IPC delivery fails mid-firing (client vanished between check and send): re-publish the
-**same `run_id`** through the file adapter and record `transport: "ipc_fallback"` on the run.
-Never mint a second run because a pipe broke. The app deduplicates by `run_id`, which it must
-do anyway.
+**Selected mode vs delivery attempts — these are different things, and conflating them made
+an earlier draft of this card contradict itself.** What is fixed per firing is the *selected
+mode*. Within `auto`, delivery may still fall back:
+
+- Fallback exists **only in `auto`**, and **only before delivery is confirmed** — confirmed
+  means the client acknowledged receipt of the fire message at the protocol level. After
+  confirmation, the transport is settled for the firing; a client that confirms and then
+  disconnects is a silent app (watchdog / `no_ack` rules), not a fallback case.
+- On unconfirmed IPC failure: re-publish the **same `run_id`** through the file adapter,
+  record `transport: "ipc_fallback"` on the run. Never mint a second run because a pipe broke.
+- Explicit `ipc` mode never falls back — no client, no confirmation ⇒ `no_ack`, as stated.
+- Duplicate delivery is possible by construction (send confirmed lost ≠ send lost), so
+  **apps must deduplicate by `run_id`** — this is now a stated requirement in IK4's
+  integration docs, not an unstated assumption: same `run_id` seen twice = same firing, act
+  once, reply normally.
 
 ## NO generated `adapter.py` — connection info is data, not code
 

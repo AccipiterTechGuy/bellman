@@ -50,6 +50,11 @@ A **"connect your own application"** section in `docs/INTEGRATION.md`:
 - the size caps (R12), and the big-output convention: store the payload in a file the app
   owns, reply with `result: { summary, path, sha256 }` — Bellman displays the path as text
   and never opens it
+- **deduplicate by `run_id`**: the same `run_id` seen twice is the same firing — act once,
+  reply normally. Required of every app (IK6's transport fallback can deliver a fire twice),
+  and cheap: remember the last `run_id` handled
+- the reply file is per-run — take its exact path from the notification's `reply_path`,
+  never construct or hardcode a filename
 
 Match the existing copy-paste style — short clients a reader lifts whole. Update the four
 existing clients (Python, bash, PowerShell, Node) to cover the reply direction.

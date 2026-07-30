@@ -52,22 +52,33 @@ pre-generated free slot stubs.
 supplies it. When a timer was created by a human rather than an app there is no owner: leave
 it `null` and let the first responder fill it in.
 
-`state: null` is how Bellman tells "stub, untouched" from "the app answered". **While the run
-is live and the file is valid for it, the app is the only writer.** Bellman touches
-`reply.json` again in exactly three cases, each of which is a **new T0**, not an exception:
+`state: null` is how Bellman tells "stub, untouched" from "the app answered". **From T0 the
+app is the file's only writer, and Bellman never writes over a live reply file** — the one
+Bellman-side exception is rebuilding a **missing** stub, and even that must be create-only
+(`O_EXCL` / create-new semantics), never a replace: a "restore" that overwrites can always
+race a valid reply the app wrote between Bellman's check and its write.
 
-- the timer fires again — the new run's stub replaces the old file;
-- the file is missing or permanently corrupt — rebuilt as the current run's stub;
-- the file holds a **stale `run_id`** — a previous run's app finished after the new stub was
-  written and clobbered it. Bellman logs `superseded` for that reply, then **restores the
-  current run's stub**.
+### The filename is per-run: `reply-<run8>.json`
 
-The third case is a real race, not a hypothetical: app A is mid-run, the timer fires again,
-Bellman writes run B's stub, then A completes and atomically replaces it with run A's
-`run_id`. No ordering in the database prevents a live file write. It does **not** need a
-lock: Bellman already reads every write to this file, the stale `run_id` identifies the
-clobber on sight, and the old app is terminating — it writes at most once more. Restore
-converges; a lock protocol is the shared-file design this split exists to avoid.
+`reply-` + first 8 hex of the `run_id` (`reply-9f2c1d77.json`), carried verbatim in the fire
+notification as `reply_path` — the app never constructs it. This is what makes the
+no-overwrite rule *possible* rather than aspirational.
+
+With one fixed `reply.json` across generations, two unfixable races exist:
+
+- **the clobber**: app A (previous run) finishes late and atomically replaces run B's stub
+  with a document carrying run A's `run_id` — the next reader of the stub gets the wrong run;
+- **the restore race**: any Bellman attempt to put run B's stub back is read-check-write on a
+  path the current app is also writing — Bellman can overwrite app B's valid `completed`,
+  reverting the run to `state: null` and letting it rot into `no_ack`. A database ordering
+  cannot fix a filesystem race; only not sharing the path fixes it.
+
+Per-run names dissolve both structurally. App A's late write lands in `reply-<runA8>.json`,
+touching nothing of run B's: Bellman ingests it under the previous-run rule (`superseded`),
+then **deletes the stale file**, so the folder normally holds exactly one `reply-*.json` —
+the current one. Nothing is ever restored because nothing is ever lost.
+
+(Everywhere below, "`reply.json`" means the current run's `reply-<run8>.json`.)
 
 ### The app edits; it does not reconstruct
 
@@ -163,10 +174,12 @@ With no `runs/`, **`events.current.jsonl` is the only per-run record**. A transi
 never reaches it is gone permanently — so logging is not incidental here, it is the durability
 story.
 
-These event kinds are **new** and do not exist in `EventKind` today (the enum has
-`Registered · Fired · FiredLate · SkippedMisfire · Coalesced · WakeDelivered · WakeFailed ·
-NoAck · Pruned · YearRecalibrate · WakeCapability`). IK1 owns the vocabulary, so they are
-added there and consumed here:
+The enum is `RunState` (`events/record.rs`), and **IK1's vocabulary work has partially
+landed** (`4c2d7d7`, `03e0363`): `Acknowledged`, `Running`, `Completed`, `Failed` **already
+exist** — do not add them twice. Still genuinely missing and owned by IK1: **`Cancelled`,
+`Superseded`, `ReplyRejected`**. Verify against the current enum before writing a line; this
+card's earlier claim that all six were missing went stale the moment IK1's first commits
+landed, which is what any list copied out of code does:
 
 | kind | written when | carries |
 |---|---|---|
@@ -281,10 +294,40 @@ said so.
 
 ## Timing — the asymmetry
 
-- **Pickup has grace** (the existing 60s). Bellman wrote a file; whether anything read it is
-  a fair, knowable question. Lapsed ⇒ `no_ack`.
+- **Pickup has a deadline** (default 60s, its own persisted setting — `ack_grace` may seed
+  the default, but the pickup deadline and the pruning grace are different jobs and stay
+  separately named). **Pickup is satisfied by any of:** a valid reply in any state, **or the
+  existing slot-feed `ack_through` cursor advancing past this run** — that feed is a durable
+  acknowledgement path that predates this card, and declaring `no_ack` while it shows the app
+  acked would contradict Bellman's own records. Lapsed ⇒ `no_ack`, which reads "no
+  acknowledgement was received" — a filesystem read leaves no trace, so "nobody read it" is
+  not knowable and must not be claimed. A late valid reply **revises** `no_ack` while the run
+  is still current, same rule as the watchdog.
 - **Completion has no timeout, ever** — by default. How long another program takes is
   unknowable.
+
+## Two properties, not one: CURRENT and TERMINAL are orthogonal
+
+A run is **current** until the next firing (or deletion) replaces it. A run is **terminal**
+when its state is `completed` / `failed` / `no_ack` / `cancelled`. These are independent: a
+run that completed thirty seconds ago is terminal **and still current**, and per the revision
+rules its app may still change its verdict.
+
+The implementation consequence, stated because it is the natural bug: **Bellman keeps
+watching a terminal-but-current run's reply file.** An implementation that unsubscribes on
+"closed" will silently miss `failed → completed`, pass every happy-path test, and be wrong.
+Watching stops when the run stops being *current*, never when it becomes *terminal*.
+
+## A new estimate replaces the old one
+
+An app may re-send `expected_secs` mid-run (`900`, then later `3600` — it learned the job is
+bigger). **The latest accepted value wins, in both consumers, from their own anchors:**
+
+- **watchdog**: new deadline = Bellman's receipt of that reply + `new value × factor` — the
+  reply is a heartbeat carrying a new estimate, nothing more exotic;
+- **GUI label**: recalculated from the unchanged `fired_at` with the new value (IK5).
+
+Freezing the first estimate would punish the only app honest enough to correct itself.
 
 ## The opt-in watchdog
 
@@ -350,11 +393,18 @@ keep that safe:
 Both come from `json_normalization.md` R10. Neither is visible in normal operation, which is
 why they have to be specified rather than discovered.
 
-### At fire: commit, then write the file
+### At fire: ingest, commit, then write the file
 
-One SQLite transaction carries the previous run's final known state, its `superseded` event
-if it was still open, the new `run_id`, the new `fired` event and any pending log lines.
-`status.json` and the fresh `reply.json` stub are written **after** it commits.
+**First, the pre-fire barrier (R10): synchronously read and ingest the previous run's reply
+file.** A valid `completed` the watcher has not processed yet must be folded in *before* the
+run can be superseded — otherwise Bellman logs "outcome unknown" over an outcome that was on
+disk. The watcher and the scheduler use the same serialization point for this file; two
+independent readers of one channel is a race by construction.
+
+Then one SQLite transaction carries the previous run's final known state — including what
+the barrier just ingested — its `superseded` event if it was still open, the new `run_id`,
+the new `fired` event and any pending log lines. `status.json` and the fresh reply stub are
+written **after** it commits.
 
 | crash point | result |
 |---|---|
@@ -452,13 +502,30 @@ Everything else:
   `status.json` retains the accumulated view.
 - Duplicate reply is a no-op. Unknown `run_id`, wrong `app_name`, oversize, or a reserved
   `state` are each quarantined and change nothing.
-- **The stub-clobber race:** while run B's stub sits in the folder, write a completed reply
-  carrying run A's `run_id` (the previous run). Asserted: `superseded` logged once, run B's
-  state untouched, and the stub is **restored with run B's `run_id`** so an app reading it
-  next gets the current run — not run A's leftovers.
+- **Per-run channels never collide:** with run B current, app A writes `completed` into
+  `reply-<runA8>.json`. Asserted: `superseded` logged, the stale file deleted, run B's stub
+  **byte-identical throughout** — and at no point did Bellman write over any reply file. A
+  test that ever observes run B's file reverting to `state: null` fails this card.
+- **The pre-fire barrier:** app writes a valid `completed`, the next fire occurs before any
+  watcher tick. Asserted: the run is logged `completed`, **not** `superseded` — the barrier
+  ingested it first. This is the "completed written immediately before the next fire" case
+  and it must be a dedicated test.
 - A previous-run reply logs `superseded`; a fabricated `run_id` logs `reply_rejected` and
   quarantines. Different events — asserted separately, because collapsing them hides real
   slow-app behaviour inside a tamper bucket.
+- **Pickup via the slot feed counts:** an app that advances `ack_through` for this run but
+  writes no reply file is **not** `no_ack`. And a late valid reply revises `no_ack` while the
+  run is still current.
+- **Terminal-but-current runs are still watched:** app reports `completed`, then `failed`,
+  with no fire in between — the second report is ingested, not missed. An implementation that
+  unsubscribes on terminal states fails here and nowhere else.
+- **A new `expected_secs` replaces the old** for both consumers: watchdog deadline recomputed
+  from Bellman's receipt with the new value; the GUI label recalculates from the unchanged
+  `fired_at`.
+- **Crash between flush and mark-published:** the event may appear twice in the file;
+  asserted that every reader (GUI, `log_query`) still counts it once, by `event_id`.
+- `duration_ms` is Bellman's monotonic fire→terminal-ingest elapsed — asserted with a skewed
+  app clock (timestamps an hour off) producing a sane, non-negative duration.
 - A test proves a reply cannot cause execution of anything.
 - A run can be stopped/closed while nothing holds a token — the abort path is never gated.
 - **A reply written while Bellman was stopped survives the restart** — stop Bellman, write

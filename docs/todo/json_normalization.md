@@ -41,8 +41,16 @@ everything about one timer. Both present on every message where they apply.
 | `running` | **the app** (optional heartbeat) | no |
 | `completed` | **the app** | yes |
 | `failed` | **the app** | yes |
-| `no_ack` | Bellman — nobody picked it up | yes |
+| `no_ack` | Bellman — **no acknowledgement was received** (a filesystem read leaves no trace, so "nobody read it" is unknowable — say what was observed) | **revisable** — a late valid reply supersedes it while the run is still current |
 | `cancelled` | Bellman — the timer was deleted while its run was open | yes |
+
+**What counts as pickup:** any valid reply state (`acknowledged` / `running` / `completed` /
+`failed`) **or** the existing slot-feed cursor (`ack_through`) advancing past this run's
+event. The slot feed is a real, durable acknowledgement path that predates the reply channel
+— declaring `no_ack` while it shows the app acked would be Bellman contradicting its own
+records. The pickup deadline is its own persisted deadline; the existing `ack_grace` constant
+may seed its default, but the two jobs (pickup timeout vs pruning grace) stay separately
+named and separately configurable.
 | `failed` (`failure_kind: "timed_out"`) | Bellman — only if the app set `error_detection` | **revisable** — a late app reply supersedes it |
 | `skipped_misfire`, `coalesced`, `pruned`, `wake_*`, `year_recalibrate` | Bellman | as today |
 
@@ -123,11 +131,20 @@ hostile reply is one bad log line.
 The folder is a view (see the tree section). Two ordering rules make that true in practice
 rather than in principle:
 
-- **One transaction per fire.** The previous run's final known state, its `superseded` event
-  if the run was open, the new `run_id`, the `fired` event and any pending log lines commit
-  to SQLite **together**. Only then is `status.json` rewritten. Crash before the commit and
-  the previous firing is still current; crash after it and startup rebuilds the file. There
-  is no window where the folder claims something the database never recorded.
+- **Ingest before superseding — the pre-fire barrier.** Before the fire transaction runs,
+  Bellman **synchronously reads and ingests the current run's reply file**. An app may have
+  written a complete, valid `completed` that the watcher simply has not processed yet;
+  superseding without looking would log "outcome unknown" for a run whose outcome was
+  sitting on disk. The watcher and the scheduler must go through the same serialization
+  point, or they will race each other to the same file. (A reply written *after* the barrier
+  read still loses — that window is microseconds and the design already accepts it loudly as
+  `superseded`. The barrier fixes the common case: watcher lag, not true simultaneity.)
+- **One transaction per fire.** The previous run's final known state — including anything the
+  barrier just ingested — its `superseded` event if the run was still open, the new `run_id`,
+  the `fired` event and any pending log lines commit to SQLite **together**. Only then is
+  `status.json` rewritten. Crash before the commit and the previous firing is still current;
+  crash after it and startup rebuilds the file. There is no window where the folder claims
+  something the database never recorded.
 - **Startup reads replies before the scheduler fires anything.** An app can answer while
   Bellman is stopped. If the scheduler runs first, the next fire overwrites that reply and
   it is lost **silently** — the worst kind of loss, because nothing anywhere records that it
@@ -135,18 +152,39 @@ rather than in principle:
   pending log lines, rebuild stale or missing files from the database, and only then start
   delivery.
 
-**R11 — one writer owns the event log.**
+**R11 — one writer owns the event log, and "one" means across PROCESSES.**
 
-Every event goes through a single synchronised writer, and rotation goes through the same
-one. This is not hypothetical: `EventLog::open` is called from five independent places
-outside tests (`pruner/mod.rs`, `service/run_now.rs`, `service/log_query.rs`, twice in
-`bellman-cli/src/commands.rs`). `rotate()` takes `&mut self`, so a single instance is safe —
-but the pruner renaming `events.current.jsonl` while another instance holds it open is a live
-hazard today.
+An in-process mutex is not the rule — the rule is interprocess. `EventLog` is opened today
+from the GUI process (`src-tauri/src/state.rs:122`, `:219`, `commands.rs:628`), the CLI
+(twice in `bellman-cli/src/commands.rs`), the pruner, `run_now` and `log_query`. Those are
+**separate OS processes** with independent handles. The live hazard: the pruner rotates
+(renames) `events.current.jsonl` while another process keeps appending through its old handle
+— post-rotation events land split between the archive and the new current file, and on
+Windows the rename itself can fail against an open handle.
 
-A line is durable when it is flushed, not when it is created: hold it in SQLite, append,
-flush, then mark it published, and retry after a failed write or a restart. `event_id` is
-already in the shape and is what makes the retry safe — republishing cannot duplicate.
+The shape that fixes it:
+
+- **Every producer enqueues into the SQLite outbox** — SQLite already serialises across
+  processes, which is the whole reason it is the funnel.
+- **One publisher, elected by an interprocess lease** (OS file lock), performs every append
+  **and** every rotation. A CLI running while the GUI is up enqueues and lets the GUI's
+  publisher drain; a CLI running alone takes the lease itself.
+- **Append errors surface.** `emit()` currently discards them (`let _ = log.append(&rec)`,
+  `actions/runner.rs:128`) — under this rule a failed append leaves the outbox row in place
+  for retry and is never silently dropped.
+
+A line is durable when it is flushed, not when it is created: enqueue, append, flush, then
+mark published, and retry after a failed write or a restart.
+
+**Delivery is at-least-once, and the file is honest about it.** A crash between flush and
+mark-published means the retry appends the same event **again** — `event_id` identifies the
+duplicate, it does not prevent it; nothing about an id makes a blind append idempotent. Two
+duties follow:
+
+- **The publisher checks before retrying**: on startup, scan the current file's tail for the
+  pending `event_id`s and skip the ones already physically present.
+- **Every reader dedupes by `event_id` anyway** — GUI, `log_query`, anything counting. The
+  publisher check shrinks the window; the reader rule is the guarantee.
 
 **The outbox must also empty.** A published row is deleted, not just marked; terminal run
 rows are pruned on the same retention schedule as the archives; the WAL is checkpointed
@@ -176,6 +214,13 @@ head of the result plus the truncation flag — enough to grep, not enough to bl
 results: write the payload somewhere the app owns and reply with a summary —
 `result: { "summary": "…", "path": "/app/owned/file", "sha256": "…" }`. Under R9 the path is
 **data**: displayed as text, never opened, followed or executed by Bellman.
+
+**`duration_ms` has one formula.** Bellman's own clock, both ends: monotonic elapsed from
+publishing the fire to **ingesting** the terminal reply. App timestamps are never subtracted
+— an app may skip `acknowledged_at` entirely (legal), and a skewed app clock must not produce
+a negative or absurd duration. One anchor pair, computed by Bellman, clamped at zero, present
+on the terminal event only. (`fired → completed` directly, no ack: same formula, no special
+case.)
 
 **Archives are compressed.** `events.current.jsonl` stays plain text — grep-ability of the
 live log is a feature. Rotated archives are compressed on rotation; JSONL compresses hard
@@ -256,9 +301,19 @@ Mid-run it reads `"state": "running"` with no `completed_at`. If the app dies it
 that way and ages — it never becomes `completed`, and it is not `failed` unless the app said
 so or a watchdog the app opted into expired.
 
-### `reply.json` — `bellman-reply/1`
+### `reply-<run8>.json` — `bellman-reply/1`
 
 **The only file an integrating app writes.** Overwritten at each step; never read back.
+
+**The filename is per-run** — `reply-` + the first 8 hex of the `run_id` (`reply-9f2c1d77.json`).
+One fixed name shared across generations would let a slow previous app atomically replace the
+next run's channel, and any "restore" by Bellman would race the current app's own writes —
+a read-check-write on a single path can always overwrite a valid reply written in between.
+Per-run names end the problem structurally: each generation owns its own file, nobody ever
+writes over anybody, and Bellman never restores anything. A write to a previous run's file is
+ingested (or `superseded`) and the stale file deleted; normally exactly one `reply-*.json`
+exists. The fire notification carries the exact path as `reply_path`, so an app never
+constructs the name.
 
 ```json
 {
@@ -317,7 +372,8 @@ Changes from today: gains `schema`, and `ts` becomes `logged_at`.
   "run_id": "9f2c…",
   "scheduled_for": "2026-07-30T05:00:00Z",
   "fired_at": "2026-07-30T05:00:00Z",
-  "status_path": "~/.bellman/timers/bulb-test-3f1a/status.json"
+  "status_path": "~/.bellman/timers/bulb-test-3f1a/status.json",
+  "reply_path": "~/.bellman/timers/bulb-test-3f1a/reply-9f2c1d77.json"
 }
 ```
 
@@ -344,9 +400,9 @@ no CLI, no log parsing.
 ~/.bellman/timers/
 ├── README.txt
 ├── bulb-test-3f1a/
-│   ├── timer.json      what the timer IS        (Bellman writes, you read)
-│   ├── status.json     the CURRENT run          (Bellman writes, everyone reads)
-│   └── reply.json      where the app answers    (the app writes, Bellman reads)
+│   ├── timer.json           what the timer IS        (Bellman writes, you read)
+│   ├── status.json          the CURRENT run          (Bellman writes, everyone reads)
+│   └── reply-9f2c1d77.json  where the app answers    (the app writes, Bellman reads)
 └── morning-backup-7b22/
 ```
 
@@ -391,8 +447,10 @@ Two cases that follow:
 The folder holds the **current** run only. When a timer fires again, `status.json` and
 `reply.json` are overwritten fresh; nothing from the previous run is kept there.
 
-There is deliberately no `runs/` directory. History already has two homes — the append-only
-`events.current.jsonl`, and the Run history page in the GUI (`ui/src/HistoryPage.svelte`). A
+There is deliberately no `runs/` directory. History has exactly **one durable home** — the
+append-only `events.current.jsonl` and its archives. The Run history page in the GUI
+(`ui/src/HistoryPage.svelte`) is a **reader** of that home, not a second copy — there is no
+independent GUI store, and wording that implies two durable homes overstates what exists. A
 third copy in the folder would buy only "browse past runs in a file manager", and would cost
 size caps, age caps, per-timer count caps, pruning and a freeze-before-wipe ordering rule.
 Not worth it.

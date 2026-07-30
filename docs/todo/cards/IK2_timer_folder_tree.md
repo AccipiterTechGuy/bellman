@@ -12,13 +12,14 @@ CLI, no log parsing.
 ~/.bellman/timers/
 ├── README.txt
 ├── bulb-test-3f1a/
-│   ├── timer.json      what the timer IS
-│   ├── status.json     the CURRENT run
-│   └── reply.json      where the app answers   (IK3)
+│   ├── timer.json           what the timer IS
+│   ├── status.json          the CURRENT run
+│   └── reply-<run8>.json    where the app answers — per-run filename   (IK3)
 ```
 
 **The folder holds the current run only.** There is no `runs/` directory and no history here:
-a new fire overwrites `status.json` and `reply.json` fresh. History lives in
+a new fire overwrites `status.json` and creates a fresh per-run reply file (the previous
+run's is deleted after ingest — see IK3). History lives in
 `events.current.jsonl` and in the GUI's Run history page, both of which already exist.
 
 ## This tree is a VIEW, not the record
@@ -30,9 +31,9 @@ request/response **channel**. Two trees, two jobs.
 
 ## Scope
 
-- `timers/<slug>-<short-id>/` with `timer.json`, `status.json`, `reply.json` (IK3) and a `README.txt`
+- `timers/<slug>-<short-id>/` with `timer.json`, `status.json`, `reply-<run8>.json` (IK3) and a `README.txt`
   at the root explaining the layout to whoever opens it. The README must state which file
-  answers the question: **`status.json` is the truth; `reply.json` is only the app's side.**
+  answers the question: **`status.json` is the truth; the reply file is only the app's side.**
   They diverge whenever Bellman judged a run (`no_ack`, watchdog expiry) and the app did not
   speak — see IK3.
 - **Slug rules identical on all three platforms.** See the verified rules below — the
