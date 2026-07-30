@@ -176,8 +176,26 @@ impl EventLog {
     }
 
     /// Convenience: open under `<data_dir>/logs` with default retention.
+    ///
+    /// Product writers should prefer [`Self::open_under_configured`], which
+    /// honors `config.json` rotation/retention knobs — this one always uses
+    /// the product defaults (tests, tooling).
     pub fn open_under(data_dir: impl AsRef<Path>) -> EventLogResult<Self> {
         Self::open(EventLogConfig::new(data_dir.as_ref().join("logs")))
+    }
+
+    /// Open under `<data_dir>/logs` honoring the operator's `config.json`:
+    /// `retention_days`, `log_rotation_max_bytes` and
+    /// `log_retention_budget_bytes`. Missing/corrupt config falls back to the
+    /// product defaults.
+    pub fn open_under_configured(data_dir: impl AsRef<Path>) -> EventLogResult<Self> {
+        let cfg = crate::app_config::AppConfig::load(data_dir.as_ref()).unwrap_or_default();
+        Self::open(
+            EventLogConfig::new(data_dir.as_ref().join("logs"))
+                .with_retention(cfg.retention())
+                .with_max_current_bytes(cfg.log_rotation_max_bytes)
+                .with_budget_bytes(cfg.log_retention_budget_bytes),
+        )
     }
 
     pub fn config(&self) -> &EventLogConfig {

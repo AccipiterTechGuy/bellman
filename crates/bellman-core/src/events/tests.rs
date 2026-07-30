@@ -314,6 +314,32 @@ fn budget_prunes_oldest_archives_but_never_current() {
 }
 
 #[test]
+fn open_under_configured_honors_config_json_knobs() {
+    // Non-default cap/budget/retention in config.json must reach the log.
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("config.json"),
+        r#"{"retention_days": 7, "log_rotation_max_bytes": 2097152, "log_retention_budget_bytes": 8388608}"#,
+    )
+    .unwrap();
+    let log = EventLog::open_under_configured(dir.path()).unwrap();
+    let cfg = log.config();
+    assert_eq!(cfg.max_current_bytes, 2 * 1024 * 1024);
+    assert_eq!(cfg.budget_bytes, 8 * 1024 * 1024);
+    assert_eq!(cfg.retention, Duration::from_secs(7 * 24 * 3600));
+
+    // Missing config.json → product defaults.
+    let dir2 = tempfile::tempdir().unwrap();
+    let log2 = EventLog::open_under_configured(dir2.path()).unwrap();
+    assert_eq!(log2.config().max_current_bytes, DEFAULT_MAX_CURRENT_BYTES);
+    assert_eq!(log2.config().budget_bytes, DEFAULT_BUDGET_BYTES);
+    assert_eq!(
+        log2.config().retention,
+        Duration::from_secs(DEFAULT_RETENTION_DAYS * 24 * 3600)
+    );
+}
+
+#[test]
 fn stale_handle_reanchors_and_never_loses_events() {
     let dir = tempfile::tempdir().unwrap();
     let logs = dir.path().join("logs");

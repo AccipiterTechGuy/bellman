@@ -276,7 +276,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             .as_ref()
             .map(|d| crate::tree::TimersTree::new(d));
         if let (Some(tree), Some(data_dir)) = (tree.as_ref(), self.config.data_dir.as_ref()) {
-            match crate::events::EventLog::open_under(data_dir) {
+            match crate::events::EventLog::open_under_configured(data_dir) {
                 Ok(mut log) => {
                     if let Err(e) = crate::tree::project_run_started(
                         tree, &self.store, timer, claim, &ctx.kind, &mut log,

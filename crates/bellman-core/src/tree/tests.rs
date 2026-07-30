@@ -378,7 +378,6 @@ fn delete_logs_cancelled_for_open_run_before_folder_removal() {
 #[test]
 fn delete_cancels_owned_run_even_with_finished_claim() {
     let (dir, mut store) = test_store();
-    let tree = TimersTree::new(dir.path());
     let timer = daily_timer(&mut store, "owned-doomed");
     store.set_timer_owner(timer.id, "lightbulb").unwrap();
     let claim = store.claim_run(timer.id, Utc::now()).unwrap();

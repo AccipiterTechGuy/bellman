@@ -17,7 +17,7 @@ mod record;
 
 pub use log::{
     EventLog, EventLogConfig, EventLogError, EventLogResult, RetainReport, CURRENT_FILE_NAME,
-    DEFAULT_BUDGET_BYTES, DEFAULT_MAX_CURRENT_BYTES,
+    DEFAULT_BUDGET_BYTES, DEFAULT_MAX_CURRENT_BYTES, DEFAULT_RETENTION_DAYS,
 };
 pub use reader::{read_events, read_events_from, ReadStats};
 pub use record::{EventRecord, RunState, EVENT_SCHEMA_V1};

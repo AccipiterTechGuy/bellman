@@ -339,7 +339,7 @@ impl SlotService {
                             tree.root().parent().map(|p| p.to_path_buf()),
                         ) {
                             // Cancel open runs FIRST, then drop the folder.
-                            match crate::events::EventLog::open_under(&data_dir) {
+                            match crate::events::EventLog::open_under_configured(&data_dir) {
                                 Ok(mut log) => {
                                     if let Err(e) = crate::tree::log_cancelled_for_open_runs(
                                         store, timer, &mut log,

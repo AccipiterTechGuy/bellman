@@ -676,7 +676,7 @@ pub(crate) fn do_create_timer(state: &AppState, input: CreateTimerInput) -> Resu
     };
 
     // Lifecycle: emit Registered event (analogous to the CLI)
-    if let Ok(mut log) = bellman_core::EventLog::open_under(&state.data_dir) {
+    if let Ok(mut log) = bellman_core::EventLog::open_under_configured(&state.data_dir) {
         let _ = log.emit(
             bellman_core::events::EventRecord::new(bellman_core::events::RunState::Registered)
                 .with_timer(timer.id, timer.name.clone())
@@ -750,7 +750,7 @@ pub fn delete_timer(state: State<'_, AppState>, id: String) -> Result<bool, Stri
     // IK2: any unresolved run is logged `cancelled` BEFORE the folder goes.
     let timer = store.get_timer(id).map_err(|e| e.to_string())?;
     if let Some(timer) = &timer {
-        if let Ok(mut log) = bellman_core::EventLog::open_under(&state.data_dir) {
+        if let Ok(mut log) = bellman_core::EventLog::open_under_configured(&state.data_dir) {
             if let Err(e) = bellman_core::log_cancelled_for_open_runs(&store, timer, &mut log) {
                 log::warn!("bellman: cancelled-run logging failed: {e}");
             }
