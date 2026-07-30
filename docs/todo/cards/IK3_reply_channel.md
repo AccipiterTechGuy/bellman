@@ -195,11 +195,13 @@ landed, which is what any list copied out of code does:
 
 Every line carries `run_id` and `timer_id`, so one run's whole story is `grep`-able by id.
 
-**One writer, and rotation goes through it** (`json_normalization.md` R11). `EventLog::open`
-is called from five independent places outside tests today, and the pruner can rename
-`events.current.jsonl` while another instance still holds it open. A line counts as durable
-when it is flushed, not when it is created — hold it in SQLite, append, flush, mark published,
-retry after a failed write or a restart. `event_id` makes the retry idempotent.
+**One interprocess writer, and rotation goes through it** (`json_normalization.md` R11 — that
+section is authoritative; this is the summary). Producers enqueue into the SQLite outbox; one
+publisher elected by an OS file lock appends and rotates. A line counts as durable when it is
+**synced** (`fdatasync`), not merely flushed — then the outbox row is marked published.
+Delivery is **at-least-once**: a crash between sync and mark-published re-appends the same
+event, so the publisher checks the tail before retrying and every reader dedupes by
+`event_id`. The id *identifies* duplicates; nothing makes a blind append idempotent.
 
 **Heartbeats and progress are NEVER logged.** Not the timestamps, not the text, not once.
 They belong to the live view only — `status.json` and the GUI. A six-hour job with a
@@ -473,6 +475,14 @@ A hand-edited `run_id` is never trusted.
 | a **previous run of this timer** | a slow app finished after the timer fired again — expected, meaningful | log `superseded` (duplicates no-op), do **not** apply it, **delete the stale file** — the current run's own file is never touched |
 | **unknown entirely** | garbage, tampering, or a hand edit | `reply_rejected` + quarantine to `bad/` |
 
+**Quarantine COPIES; it never renames or deletes the current path.** Moving the live
+app-owned file to `bad/` is the same check-then-mutate race as the banned restore: between
+Bellman's read of the bad content and its rename, the app can atomically replace the file
+with a valid reply — and the rename ships the valid reply to quarantine. Bellman already
+holds the rejected bytes from the read that condemned them: **copy those bytes** into `bad/`
+and leave the file in place, same law as the corrupt-file rule above. (Deleting a *stale*
+previous-run file is different — no current writer owns that path.)
+
 Everything else:
 
 - `app_name` must match the first acker; a second app cannot take over a run.
@@ -518,7 +528,7 @@ Everything else:
 - Duplicate reply is a no-op. Unknown `run_id`, wrong `app_name`, oversize, or a reserved
   `state` are each quarantined and change nothing.
 - **Per-run channels never collide:** with run B current, app A writes `completed` into
-  `reply-<runA8>.json`. Asserted: `superseded` logged, the stale file deleted, run B's stub
+  run A's own reply file. Asserted: `superseded` logged, the stale file deleted, run B's stub
   **byte-identical throughout** — and at no point did Bellman write over any reply file. A
   test that ever observes run B's file reverting to `state: null` fails this card.
 - **The pre-fire barrier:** app writes a valid `completed`, the next fire occurs before any
@@ -537,8 +547,14 @@ Everything else:
 - **A new `expected_secs` replaces the old** for both consumers: watchdog deadline recomputed
   from Bellman's receipt with the new value; the GUI label recalculates from the unchanged
   `fired_at`.
-- **Crash between flush and mark-published:** the event may appear twice in the file;
-  asserted that every reader (GUI, `log_query`) still counts it once, by `event_id`.
+- **Crash between sync and mark-published:** the event may appear twice in the file;
+  asserted that every reader (GUI, `log_query`) still counts it once, by `event_id`. And
+  durability means **synced** — a line is only marked published after `fdatasync`, asserted
+  against a write-failure fake, not by inspection.
+- **Quarantine copies:** with an invalid current file condemned, the app atomically replaces
+  it with a valid reply before the quarantine executes — asserted the valid reply survives in
+  place and is ingested, while `bad/` holds only the copied rejected bytes. A quarantine that
+  renames the current path fails this gate.
 - `duration_ms` is Bellman's monotonic fire→terminal-ingest elapsed — asserted with a skewed
   app clock (timestamps an hour off) producing a sane, non-negative duration.
 - A test proves a reply cannot cause execution of anything.

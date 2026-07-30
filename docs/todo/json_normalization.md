@@ -321,7 +321,7 @@ so or a watchdog the app opted into expired.
 
 **The only file an integrating app writes.** Overwritten at each step; never read back.
 
-**The filename is per-run** — `reply-` + the first 8 hex of the `run_id` (`reply-9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08.json`).
+**The filename is per-run** — `reply-` + the **full** `run_id` (`reply-9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08.json`). Full id, not a prefix: a truncated name can collide, and a colliding reuse hands a new run the path a still-alive old app holds — rebuilding the very clobber this exists to kill.
 One fixed name shared across generations would let a slow previous app atomically replace the
 next run's channel, and any "restore" by Bellman would race the current app's own writes —
 a read-check-write on a single path can always overwrite a valid reply written in between.
@@ -460,8 +460,10 @@ Two cases that follow:
 
 ## No history in the folder — a new run wipes it
 
-The folder holds the **current** run only. When a timer fires again, `status.json` and
-`reply.json` are overwritten fresh; nothing from the previous run is kept there.
+The folder holds the **current** run only. When a timer fires again, `status.json` is
+overwritten fresh and a **new** per-run reply file is created; the previous run's reply file
+is deleted after its final ingest (never overwritten — different runs never share a path).
+Nothing from the previous run is kept there.
 
 There is deliberately no `runs/` directory. History has exactly **one durable home** — the
 append-only `events.current.jsonl` and its archives. The Run history page in the GUI
