@@ -182,16 +182,47 @@ pub fn slugify(name: &str) -> String {
     slug
 }
 
-/// First 4 hex digits of the timer id — the uniqueness suffix in
+/// First 4 hex digits of the timer id — the default uniqueness suffix in
 /// `bulb-test-3f1a`.
 pub fn short_id(id: TimerId) -> String {
     let simple = id.simple().to_string();
     simple[..4].to_string()
 }
 
-/// `<slug>-<short-id>` — the folder name for a timer.
+/// `<slug>-<short-id>` — the default (4-hex) folder name for a timer. When
+/// that name is already taken by a DIFFERENT timer (same slug + same first 4
+/// hex digits), allocation lengthens the suffix — see
+/// [`TimersTree::allocate_folder`].
 pub fn folder_name(name: &str, id: TimerId) -> String {
     format!("{}-{}", slugify(name), short_id(id))
+}
+
+/// Suffix lengths tried in order when allocating a folder name. A collision
+/// (same slug + same prefix owned by another timer) lengthens the hex until
+/// the name is unique — 32 hex digits is the full UUID, so this always
+/// terminates.
+const SUFFIX_LENS: [usize; 8] = [4, 6, 8, 12, 16, 20, 28, 32];
+
+/// Read `timer_id` out of a folder's `timer.json`, if present and parseable.
+fn folder_timer_id(folder: &Path) -> Option<String> {
+    fs::read_to_string(folder.join(TIMER_FILE_NAME))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("timer_id")?.as_str().map(str::to_string))
+}
+
+/// True when a directory name looks like `<slug>-<hexsuffix>`; returns the
+/// hex suffix. The suffix is 4..=32 hex digits (see [`SUFFIX_LENS`]).
+fn folder_suffix(name: &str) -> Option<&str> {
+    let suffix = name.rsplit('-').next()?;
+    if (4..=32).contains(&suffix.len())
+        && suffix.len() < name.len()
+        && suffix.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        Some(suffix)
+    } else {
+        None
+    }
 }
 
 // ── The tree ────────────────────────────────────────────────────────────
@@ -230,11 +261,16 @@ impl TimersTree {
     }
 
     /// Locate the folder for a timer id without knowing its name (renames do
-    /// not rename folders). Matches the `-<short-id>` suffix; on the rare
-    /// 4-hex collision, disambiguates via `timer.json`'s `timer_id`.
+    /// not rename folders, and collision-allocation may have lengthened the
+    /// suffix). A candidate's hex suffix must be a PREFIX of the timer's id
+    /// (so `…-a001` and `…-a001b2` are both candidates of id `a001b2…`);
+    /// several candidates are disambiguated via `timer.json`'s `timer_id`. A
+    /// single candidate whose `timer.json` names a different timer is not
+    /// ours — the folder was allocated away in a collision and ours was
+    /// never created.
     pub fn folder_for(&self, id: TimerId) -> Option<PathBuf> {
-        let suffix = format!("-{}", short_id(id));
-        let mut matches: Vec<PathBuf> = Vec::new();
+        let hex = id.simple().to_string();
+        let mut candidates: Vec<PathBuf> = Vec::new();
         for entry in fs::read_dir(&self.root).ok()? {
             let entry = entry.ok()?;
             let path = entry.path();
@@ -243,29 +279,58 @@ impl TimersTree {
             }
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if name.ends_with(&suffix) {
-                matches.push(path);
+            if let Some(suffix) = folder_suffix(&name) {
+                if hex.starts_with(suffix) {
+                    candidates.push(path);
+                }
             }
         }
-        match matches.len() {
+        match candidates.len() {
             0 => None,
-            1 => matches.pop(),
-            _ => matches.into_iter().find(|p| {
-                fs::read_to_string(p.join(TIMER_FILE_NAME))
-                    .ok()
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                    .and_then(|v| v.get("timer_id")?.as_str().map(str::to_string))
-                    .is_some_and(|tid| tid == id.to_string())
-            }),
+            1 => {
+                let folder = candidates.pop()?;
+                match folder_timer_id(&folder) {
+                    Some(tid) if tid != id.to_string() => None,
+                    _ => Some(folder),
+                }
+            }
+            _ => candidates
+                .into_iter()
+                .find(|p| folder_timer_id(p).as_deref() == Some(id.to_string().as_str())),
         }
+    }
+
+    /// Allocate a fresh folder for `timer`, lengthening the hex suffix until
+    /// the name is unique. Idempotent for the same timer (an existing folder
+    /// whose `timer.json` names this id is reused). `create_dir` (not
+    /// `create_dir_all`) makes the existence check atomic across processes.
+    fn allocate_folder(&self, timer: &Timer) -> TreeResult<PathBuf> {
+        let slug = slugify(&timer.name);
+        let hex = timer.id.simple().to_string();
+        for len in SUFFIX_LENS {
+            let path = self.root.join(format!("{slug}-{}", &hex[..len]));
+            match fs::create_dir(&path) {
+                Ok(()) => return Ok(path),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                    if folder_timer_id(&path).as_deref() == Some(timer.id.to_string().as_str()) {
+                        return Ok(path);
+                    }
+                    // Collision with a different timer: lengthen the suffix.
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Err(TreeError::Io(format!(
+            "could not allocate a unique folder for timer {}",
+            timer.id
+        )))
     }
 
     /// Create the folder for a new timer (README + `timer.json`). Returns the
     /// folder path.
     pub fn create_for_timer(&self, timer: &Timer, owner: Option<&str>) -> TreeResult<PathBuf> {
         self.ensure_readme()?;
-        let folder = self.root.join(folder_name(&timer.name, timer.id));
-        fs::create_dir_all(&folder)?;
+        let folder = self.allocate_folder(timer)?;
         write_timer_json(&folder, timer, owner)?;
         Ok(folder)
     }
@@ -277,11 +342,7 @@ impl TimersTree {
         self.ensure_readme()?;
         let folder = match self.folder_for(timer.id) {
             Some(f) => f,
-            None => {
-                let f = self.root.join(folder_name(&timer.name, timer.id));
-                fs::create_dir_all(&f)?;
-                f
-            }
+            None => self.allocate_folder(timer)?,
         };
         write_timer_json(&folder, timer, owner)?;
         Ok(folder)
@@ -345,18 +406,21 @@ impl TimersTree {
             }
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            let Some(hex4) = name.rsplit('-').next() else {
+            // Folder suffixes are a 4..32-hex prefix of the timer UUID.
+            let Some(suffix) = folder_suffix(&name) else {
                 continue;
             };
-            // Folder ids are a 4-hex prefix of the timer UUID; collect every
-            // live id sharing the prefix before calling a folder an orphan.
-            let looks_like_timer_folder = hex4.len() == 4 && hex4.chars().all(|c| c.is_ascii_hexdigit());
-            if !looks_like_timer_folder {
-                continue;
-            }
-            let alive = live_ids
-                .iter()
-                .any(|id| id.simple().to_string().starts_with(hex4));
+            // Exact identity wins when timer.json is readable (prefix
+            // sharing between live timers must not keep a dead folder
+            // alive); otherwise fall back to the suffix-prefix check.
+            let alive = match folder_timer_id(&path) {
+                Some(tid) => live_ids
+                    .iter()
+                    .any(|id| id.to_string() == tid),
+                None => live_ids
+                    .iter()
+                    .any(|id| id.simple().to_string().starts_with(suffix)),
+            };
             if !alive {
                 fs::remove_dir_all(&path)?;
                 removed.push(path);
@@ -489,15 +553,53 @@ pub fn write_status(tree: &TimersTree, timer: &Timer, status: &RunStatus) -> Tre
 
 // ── Fire / delete projections (called from the scheduler, run_now, CRUD) ─
 
+/// The one current run that a new firing replaces or a deletion cancels, if
+/// it is still unresolved by the exact R5 test:
+///
+/// - **Owned run** (integration owner): the app lifecycle is the reply
+///   channel. Pre-IK3 nothing records a terminal app state, so the run is
+///   open until a reply closes it — the claim ledger is delivery bookkeeping
+///   only (`ClaimStatus::Completed` means `wake_delivered`, never that the
+///   app finished; see store/models.rs).
+/// - **Unowned run**: unresolved means the action claim is not finished
+///   (`claimed`).
+///
+/// `exclude_run` skips the just-claimed run when called from a fire.
+fn current_unresolved_run(
+    store: &Store,
+    timer: &Timer,
+    exclude_run: Option<Uuid>,
+) -> TreeResult<Option<RunClaim>> {
+    let owner = store.get_timer_owner(timer.id)?;
+    let runs = store.runs_for_timer(timer.id)?;
+    let latest = runs
+        .iter()
+        .rev()
+        .find(|r| Some(r.run_id) != exclude_run);
+    let Some(prev) = latest else {
+        return Ok(None);
+    };
+    let unresolved = if owner.is_some() {
+        // No terminal app state exists pre-IK3 — an owned run stays open.
+        true
+    } else {
+        prev.status == ClaimStatus::Claimed
+    };
+    Ok(unresolved.then(|| prev.clone()))
+}
+
 /// Fire-time projection, after the run claim committed and before/with the
 /// action run:
 ///
-/// 1. Any still-open previous run (`claimed`, not this run) is logged
-///    `superseded` — loudly; it means the interval is shorter than the app
-///    takes. The first firing's reply path is never overwritten: its stale
-///    reply file is deleted and the new run gets its own.
+/// 1. If the previous run (the one this firing replaces as current) is still
+///    unresolved, it is logged `superseded` — loudly; for an owned timer it
+///    means the app never reported an ending before the next firing came.
+///    The previous run's reply path is never overwritten: its stale reply
+///    file is deleted and the new run gets its own.
 /// 2. `status.json` is rewritten fresh for this run (`fired` /
-///    `fired_late` / `coalesced`).
+///    `fired_late` / `coalesced`). It is the firing snapshot — Bellman's
+///    delivery outcome stays in the claim ledger and event log; the R5
+///    `completed` / `failed` states are written only from app replies (IK3).
 /// 3. Integration-owned timers get a fresh per-run reply stub (`O_EXCL`).
 pub fn project_run_started(
     tree: &TimersTree,
@@ -510,19 +612,16 @@ pub fn project_run_started(
     let owner = store.get_timer_owner(timer.id)?;
     let folder = tree.sync_timer_json(timer, owner.as_deref())?;
 
-    // 1. Supersede still-open previous runs.
-    let runs = store.runs_for_timer(timer.id)?;
-    for run in &runs {
-        if run.run_id != claim.run_id && run.status == ClaimStatus::Claimed {
-            log.emit(
-                EventRecord::new(RunState::Superseded)
-                    .with_timer(timer.id, timer.name.clone())
-                    .with_run(run.run_id)
-                    .with_scheduled_for(run.scheduled_for)
-                    .with_message("superseded by a new firing while still unresolved"),
-            )
-            .map_err(|e| TreeError::Io(e.to_string()))?;
-        }
+    // 1. Supersede the previous run when it is still unresolved.
+    if let Some(prev) = current_unresolved_run(store, timer, Some(claim.run_id))? {
+        log.emit(
+            EventRecord::new(RunState::Superseded)
+                .with_timer(timer.id, timer.name.clone())
+                .with_run(prev.run_id)
+                .with_scheduled_for(prev.scheduled_for)
+                .with_message("superseded by a new firing while still unresolved"),
+        )
+        .map_err(|e| TreeError::Io(e.to_string()))?;
     }
     // The new run owns the channel: drop stale reply files (never overwrite),
     // then write the fresh status snapshot.
@@ -537,57 +636,26 @@ pub fn project_run_started(
     Ok(())
 }
 
-/// Run-close projection: fold the recorded outcome into `status.json`.
-/// Success → `completed` with `completed_at`; failure → `failed` with
-/// `failed_at` and the error as `reason`. `duration_ms` stays on the log
-/// event only — it is never written here.
-pub fn project_run_finished(
-    tree: &TimersTree,
-    store: &Store,
-    timer: &Timer,
-    claim: &RunClaim,
-    kind: &FireKind,
-    failure: Option<&str>,
-) -> TreeResult<()> {
-    let owner = store.get_timer_owner(timer.id)?;
-    let mut status = RunStatus::fired(timer, claim, kind, owner.as_deref());
-    let now = Utc::now();
-    match failure {
-        None => {
-            status.state = RunState::Completed.as_str().to_string();
-            status.completed_at = Some(now);
-        }
-        Some(err) => {
-            status.state = RunState::Failed.as_str().to_string();
-            status.failed_at = Some(now);
-            status.reason = Some(err.chars().take(1024).collect());
-        }
-    }
-    write_status(tree, timer, &status)
-}
-
-/// Delete-time projection, before/with the database delete: any unresolved
-/// run (`claimed` — the app lifecycle is IK3; today the claim is the open
-/// run) is logged `cancelled` FIRST, so an app whose `status.json` vanishes
-/// reads the run as cancelled, not missing.
+/// Delete-time projection, before/with the database delete: if the current
+/// run is unresolved by the exact R5 test (owned: app lifecycle open;
+/// unowned: action claim unfinished), it is logged `cancelled` FIRST, so an
+/// app whose `status.json` vanishes reads the run as cancelled, not missing.
 pub fn log_cancelled_for_open_runs(
     store: &Store,
     timer: &Timer,
     log: &mut EventLog,
 ) -> TreeResult<usize> {
     let mut n = 0;
-    for run in store.runs_for_timer(timer.id)? {
-        if run.status == ClaimStatus::Claimed {
-            log.emit(
-                EventRecord::new(RunState::Cancelled)
-                    .with_timer(timer.id, timer.name.clone())
-                    .with_run(run.run_id)
-                    .with_scheduled_for(run.scheduled_for)
-                    .with_message("timer deleted while its run was open"),
-            )
-            .map_err(|e| TreeError::Io(e.to_string()))?;
-            n += 1;
-        }
+    if let Some(run) = current_unresolved_run(store, timer, None)? {
+        log.emit(
+            EventRecord::new(RunState::Cancelled)
+                .with_timer(timer.id, timer.name.clone())
+                .with_run(run.run_id)
+                .with_scheduled_for(run.scheduled_for)
+                .with_message("timer deleted while its run was open"),
+        )
+        .map_err(|e| TreeError::Io(e.to_string()))?;
+        n += 1;
     }
     Ok(n)
 }

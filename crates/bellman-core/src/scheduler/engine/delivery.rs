@@ -334,31 +334,21 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         }
 
         if let Err(e) = action_res {
-            // IK2: fold the recorded outcome into status.json before leaving.
+            // IK2: status.json stays the firing snapshot — the delivery
+            // failure is honest in the claim ledger and the wake_failed event
+            // (R5 `failed` is reserved for app reports, IK3). timer.json
+            // still picks up the advanced next_fire.
             if let Some(tree) = tree.as_ref() {
-                if let Err(te) = crate::tree::project_run_finished(
-                    tree,
-                    &self.store,
-                    timer,
-                    claim,
-                    &ctx.kind,
-                    Some(e.as_str()),
-                ) {
-                    eprintln!("bellman: timer tree completion projection failed: {te}");
-                }
                 refresh_timer_json(tree, &self.store, timer.id);
             }
             return Err(SchedulerError::Action(e));
         }
 
-        // IK2: status.json → completed, and timer.json picks up the advanced
-        // next_fire from mark_fired/requeue above.
+        // IK2: timer.json picks up the advanced next_fire from
+        // mark_fired/requeue above. status.json intentionally stays at the
+        // firing snapshot: the R5 `completed` state is an app report (IK3),
+        // and the claim ledger's `Completed` only means wake_delivered.
         if let Some(tree) = tree.as_ref() {
-            if let Err(te) =
-                crate::tree::project_run_finished(tree, &self.store, timer, claim, &ctx.kind, None)
-            {
-                eprintln!("bellman: timer tree completion projection failed: {te}");
-            }
             refresh_timer_json(tree, &self.store, timer.id);
         }
 

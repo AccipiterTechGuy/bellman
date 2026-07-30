@@ -215,7 +215,7 @@ fn reply_stub_is_create_only_and_stale_replies_are_removed() {
 }
 
 #[test]
-fn fire_projection_writes_status_and_completed_fold() {
+fn fire_projection_writes_firing_snapshot_only() {
     let (dir, mut store) = test_store();
     let tree = TimersTree::new(dir.path());
     let timer = daily_timer(&mut store, "bulb-test");
@@ -240,31 +240,80 @@ fn fire_projection_writes_status_and_completed_fold() {
     assert!(v.get("duration_ms").is_none(), "duration_ms lives on the log event only");
     assert!(v.get("app_name").is_none());
 
-    // The run completes: state folds to completed with completed_at.
-    project_run_finished(&tree, &store, &timer, &claim, &FireKind::OnTime, None).unwrap();
+    // The claim closing (wake delivered) does NOT fold app states into
+    // status.json: R5 `completed`/`failed` are app reports (IK3). The
+    // snapshot stays at fired.
+    store.complete_run(claim.run_id).unwrap();
     let v: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(tree.folder_for(timer.id).unwrap().join(STATUS_FILE_NAME))
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(v["state"], "completed");
-    assert!(v["completed_at"].is_string());
-    assert!(v.get("duration_ms").is_none());
+    assert_eq!(v["state"], "fired");
+    assert!(v.get("completed_at").is_none());
+}
 
-    // Failure path: failed with failed_at + reason.
+#[test]
+fn owned_timer_refire_supersedes_even_when_claim_completed() {
+    let (dir, mut store) = test_store();
+    let tree = TimersTree::new(dir.path());
+    let timer = daily_timer(&mut store, "owned");
+    store.set_timer_owner(timer.id, "lightbulb").unwrap();
+    tree.create_for_timer(&timer, Some("lightbulb")).unwrap();
+    let mut log = EventLog::open(crate::events::EventLogConfig::new(dir.path().join("logs"))).unwrap();
+
+    // First fire, and its wake action WAS delivered (claim completed) — but
+    // the app never replied, so the run is still unresolved in R5 terms.
+    let claim1 = store.claim_run(timer.id, Utc::now()).unwrap();
+    project_run_started(&tree, &store, &timer, &claim1, &FireKind::OnTime, &mut log).unwrap();
+    store.complete_run(claim1.run_id).unwrap();
+
     let claim2 = store
-        .claim_run(timer.id, scheduled_for + chrono::Duration::days(1))
+        .claim_run(timer.id, Utc::now() + chrono::Duration::days(1))
         .unwrap();
     project_run_started(&tree, &store, &timer, &claim2, &FireKind::OnTime, &mut log).unwrap();
-    project_run_finished(&tree, &store, &timer, &claim2, &FireKind::OnTime, Some("boom")).unwrap();
-    let v: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(tree.folder_for(timer.id).unwrap().join(STATUS_FILE_NAME))
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(v["state"], "failed");
-    assert!(v["failed_at"].is_string());
-    assert_eq!(v["reason"], "boom");
+
+    let (recs, _) = crate::events::read_events(log.current_path()).unwrap();
+    let sup: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Superseded).collect();
+    assert_eq!(
+        sup.len(),
+        1,
+        "an owned run with no app terminal state is unresolved — claim status is delivery bookkeeping only"
+    );
+    assert_eq!(sup[0].run_id, Some(claim1.run_id));
+}
+
+#[test]
+fn unowned_timer_refire_supersedes_only_an_unfinished_claim() {
+    let (dir, mut store) = test_store();
+    let tree = TimersTree::new(dir.path());
+    let timer = daily_timer(&mut store, "plain");
+    tree.create_for_timer(&timer, None).unwrap();
+    let mut log = EventLog::open(crate::events::EventLogConfig::new(dir.path().join("logs"))).unwrap();
+
+    // First fire completed its action claim → resolved → no superseded.
+    let claim1 = store.claim_run(timer.id, Utc::now()).unwrap();
+    project_run_started(&tree, &store, &timer, &claim1, &FireKind::OnTime, &mut log).unwrap();
+    store.complete_run(claim1.run_id).unwrap();
+    let claim2 = store
+        .claim_run(timer.id, Utc::now() + chrono::Duration::days(1))
+        .unwrap();
+    project_run_started(&tree, &store, &timer, &claim2, &FireKind::OnTime, &mut log).unwrap();
+    let (recs, _) = crate::events::read_events(log.current_path()).unwrap();
+    assert!(
+        !recs.iter().any(|r| r.kind == RunState::Superseded),
+        "finished unowned claim is resolved"
+    );
+
+    // Third fire while the second claim is still open → superseded.
+    let claim3 = store
+        .claim_run(timer.id, Utc::now() + chrono::Duration::days(2))
+        .unwrap();
+    project_run_started(&tree, &store, &timer, &claim3, &FireKind::OnTime, &mut log).unwrap();
+    let (recs, _) = crate::events::read_events(log.current_path()).unwrap();
+    let sup: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Superseded).collect();
+    assert_eq!(sup.len(), 1);
+    assert_eq!(sup[0].run_id, Some(claim2.run_id));
 }
 
 #[test]
@@ -324,6 +373,94 @@ fn delete_logs_cancelled_for_open_run_before_folder_removal() {
     assert_eq!(cancel.len(), 1);
     assert_eq!(cancel[0].run_id, Some(claim.run_id));
     assert!(tree.folder_for(timer.id).is_none());
+}
+
+#[test]
+fn delete_cancels_owned_run_even_with_finished_claim() {
+    let (dir, mut store) = test_store();
+    let tree = TimersTree::new(dir.path());
+    let timer = daily_timer(&mut store, "owned-doomed");
+    store.set_timer_owner(timer.id, "lightbulb").unwrap();
+    let claim = store.claim_run(timer.id, Utc::now()).unwrap();
+    store.complete_run(claim.run_id).unwrap();
+    let mut log = EventLog::open(crate::events::EventLogConfig::new(dir.path().join("logs"))).unwrap();
+
+    // The app never spoke: the owned run is still open in R5 terms.
+    let n = log_cancelled_for_open_runs(&store, &timer, &mut log).unwrap();
+    assert_eq!(n, 1);
+    let (recs, _) = crate::events::read_events(log.current_path()).unwrap();
+    let cancel: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Cancelled).collect();
+    assert_eq!(cancel.len(), 1);
+    assert_eq!(cancel[0].run_id, Some(claim.run_id));
+}
+
+#[test]
+fn colliding_four_hex_ids_get_distinct_folders() {
+    let (dir, mut store) = test_store();
+    let tree = TimersTree::new(dir.path());
+    // Same name AND same first four hex digits — the worst-case collision.
+    let id_a = Uuid::parse_str("a001b200-0000-4000-8000-00000000000a").unwrap();
+    let id_b = Uuid::parse_str("a001f000-0000-4000-8000-00000000000b").unwrap();
+    let occ = || {
+        Occurrence::new(
+            OccurrenceKind::Daily {
+                at: NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            },
+            "UTC",
+        )
+        .unwrap()
+    };
+    let mut new_a = NewTimer::new("same-name", occ());
+    new_a.id = Some(id_a);
+    let mut new_b = NewTimer::new("same-name", occ());
+    new_b.id = Some(id_b);
+    let timer_a = store.create_timer(new_a).unwrap();
+    let timer_b = store.create_timer(new_b).unwrap();
+
+    let folder_a = tree.create_for_timer(&timer_a, None).unwrap();
+    let folder_b = tree.create_for_timer(&timer_b, None).unwrap();
+
+    assert_ne!(folder_a, folder_b, "collision must not share a folder");
+    assert!(folder_a.is_dir() && folder_b.is_dir());
+    // Each folder's timer.json names its own timer.
+    let va: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(folder_a.join(TIMER_FILE_NAME)).unwrap(),
+    )
+    .unwrap();
+    let vb: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(folder_b.join(TIMER_FILE_NAME)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(va["timer_id"], id_a.to_string());
+    assert_eq!(vb["timer_id"], id_b.to_string());
+    // Resolution finds each timer's own folder.
+    assert_eq!(tree.folder_for(id_a).unwrap(), folder_a);
+    assert_eq!(tree.folder_for(id_b).unwrap(), folder_b);
+    // Idempotent re-create reuses the same folder (no suffix growth).
+    assert_eq!(tree.create_for_timer(&timer_b, None).unwrap(), folder_b);
+    // Renames keep both folders stable.
+    let renamed = store
+        .update_timer(crate::store::TimerUpdate {
+            id: id_b,
+            expected_revision: timer_b.revision,
+            patch: crate::store::TimerPatch {
+                name: Some("other-name".into()),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    assert_eq!(tree.sync_timer_json(&renamed, None).unwrap(), folder_b);
+    // Orphan sweep keeps both (their suffixes are prefixes of live ids).
+    let live_ids: HashSet<TimerId> = [id_a, id_b].into_iter().collect();
+    assert!(tree.sweep_orphans(&live_ids).unwrap().is_empty());
+    // Delete one timer: its own folder is swept, the prefix-sharing
+    // survivor's folder stays.
+    store.delete_timer(id_b).unwrap();
+    let live_ids: HashSet<TimerId> = [id_a].into_iter().collect();
+    let removed = tree.sweep_orphans(&live_ids).unwrap();
+    assert_eq!(removed, vec![folder_b.clone()]);
+    assert!(!folder_b.exists());
+    assert_eq!(tree.folder_for(id_a).unwrap(), folder_a);
 }
 
 #[test]

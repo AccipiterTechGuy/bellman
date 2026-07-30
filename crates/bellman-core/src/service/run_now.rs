@@ -165,19 +165,9 @@ pub fn run_now(
     }
 
     if let Err(e) = action_res {
-        // IK2: status.json must still fold the failure before we bail.
-        if let Some(tree) = &tree {
-            if let Err(te) = crate::tree::project_run_finished(
-                tree,
-                store,
-                &timer,
-                &claim,
-                &FireKind::OnTime,
-                Some(e.as_str()),
-            ) {
-                eprintln!("bellman: timer tree completion projection failed: {te}");
-            }
-        }
+        // IK2: status.json stays the firing snapshot — the delivery failure is
+        // honest in the claim ledger and the wake_failed event; R5 `failed`
+        // is reserved for app reports (IK3).
         return Err(RunNowError::Action(e));
     }
 
@@ -197,14 +187,10 @@ pub fn run_now(
         })
         .map_err(RunNowError::Store)?;
 
-    // IK2: fold the outcome into status.json and refresh timer.json with the
-    // advanced next_fire. View-only — errors surface but never fail the run.
+    // IK2: refresh timer.json with the advanced next_fire. status.json stays
+    // the firing snapshot: the R5 `completed` state is an app report (IK3),
+    // and the claim ledger's `Completed` only means wake_delivered.
     if let Some(tree) = &tree {
-        if let Err(e) =
-            crate::tree::project_run_finished(tree, store, &timer, &claim, &FireKind::OnTime, None)
-        {
-            eprintln!("bellman: timer tree completion projection failed: {e}");
-        }
         let owner = store.get_timer_owner(timer.id).ok().flatten();
         if let Err(e) = tree.sync_timer_json(&timer, owner.as_deref()) {
             eprintln!("bellman: timer.json refresh failed: {e}");
