@@ -36,9 +36,11 @@ pub use notification::{
     FIRES_DIR_NAME, FIRE_SCHEMA_V1,
 };
 pub use watcher::{
-    barrier_read, poll_once, publish_fire_notification, reconcile, startup_scan, InvalidTracker,
-    PollStats, DEFAULT_DEBOUNCE, DEFAULT_POLL_INTERVAL, RECONCILE_EVERY_POLLS,
+    barrier_read, poll_once, publish_fire_notification, reconcile, startup_scan, BarrierRead,
+    InvalidTracker, PollStats, DEFAULT_DEBOUNCE, DEFAULT_POLL_INTERVAL, RECONCILE_EVERY_POLLS,
 };
+#[allow(unused_imports)]
+pub(crate) use watcher::quarantine_rejected_bytes;
 
 #[cfg(test)]
 mod tests;

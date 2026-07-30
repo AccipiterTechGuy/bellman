@@ -29,10 +29,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             if let Some(nf) = t.next_fire_utc {
                 // Heap uses execution time (with jitter); display stays clean.
                 let exec_at = apply_execution_jitter(t.id, nf, t.jitter_secs);
-                self.heap.push(Reverse(HeapEntry {
-                    fire_at: exec_at,
-                    timer_id: t.id,
-                }));
+                self.heap.push(Reverse(HeapEntry::fire(exec_at, t.id)));
                 seen.insert(t.id);
             }
         }
@@ -47,10 +44,31 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             }
             if let Some(nf) = t.next_fire_utc {
                 let exec_at = apply_execution_jitter(t.id, nf, t.jitter_secs);
-                self.heap.push(Reverse(HeapEntry {
-                    fire_at: exec_at,
-                    timer_id: t.id,
-                }));
+                self.heap.push(Reverse(HeapEntry::fire(exec_at, t.id)));
+            }
+        }
+
+        // Re-arm lifecycle deadline entries (IK3): the rebuild clears the
+        // heap, so pickup/watchdog deadlines would otherwise be lost. The
+        // wall estimate converts the monotonic remainder; on wake the
+        // monotonic book is re-checked anyway.
+        if let Some(engine) = self.config.reply_engine() {
+            let book: Vec<(uuid::Uuid, _)> = engine
+                .deadlines
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .entries
+                .iter()
+                .map(|(id, d)| (*id, *d))
+                .collect();
+            let mono_now = std::time::Instant::now();
+            for (run_id, deadline) in book {
+                let remaining = deadline.at.saturating_duration_since(mono_now);
+                let wall_at = now
+                    + ChronoDuration::from_std(remaining)
+                        .unwrap_or_else(|_| ChronoDuration::zero());
+                self.heap
+                    .push(Reverse(HeapEntry::deadline(wall_at, run_id, deadline.kind)));
             }
         }
         Ok(())
@@ -181,10 +199,19 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             .is_none_or(|h| exec_at <= now + h);
         let force = timer.as_ref().is_some_and(is_high_frequency);
         if horizon_ok || force {
-            self.heap.push(Reverse(HeapEntry {
-                fire_at: exec_at,
-                timer_id,
-            }));
+            self.heap.push(Reverse(HeapEntry::fire(exec_at, timer_id)));
         }
+    }
+
+    /// Arm a lifecycle deadline heap entry (IK3). Lifecycle deadlines are
+    /// not horizon-limited: the scheduler must wake for them regardless.
+    pub(super) fn push_deadline(
+        &mut self,
+        run_id: uuid::Uuid,
+        kind: crate::reply::DeadlineKind,
+        wall_at: DateTime<Utc>,
+    ) {
+        self.heap
+            .push(Reverse(HeapEntry::deadline(wall_at, run_id, kind)));
     }
 }

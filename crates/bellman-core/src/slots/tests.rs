@@ -930,3 +930,62 @@ fn cross_slot_id_forge_cannot_overwrite_foreign_done() {
     assert_eq!(timers[0].name, "legit");
     let _ = stub_req;
 }
+
+#[test]
+fn slot_delete_cancels_an_open_app_run_even_with_a_finished_claim() {
+    let (dir, mut store, service) = open_harness();
+    let service = service.with_timers_tree(crate::tree::TimersTree::new(dir.path()));
+
+    // Owned timer via the slot path.
+    let req = make_add_request("app-a", "owned-run", "interval", None, Some(60));
+    service.publish(req).unwrap();
+    service.poll(&mut store).unwrap();
+    let timer = store.list_timers().unwrap()[0].clone();
+
+    // A run whose ACTION claim is finished (wake delivered) but whose app
+    // lifecycle is still open (state running). This is exactly the case the
+    // old post-commit ordering lost: owner cleared before the cancel check.
+    let claim = store.claim_run(timer.id, Utc::now()).unwrap();
+    store.complete_run(claim.run_id).unwrap();
+    let mut row = crate::store::RunStateRow::fired(
+        claim.run_id,
+        timer.id,
+        "app-a",
+        "fired",
+        Utc::now(),
+        Utc::now() + chrono::Duration::seconds(60),
+    );
+    row.state = "running".to_string();
+    store.insert_run_state(&row).unwrap();
+
+    // DELETE by the owner.
+    let del = SlotRequest {
+        schema: SCHEMA_V1.to_string(),
+        slot_id: String::new(),
+        request_id: Some(Uuid::new_v4().to_string()),
+        logged_at: Some(Utc::now()),
+        operation: Some(SlotOperation::Delete),
+        payload: Some(serde_json::json!({
+            "app_name": "app-a",
+            "timer_id": timer.id
+        })),
+    };
+    service.publish(del).unwrap();
+    service.poll(&mut store).unwrap();
+    assert!(store.get_timer(timer.id).unwrap().is_none());
+
+    // The cancelled event committed WITH the delete: find it in the outbox.
+    let pending = store.pending_events(100).unwrap();
+    let cancelled: Vec<_> = pending
+        .iter()
+        .filter_map(|(_, payload)| serde_json::from_str::<crate::events::EventRecord>(payload).ok())
+        .filter(|e| e.kind == crate::events::RunState::Cancelled && e.run_id == Some(claim.run_id))
+        .collect();
+    assert_eq!(cancelled.len(), 1, "cancelled committed with the delete");
+
+    // And the lifecycle row is closed — its deadlines must not fire later.
+    let row = store.get_run_state(claim.run_id).unwrap().unwrap();
+    assert_eq!(row.state, "cancelled");
+    assert!(row.pickup_deadline.is_none());
+    assert!(row.watchdog_deadline.is_none());
+}

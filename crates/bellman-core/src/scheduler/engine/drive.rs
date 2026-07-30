@@ -107,6 +107,13 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 Ok(ControlMsg::SetPauseAll(paused)) => {
                     self.pause_all = paused;
                 }
+                Ok(ControlMsg::ArmDeadline {
+                    run_id,
+                    kind,
+                    wall_at,
+                }) => {
+                    self.push_deadline(run_id, kind, wall_at);
+                }
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }
         }
@@ -282,6 +289,13 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             ControlMsg::SetPauseAll(paused) => {
                 self.pause_all = paused;
             }
+            ControlMsg::ArmDeadline {
+                run_id,
+                kind,
+                wall_at,
+            } => {
+                self.push_deadline(run_id, kind, wall_at);
+            }
         }
         // Drain any further queued control messages without sleeping.
         loop {
@@ -295,6 +309,13 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 }
                 Ok(ControlMsg::SetPauseAll(paused)) => {
                     self.pause_all = paused;
+                }
+                Ok(ControlMsg::ArmDeadline {
+                    run_id,
+                    kind,
+                    wall_at,
+                }) => {
+                    self.push_deadline(run_id, kind, wall_at);
                 }
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }

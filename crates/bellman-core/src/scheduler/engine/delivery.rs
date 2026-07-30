@@ -243,7 +243,22 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                     &engine,
                     now,
                 ) {
-                    Ok(c) => c,
+                    Ok(c) => {
+                        // Arm the pickup deadline on the heap (IK3): the
+                        // scheduler wakes at the exact deadline — the wall
+                        // time is the wake hint, the monotonic book decides.
+                        if self.store.get_run_state(c.run_id)?.is_some() {
+                            let wall_at = c.claimed_at
+                                + chrono::Duration::from_std(self.config.pickup_grace)
+                                    .unwrap_or_else(|_| chrono::Duration::seconds(60));
+                            self.push_deadline(
+                                c.run_id,
+                                crate::reply::DeadlineKind::Pickup,
+                                wall_at,
+                            );
+                        }
+                        c
+                    }
                     Err(crate::tree::TreeError::Store(StoreError::AlreadyClaimed {
                         timer_id,
                         scheduled_for,

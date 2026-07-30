@@ -175,6 +175,11 @@ pub struct WatchConfig {
     pub db_path: PathBuf,
     /// The reply engine; `None` runs the slot channel only.
     pub reply_engine: Option<crate::reply::ReplyEngine>,
+    /// Scheduler control handle for deadline-heap hints (IK3): armed
+    /// pickup/watchdog deadlines are forwarded so the scheduler wakes at the
+    /// exact instant. `None` (no scheduler in this process) leaves the
+    /// periodic poll as the deadline driver — always correct, just coarser.
+    pub scheduler: Option<crate::scheduler::ControlHandle>,
     /// Periodic rescan cadence — also the deadline granularity and the
     /// publisher safety tick (R11 requires no slower than 1 s).
     pub poll_interval: Duration,
@@ -290,6 +295,14 @@ fn run_watch_loop(cfg: WatchConfig, stop_rx: mpsc::Receiver<()>) -> SlotResult<(
             );
             if stats.errors > 0 {
                 eprintln!("bellman: watcher: reply pass: {} error(s)", stats.errors);
+            }
+            // Forward armed deadlines to the scheduler heap so it wakes at
+            // the exact instant instead of the next poll tick.
+            let hints = engine.take_deadline_hints();
+            if let Some(scheduler) = &cfg.scheduler {
+                for (run_id, kind, wall_at) in hints {
+                    scheduler.arm_deadline(run_id, kind, wall_at);
+                }
             }
             polls += 1;
             if polls.is_multiple_of(crate::reply::RECONCILE_EVERY_POLLS) {

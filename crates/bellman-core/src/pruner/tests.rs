@@ -481,3 +481,47 @@ fn startup_catchup_when_last_prune_stale() {
     assert!(notes.iter().any(|n| n.contains("prune catch-up")));
     assert!(store.get_timer(system_prune_id()).unwrap().is_some());
 }
+
+#[test]
+fn prune_with_lease_elsewhere_reports_skipped_and_never_stamps_last_prune() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path();
+    let mut store = Store::open_with(data.join("timers.db"), OpenOptions {
+        refuse_network_fs: false,
+        ..OpenOptions::default()
+    })
+    .unwrap();
+
+    // The "live watcher" publisher holds the lease across the whole test.
+    let mut watcher_publisher =
+        EventPublisher::with_config(EventLogConfig::new(data.join("logs"))).unwrap();
+    assert!(watcher_publisher.ensure_leadership().unwrap());
+
+    // Seed one event so rotation would have work to do.
+    store
+        .enqueue_event(&EventRecord::new(RunState::Fired).with_message("needs-rotation"))
+        .unwrap();
+
+    // The scheduled prune's own publisher cannot lead.
+    let mut prune_publisher =
+        EventPublisher::with_config(EventLogConfig::new(data.join("logs"))).unwrap();
+    let cfg = PruneConfig {
+        interval: Duration::from_secs(0),
+        ..PruneConfig::default()
+    };
+    let report = run_prune(&mut store, &mut prune_publisher, &cfg, Utc::now(), true, None).unwrap();
+    assert!(report.skipped_not_leader, "follower prune reports the skip");
+    assert!(report.archived.is_none(), "nothing was rotated");
+    assert!(
+        store.meta().unwrap().last_prune.is_none(),
+        "last_prune must NOT be stamped when maintenance was not performed"
+    );
+
+    // The watcher releases at the end of its cycle; the next scheduled
+    // prune wins the lease and really rotates.
+    watcher_publisher.publish_cycle(&store);
+    let report = run_prune(&mut store, &mut prune_publisher, &cfg, Utc::now(), true, None).unwrap();
+    assert!(!report.skipped_not_leader);
+    assert!(report.archived.is_some(), "rotation happened once the lease was free");
+    assert!(store.meta().unwrap().last_prune.is_some());
+}

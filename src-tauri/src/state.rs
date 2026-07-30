@@ -257,7 +257,7 @@ impl AppState {
         };
         sched.boot().expect("scheduler boot");
         let handle = sched.control_handle();
-        *self.control_handle.lock() = Some(handle);
+        *self.control_handle.lock() = Some(handle.clone());
 
         // IK3: the ONE background watcher — slot channel, reply channel
         // (ingest, monotonic deadlines, reconciler) and the R11 publisher
@@ -276,6 +276,7 @@ impl AppState {
                 data_dir: self.data_dir.clone(),
                 db_path: self.data_dir.join("timers.db"),
                 reply_engine: Some(engine),
+                scheduler: Some(handle),
                 poll_interval: bellman_core::reply::DEFAULT_POLL_INTERVAL,
             }) {
                 Ok(stop) => *self.reply_watcher.lock() = Some(stop),

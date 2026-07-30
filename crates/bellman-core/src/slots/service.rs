@@ -7,6 +7,7 @@ use super::envelope::{
 use super::error::{SlotError, SlotResult};
 use super::layout::{SlotLayout, DEFAULT_DONE_RETENTION, DEFAULT_ORPHAN_AGE, MIN_FREE_SLOTS};
 use super::payload::{new_timer_from_payload, patch_from_payload};
+use crate::reply::RunDb;
 use crate::store::{SlotRequestRecord, Store, TimerId, TimerUpdate};
 use chrono::Utc;
 use rusqlite::Transaction;
@@ -295,14 +296,30 @@ impl SlotService {
             .ok_or_else(|| SlotError::Invalid("missing operation".into()))?;
         let max_events = self.config.max_events;
 
-        // IK2: for delete, snapshot the timer row pre-commit so the open-run
-        // `cancelled` events can be logged before the folder goes.
+        // R10: for delete, snapshot the timer row pre-commit AND acquire the
+        // per-timer gate BEFORE the delete transaction — required, not
+        // optional; a lock failure aborts the request.
         let pre_delete_timer = if self.timers_tree.is_some() && operation == SlotOperation::Delete {
             req.payload
                 .as_ref()
                 .and_then(|p| serde_json::from_value::<SlotPayload>(p.clone()).ok())
                 .and_then(|p| p.resolved_timer_id())
                 .and_then(|tid| store.get_timer(tid).ok().flatten())
+        } else {
+            None
+        };
+        let _delete_gate = if let (SlotOperation::Delete, Some(timer)) =
+            (operation, pre_delete_timer.as_ref())
+        {
+            let data_dir = store
+                .path()
+                .parent()
+                .map(|p| p.to_path_buf())
+                .ok_or_else(|| SlotError::Internal("store has no data dir".into()))?;
+            Some(
+                crate::reply::gate::acquire(&data_dir, timer.id)
+                    .map_err(|e| SlotError::Internal(format!("per-timer gate: {e}")))?,
+            )
         } else {
             None
         };
@@ -385,19 +402,10 @@ impl SlotService {
                         }
                     }
                     SlotOperation::Delete => {
-                        if let (Some(timer), Some(data_dir)) = (
-                            pre_delete_timer.as_ref(),
-                            tree.root().parent().map(|p| p.to_path_buf()),
-                        ) {
-                            // Cancel open runs FIRST, then drop the folder.
-                            // R10: deletion shares the per-timer gate.
-                            let _gate =
-                                crate::reply::gate::acquire(&data_dir, timer.id).ok();
-                            if let Err(e) =
-                                crate::tree::log_cancelled_for_open_runs(store, timer)
-                            {
-                                eprintln!("bellman: cancelled-run logging failed: {e}");
-                            }
+                        // The `cancelled` transition committed inside the
+                        // delete transaction (see apply_request_tx); only the
+                        // folder removal remains, after the commit.
+                        if let Some(timer) = pre_delete_timer.as_ref() {
                             if let Err(e) = tree.remove_for(timer.id) {
                                 eprintln!("bellman: timer folder removal failed: {e}");
                             }
@@ -562,7 +570,48 @@ fn apply_request_tx(
                 SlotError::Invalid("delete requires payload.timer_id (or id)".into())
             })?;
             check_ownership_tx(tx, timer_id, &app_name)?;
+            let timer = Store::get_timer_in_tx(tx, timer_id).map_err(SlotError::from)?;
             let events = events_for_tx(tx, timer_id, max_events)?;
+
+            // R10: cancel the open run INSIDE the delete transaction —
+            // cancelled event + lifecycle close + timer/owner/cursor delete
+            // commit together. The unresolved test reads owner and run state
+            // BEFORE anything is deleted, so an owned run with a finished
+            // action claim but an open app lifecycle is still cancelled.
+            if let Some(timer) = &timer {
+                let prev = crate::store::runs_for_timer_conn(tx, timer_id)
+                    .map_err(SlotError::from)?
+                    .last()
+                    .cloned();
+                if let Some(prev) = &prev {
+                    let row = crate::store::get_run_state_conn(tx, prev.run_id)
+                        .map_err(SlotError::from)?;
+                    let unresolved = match &row {
+                        Some(row) => !row.is_terminal(),
+                        // Ownership was just proven — an owned run without a
+                        // lifecycle row is conservatively open (IK3 rule).
+                        None => true,
+                    };
+                    if unresolved {
+                        tx.enqueue_event(
+                            &crate::events::EventRecord::new(crate::events::RunState::Cancelled)
+                                .with_timer(timer.id, timer.name.clone())
+                                .with_run(prev.run_id)
+                                .with_scheduled_for(prev.scheduled_for)
+                                .with_message("timer deleted while its run was open"),
+                        )
+                        .map_err(SlotError::from)?;
+                        if let Some(mut row) = row {
+                            row.state = crate::events::RunState::Cancelled.as_str().to_string();
+                            row.pickup_deadline = None;
+                            row.watchdog_deadline = None;
+                            crate::store::update_run_state_conn(tx, &row)
+                                .map_err(SlotError::from)?;
+                        }
+                    }
+                }
+            }
+
             let existed = Store::delete_timer_in_tx(tx, timer_id).map_err(SlotError::from)?;
             Store::clear_timer_owner_in_tx(tx, timer_id).map_err(SlotError::from)?;
             // Drop ack cursor with the timer.

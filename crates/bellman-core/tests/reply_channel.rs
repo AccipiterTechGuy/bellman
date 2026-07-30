@@ -156,6 +156,7 @@ fn end_to_end_run_now_reply_mirror_and_fire_notification() {
         data_dir: e.data_dir().to_path_buf(),
         db_path: e.data_dir().join("timers.db"),
         reply_engine: Some(engine),
+        scheduler: None,
         poll_interval: Duration::from_millis(100),
     })
     .unwrap();
@@ -243,6 +244,7 @@ fn end_to_end_no_ack_when_the_app_never_answers() {
         data_dir: e.data_dir().to_path_buf(),
         db_path: e.data_dir().join("timers.db"),
         reply_engine: Some(engine),
+        scheduler: None,
         poll_interval: Duration::from_millis(100),
     })
     .unwrap();

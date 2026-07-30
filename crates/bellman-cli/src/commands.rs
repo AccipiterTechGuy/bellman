@@ -446,18 +446,19 @@ pub fn rm(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> {
         e
     })?;
     let timer = resolve_timer(&store, name_or_id).map_err(|e| e.with_command(CMD))?;
-    // IK2: any unresolved run is logged `cancelled` BEFORE the folder goes.
-    // R10: deletion is a lifecycle mutator — it shares the per-timer gate
-    // with reply ingest and deadline transitions.
-    let _gate = db
-        .parent()
-        .and_then(|d| bellman_core::reply::gate::acquire(d, timer.id).ok());
-    if let Err(e) = bellman_core::log_cancelled_for_open_runs(&store, &timer) {
-        eprintln!("bellman: cancelled-run logging failed: {e}");
-    }
-    let deleted = store
-        .delete_timer(timer.id)
-        .map_err(|e| e.with_command(CMD))?;
+    // R10: deletion is a lifecycle mutator — the per-timer gate is REQUIRED;
+    // a lock failure aborts the delete. The cancelled event, lifecycle close
+    // and timer/owner/cursor deletes then commit in ONE transaction.
+    let data_dir = db.parent().map(|p| p.to_path_buf());
+    let _gate = match &data_dir {
+        Some(d) => Some(
+            bellman_core::reply::gate::acquire(d, timer.id)
+                .map_err(|e| CliError::new(CMD, "gate", format!("per-timer gate: {e}")))?,
+        ),
+        None => None,
+    };
+    let (deleted, _cancelled) = bellman_core::tree::delete_timer_lifecycle(&mut store, &timer)
+        .map_err(|e| CliError::new(CMD, "store", e.to_string()))?;
     if !deleted {
         return Err(CliError::new(
             CMD,

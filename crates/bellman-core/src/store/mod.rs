@@ -1424,6 +1424,52 @@ fn occ_valid_until(occ: &Occurrence) -> Option<DateTime<Utc>> {
 // `Transaction` (Deref) — so the R10 fire transaction can compose claim,
 // lifecycle and outbox writes into ONE atomic commit.
 
+/// A `BEGIN IMMEDIATE` guard usable from `&Store` (rusqlite's `transaction`
+/// needs `&mut`, and `unchecked_transaction` is deferred-only). Commits
+/// explicitly; rolls back on drop otherwise. The busy_timeout applies to
+/// the initial lock acquisition as usual.
+pub(crate) struct ImmediateTx<'c> {
+    conn: &'c Connection,
+    done: bool,
+}
+
+impl<'c> ImmediateTx<'c> {
+    pub(crate) fn begin(conn: &'c Connection) -> StoreResult<Self> {
+        conn.execute_batch("BEGIN IMMEDIATE")
+            .map_err(StoreError::from)?;
+        Ok(Self { conn, done: false })
+    }
+
+    pub(crate) fn commit(mut self) -> StoreResult<()> {
+        self.conn.execute_batch("COMMIT").map_err(StoreError::from)?;
+        self.done = true;
+        Ok(())
+    }
+}
+
+impl Drop for ImmediateTx<'_> {
+    fn drop(&mut self) {
+        if !self.done {
+            let _ = self.conn.execute_batch("ROLLBACK");
+        }
+    }
+}
+
+impl std::ops::Deref for ImmediateTx<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.conn
+    }
+}
+
+impl Store {
+    /// Begin an IMMEDIATE transaction from a shared store reference (the
+    /// reply engine's per-transition atomicity — R10).
+    pub(crate) fn immediate_tx(&self) -> StoreResult<ImmediateTx<'_>> {
+        ImmediateTx::begin(&self.conn)
+    }
+}
+
 /// The claim insert: new run id + durable event_sequence, in the caller's
 /// transaction/connection. `AlreadyClaimed` on the UNIQUE guard.
 pub(crate) fn claim_run_conn(

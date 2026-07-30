@@ -145,63 +145,16 @@ pub fn list_log_tail(
     timer_id: Option<String>,
     limit: Option<usize>,
 ) -> Result<LogTailDto, String> {
-    use std::path::Path;
     let logs_dir = state.data_dir.join("logs");
-    let path = logs_dir.join("events.current.jsonl");
-    if !Path::new(&path).exists() {
-        return Ok(LogTailDto {
-            events: vec![],
-            total_records: 0,
-            skipped: 0,
-        });
-    }
     let tid = match timer_id.as_deref() {
         None | Some("") => None,
         Some(s) => Some(Uuid::from_str(s).map_err(|e| format!("invalid timer_id: {e}"))?),
     };
-    let (mut events, stats) =
-        bellman_core::read_log_tail(&path, tid, limit).map_err(|e| e.to_string())?;
-
-    // IK2: archives hold the retention window — when the live tail does not
-    // fill the requested limit, backfill from the newest rotated archives
-    // (plain and gzip both read transparently).
-    if let Some(n) = limit {
-        if events.len() < n {
-            let mut archive_paths: Vec<std::path::PathBuf> = std::fs::read_dir(logs_dir.join("archive"))
-                .map(|rd| {
-                    rd.filter_map(|e| e.ok())
-                        .map(|e| e.path())
-                        .filter(|p| {
-                            p.is_file()
-                                && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
-                                    n.starts_with("events-")
-                                        && (n.ends_with(".jsonl") || n.ends_with(".jsonl.gz"))
-                                })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            // Newest archive first.
-            archive_paths.sort();
-            archive_paths.reverse();
-            let mut older: Vec<bellman_core::events::EventRecord> = Vec::new();
-            for p in archive_paths {
-                if events.len() + older.len() >= n {
-                    break;
-                }
-                if let Ok((recs, _)) = bellman_core::events::read_events(&p) {
-                    older.extend(recs);
-                }
-            }
-            if let Some(id) = tid {
-                older.retain(|r| r.timer_id == Some(id));
-            }
-            // Archives are older than current — they go first.
-            older.append(&mut events);
-            let total = older.len();
-            events = older.into_iter().skip(total.saturating_sub(n)).collect();
-        }
-    }
+    // One centralized read path (R11): archives + .rotating + current,
+    // deduped by event_id, filtered and limited AFTER dedupe. A missing
+    // live file (mid-rotation) yields history, never a false empty.
+    let (events, stats) =
+        bellman_core::read_log_tail(&logs_dir, tid, limit).map_err(|e| e.to_string())?;
 
     Ok(LogTailDto {
         total_records: stats.records,
@@ -752,16 +705,20 @@ pub fn update_timer(
 pub fn delete_timer(state: State<'_, AppState>, id: String) -> Result<bool, String> {
     let id = Uuid::from_str(&id).map_err(|e| format!("invalid id: {e}"))?;
     let mut store = state.store.lock();
-    // IK2: any unresolved run is logged `cancelled` BEFORE the folder goes.
-    // R10: deletion shares the per-timer gate with reply ingest.
-    let _gate = bellman_core::reply::gate::acquire(&state.data_dir, id).ok();
+    // R10: deletion is a lifecycle mutator — the per-timer gate is REQUIRED;
+    // a lock failure aborts the delete.
+    let _gate = bellman_core::reply::gate::acquire(&state.data_dir, id)
+        .map_err(|e| format!("per-timer gate: {e}"))?;
     let timer = store.get_timer(id).map_err(|e| e.to_string())?;
-    if let Some(timer) = &timer {
-        if let Err(e) = bellman_core::log_cancelled_for_open_runs(&store, timer) {
-            log::warn!("bellman: cancelled-run logging failed: {e}");
+    let n = match &timer {
+        Some(timer) => {
+            let (deleted, _cancelled) =
+                bellman_core::tree::delete_timer_lifecycle(&mut store, timer)
+                    .map_err(|e| e.to_string())?;
+            deleted
         }
-    }
-    let n = store.delete_timer(id).map_err(|e| e.to_string())?;
+        None => false,
+    };
     if n {
         let tree = bellman_core::TimersTree::new(&state.data_dir);
         if let Err(e) = tree.remove_for(id) {

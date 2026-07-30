@@ -538,40 +538,104 @@ fn expire_all_deadlines(
     n
 }
 
+/// What the pre-fire barrier read found.
+pub enum BarrierRead {
+    /// A parsed document naming THIS filename's run — ingest inside the
+    /// fire transaction. `bytes` are kept for the post-commit quarantine
+    /// copy when the ingest is semantically rejected.
+    Valid {
+        doc: Box<ReplyDocument>,
+        digest: String,
+        bytes: Vec<u8>,
+    },
+    /// Rejected on sight (identity mismatch or stable-invalid bytes):
+    /// already quarantined (COPY semantics) and logged — the fire proceeds.
+    Rejected,
+    /// Nothing readable, the untouched stub, or a writer still mid-write
+    /// past the bounded window (never quarantined here).
+    None,
+}
+
 /// The pre-fire barrier read (R10): synchronously READ and parse the
 /// previous run's reply file before the fire transaction may supersede it.
-/// Returns the parsed document + digest for the caller to ingest INSIDE the
-/// fire transaction. Bounded: one existing debounce window — a partial
-/// writer that keeps changing the file must not hold firing forever, and is
-/// never quarantined here. Stable-identical invalid bytes past the window
-/// are rejected on sight (enqueued + quarantined). A valid reply completed
-/// after this read is the accepted true-simultaneity race and is later
-/// rejected as superseded.
+/// The same strict identity rule as the ordinary watcher applies: a
+/// document whose `run_id` does not match its filename is rejected and
+/// quarantined (copy-only), never carried into the transaction. Bounded:
+/// one existing debounce window — a partial writer that keeps changing the
+/// file must not hold firing forever, and is never quarantined here.
 pub fn barrier_read(
     engine: &ReplyEngine,
     store: &Store,
     timer: &Timer,
     folder: &Path,
     prev_run_id: Uuid,
-) -> Option<(ReplyDocument, String)> {
+) -> BarrierRead {
     let path = folder.join(reply_file_name(prev_run_id));
     let bytes = match read_reply_file(&path) {
         Ok(ReplyRead::Bytes(b)) => b,
-        _ => return None, // nothing readable to fold in; normal paths handle it
+        _ => return BarrierRead::None, // nothing readable to fold in
     };
+    let mut stats = PollStats::default();
     match serde_json::from_slice::<ReplyDocument>(&bytes) {
-        Ok(doc) if is_untouched_stub(&doc, prev_run_id, expected_owner(store, timer, prev_run_id).as_deref()) => None,
-        Ok(doc) => Some((doc, fnv1a64_hex(&bytes))),
+        Ok(doc)
+            if is_untouched_stub(
+                &doc,
+                prev_run_id,
+                expected_owner(store, timer, prev_run_id).as_deref(),
+            ) =>
+        {
+            BarrierRead::None
+        }
+        Ok(doc) => {
+            // A hand-edited run_id is never trusted — the document must
+            // name the run its filename names.
+            if doc.run_id.is_some() && doc.run_id != Some(prev_run_id) {
+                condemn_bytes(
+                    engine,
+                    store,
+                    timer,
+                    &path,
+                    prev_run_id,
+                    &bytes,
+                    "run_id does not match the reply filename",
+                    &mut stats,
+                );
+                return BarrierRead::Rejected;
+            }
+            BarrierRead::Valid {
+                doc: Box::new(doc),
+                digest: fnv1a64_hex(&bytes),
+                bytes,
+            }
+        }
         Err(_) => {
             std::thread::sleep(DEFAULT_DEBOUNCE);
             let Ok(ReplyRead::Bytes(second)) = read_reply_file(&path) else {
-                return None;
+                return BarrierRead::None;
             };
             match serde_json::from_slice::<ReplyDocument>(&second) {
-                Ok(doc) => Some((doc, fnv1a64_hex(&second))),
+                Ok(doc) => {
+                    if doc.run_id.is_some() && doc.run_id != Some(prev_run_id) {
+                        condemn_bytes(
+                            engine,
+                            store,
+                            timer,
+                            &path,
+                            prev_run_id,
+                            &second,
+                            "run_id does not match the reply filename",
+                            &mut stats,
+                        );
+                        return BarrierRead::Rejected;
+                    }
+                    BarrierRead::Valid {
+                        doc: Box::new(doc),
+                        digest: fnv1a64_hex(&second),
+                        bytes: second,
+                    }
+                }
                 Err(_) if second == bytes => {
                     // Identical invalid bytes, stable past the window.
-                    let mut stats = PollStats::default();
                     condemn_bytes(
                         engine,
                         store,
@@ -582,12 +646,34 @@ pub fn barrier_read(
                         "invalid JSON",
                         &mut stats,
                     );
-                    None
+                    BarrierRead::Rejected
                 }
-                Err(_) => None, // still changing: let the firing proceed
+                Err(_) => BarrierRead::None, // still changing: proceed
             }
         }
     }
+}
+
+/// Copy semantically rejected bytes into the quarantine (COPY semantics —
+/// the live file is left in place). Idempotent per distinct content. Used
+/// by the fire path after an in-transaction semantic rejection.
+pub(crate) fn quarantine_rejected_bytes(
+    engine: &ReplyEngine,
+    timer: &Timer,
+    path: &Path,
+    run_id: Uuid,
+    bytes: &[u8],
+    reason: &str,
+) {
+    let _ = quarantine_locked(engine, |bad| {
+        quarantine_bytes(
+            bad,
+            path,
+            bytes,
+            reason,
+            serde_json::json!({ "timer_id": timer.id, "run_id": run_id }),
+        )
+    });
 }
 
 /// Write the fire notification under `slots/fires/` — only after

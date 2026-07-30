@@ -742,19 +742,24 @@ pub fn project_fire(
     let owner = store.get_timer_owner(timer.id)?;
     let folder = tree.sync_timer_json(timer, owner.as_deref())?;
 
-    // 2. Barrier READ (file I/O — outside the transaction, bounded).
+    // 2. Barrier READ (file I/O — outside the transaction, bounded). The
+    //    barrier enforces the same filename/document identity rule as the
+    //    ordinary watcher; a forged or invalid document is quarantined
+    //    (copy-only) and never reaches the transaction.
     let prev = store.runs_for_timer(timer.id)?.last().cloned();
-    let barrier = prev.as_ref().and_then(|p| {
-        crate::reply::barrier_read(engine, store, timer, &folder, p.run_id)
-            .map(|(doc, digest)| (p.clone(), doc, digest))
+    let barrier = prev.as_ref().map(|p| {
+        let read = crate::reply::barrier_read(engine, store, timer, &folder, p.run_id);
+        (p.clone(), read)
     });
 
     // 3. The one fire transaction.
     let mut prev_superseded = None;
+    let mut post_quarantine: Option<(PathBuf, Uuid, Vec<u8>, &'static str)> = None;
     let claim = {
         let tx = store.transaction()?;
         // Barrier ingest: fold the previous run's final outcome in FIRST.
-        if let Some((prev, doc, digest)) = &barrier {
+        if let Some((prev, crate::reply::BarrierRead::Valid { doc, digest, bytes })) = &barrier
+        {
             let outcome = engine
                 .ingest_as_current(&tx, timer, doc, digest, prev.run_id, now, std::time::Instant::now())
                 .map_err(|e| TreeError::Io(e.to_string()))?;
@@ -762,6 +767,12 @@ pub fn project_fire(
                 engine
                     .log_rejection(&tx, timer, Some(prev.run_id), reason.as_str())
                     .map_err(|e| TreeError::Io(e.to_string()))?;
+                post_quarantine = Some((
+                    folder.join(reply_file_name(prev.run_id)),
+                    prev.run_id,
+                    bytes.clone(),
+                    reason.as_str(),
+                ));
             }
         }
         // Supersede the previous run when still unresolved AFTER the barrier.
@@ -816,10 +827,15 @@ pub fn project_fire(
 
     // 4. Post-commit, still under the gate.
     if owner.is_some() {
-        engine.register_fire(claim.run_id);
+        engine.register_fire(claim.run_id, now);
     }
     if let Some(prev_id) = prev_superseded {
         engine.clear_deadlines(prev_id);
+    }
+    // The barrier's semantic rejection also gets its quarantine COPY (the
+    // event went out with the transaction; the artifact is idempotent).
+    if let Some((path, run_id, bytes, reason)) = post_quarantine {
+        crate::reply::quarantine_rejected_bytes(engine, timer, &path, run_id, &bytes, reason);
     }
 
     // Projections: surface failures, never un-commit the fire. The bounded
@@ -899,6 +915,65 @@ pub fn log_cancelled_for_open_runs(store: &Store, timer: &Timer) -> TreeResult<u
         n += 1;
     }
     Ok(n)
+}
+
+/// The atomic delete lifecycle (R10): `cancelled` event + lifecycle-row
+/// close + timer delete + owner/cursor cleanup commit in ONE IMMEDIATE
+/// transaction, under the caller's REQUIRED per-timer gate. The folder is
+/// removed only after this commits.
+///
+/// The unresolved test reads owner and run state BEFORE anything is
+/// deleted, so an owned run with a finished action claim but an open app
+/// lifecycle is still `cancelled` (the order that previously lost it).
+/// Returns `(deleted, cancelled_count)`.
+pub fn delete_timer_lifecycle(store: &mut Store, timer: &Timer) -> TreeResult<(bool, usize)> {
+    use crate::reply::RunDb;
+    use crate::store::{get_run_state_conn, runs_for_timer_conn, update_run_state_conn};
+
+    let owner = store.get_timer_owner(timer.id)?;
+    let tx = store.transaction()?;
+
+    let mut cancelled = 0;
+    let prev = runs_for_timer_conn(&tx, timer.id)?.last().cloned();
+    if let Some(prev) = &prev {
+        let unresolved = match get_run_state_conn(&tx, prev.run_id)? {
+            Some(row) => !row.is_terminal(),
+            None => {
+                if owner.is_some() {
+                    true
+                } else {
+                    prev.status == ClaimStatus::Claimed
+                }
+            }
+        };
+        if unresolved {
+            tx.enqueue_event(
+                &EventRecord::new(RunState::Cancelled)
+                    .with_timer(timer.id, timer.name.clone())
+                    .with_run(prev.run_id)
+                    .with_scheduled_for(prev.scheduled_for)
+                    .with_message("timer deleted while its run was open"),
+            )?;
+            if let Some(mut row) = get_run_state_conn(&tx, prev.run_id)? {
+                row.state = RunState::Cancelled.as_str().to_string();
+                row.pickup_deadline = None;
+                row.watchdog_deadline = None;
+                update_run_state_conn(&tx, &row)?;
+            }
+            cancelled = 1;
+        }
+    }
+
+    let deleted = Store::delete_timer_in_tx(&tx, timer.id)?;
+    crate::store::Store::clear_timer_owner_in_tx(&tx, timer.id)?;
+    // Drop the ack cursor with the timer.
+    tx.execute(
+        "DELETE FROM slot_event_acks WHERE timer_id = ?1",
+        rusqlite::params![timer.id.to_string()],
+    )
+    .map_err(crate::store::StoreError::from)?;
+    tx.commit().map_err(|e| TreeError::Io(e.to_string()))?;
+    Ok((deleted, cancelled))
 }
 
 /// Folder reconciliation: ensure every live timer has a folder + fresh

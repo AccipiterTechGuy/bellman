@@ -114,7 +114,7 @@ impl Harness {
     /// Deterministically arm a pickup countdown for `run_id` at `secs` after
     /// the harness monotonic base (the book is THE deadline source).
     fn arm_pickup(&self, run_id: Uuid, secs: u64) {
-        self.engine.deadlines.lock().unwrap().insert(
+        self.engine.deadlines.lock().unwrap().entries.insert(
             run_id,
             MonoDeadline {
                 kind: DeadlineKind::Pickup,
@@ -1395,4 +1395,106 @@ fn status_json_mirror_survives_terminal_but_current_watching() {
     assert_eq!(h.poll(5).applied, 1);
     assert_eq!(h.status(&timer)["state"], "failed");
     assert_eq!(h.status(&timer)["reason"], "post-completion check failed");
+}
+
+#[test]
+fn a_failed_transition_commits_nothing_atomically() {
+    let mut h = Harness::new();
+    let timer = h.add_timer("bulb-test", Some("lightbulb"));
+    let claim = h.fire(&timer, 0, at(&h, 0));
+    let _ = h.events(); // drain the fire's own outbox rows first
+
+    // A second connection holds the write lock: the transition (outbox row +
+    // lifecycle update) cannot commit, and must leave NO partial state.
+    let blocker = Store::open_with(h.dir.path().join("timers.db"), OpenOptions::default())
+        .unwrap();
+    let _hold = blocker.immediate_tx().unwrap();
+
+    let doc: ReplyDocument =
+        serde_json::from_value(h.reply_json(claim.run_id, "lightbulb", "completed")).unwrap();
+    let res = h
+        .engine
+        .ingest(&h.store, &timer, &doc, "digest-a", at(&h, 5), mono(&h, 5));
+    assert!(res.is_err(), "a busy store rejects the transition");
+    drop(_hold);
+
+    assert_eq!(
+        h.store.count_pending_events().unwrap(),
+        0,
+        "no orphaned outbox row — the rollback was total"
+    );
+    assert_eq!(h.row(claim.run_id).state, "fired", "no partial lifecycle update");
+
+    // After the blocker: the same transition succeeds and logs exactly once.
+    let outcome = h
+        .engine
+        .ingest(&h.store, &timer, &doc, "digest-a", at(&h, 6), mono(&h, 6))
+        .unwrap();
+    assert_eq!(outcome, IngestOutcome::Applied);
+    assert_eq!(h.row(claim.run_id).state, "completed");
+    let completed = h
+        .events_for(claim.run_id)
+        .iter()
+        .filter(|e| e.kind == RunState::Completed)
+        .count();
+    assert_eq!(completed, 1, "the retried transition logs exactly once");
+}
+
+#[test]
+fn the_barrier_quarantines_a_forged_run_id_instead_of_ingesting_it() {
+    let mut h = Harness::new();
+    let timer = h.add_timer("bulb-test", Some("lightbulb"));
+    let claim_b = h.fire(&timer, 0, at(&h, 0));
+
+    // B current: reply-B.json carries a fabricated run id, and the next fire
+    // arrives BEFORE any watcher tick — the barrier must apply the same
+    // filename/document identity rule as the ordinary watcher.
+    let fabricated = Uuid::new_v4();
+    let doc = h.reply_json(fabricated, "lightbulb", "completed");
+    h.write_reply(&timer, claim_b.run_id, doc);
+    h.fire(&timer, 1, at(&h, 100));
+
+    let evs = h.events();
+    assert!(
+        evs.iter().any(|e| e.kind == RunState::ReplyRejected),
+        "the forged document was rejected"
+    );
+    assert!(
+        !evs.iter().any(|e| e.kind == RunState::Completed && e.run_id == Some(fabricated)),
+        "never ingested"
+    );
+    let bad = super::quarantine::quarantine_dir(h.engine.tree.root());
+    let has_payload = std::fs::read_dir(&bad)
+        .unwrap()
+        .flatten()
+        .any(|e| e.file_name().to_string_lossy().ends_with(".payload"));
+    assert!(has_payload, "the forged bytes were quarantined (copy)");
+    assert_eq!(h.status(&timer)["state"], "fired", "the new run proceeds untouched");
+}
+
+#[test]
+fn armed_deadlines_produce_heap_hints_for_the_scheduler() {
+    let mut h = Harness::new();
+    let timer = h.add_timer("bulb-test", Some("lightbulb"));
+    let claim = h.fire_armed(&timer, 0, at(&h, 0));
+
+    // The fire's pickup deadline queued exactly one hint, drained once.
+    let hints = h.engine.take_deadline_hints();
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].0, claim.run_id);
+    assert_eq!(hints[0].1, DeadlineKind::Pickup);
+    assert!(h.engine.take_deadline_hints().is_empty());
+
+    // A watchdog rearm queues a watchdog hint with a wall estimate.
+    let mut doc = h.reply_json(claim.run_id, "lightbulb", "running");
+    doc["expected_secs"] = serde_json::json!(10);
+    doc["error_detection"] = serde_json::json!(true);
+    h.write_reply(&timer, claim.run_id, doc);
+    h.poll(1);
+    let hints = h.engine.take_deadline_hints();
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].1, DeadlineKind::Watchdog);
+    let expected_wall = at(&h, 1) + chrono::Duration::seconds(20);
+    let delta = (hints[0].2 - expected_wall).num_seconds().abs();
+    assert!(delta <= 1, "wall estimate matches receipt + expected × factor");
 }

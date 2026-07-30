@@ -56,6 +56,13 @@ use super::document::{
 /// on a plain `Store` (single-statement commits) and inside the R10 fire
 /// transaction.
 pub trait RunDb {
+    /// Run `f` atomically: on a `Store` this opens an IMMEDIATE transaction
+    /// and commits after `f` succeeds — a lifecycle transition and its
+    /// outbox rows commit TOGETHER or not at all. On an already-open
+    /// `Transaction` (the fire path) `f` simply runs inside it. Callers
+    /// capture results through the closure (dyn-compatible by design).
+    fn in_tx(&self, f: &mut dyn FnMut(&dyn RunDb) -> ReplyResult<()>) -> ReplyResult<()>;
+
     fn get_timer(&self, id: TimerId) -> StoreResult<Option<Timer>>;
     fn get_run(&self, run_id: Uuid) -> StoreResult<Option<RunClaim>>;
     fn runs_for_timer(&self, timer_id: TimerId) -> StoreResult<Vec<RunClaim>>;
@@ -68,6 +75,13 @@ pub trait RunDb {
 }
 
 impl RunDb for Store {
+    fn in_tx(&self, f: &mut dyn FnMut(&dyn RunDb) -> ReplyResult<()>) -> ReplyResult<()> {
+        let tx = self.immediate_tx()?;
+        f(&tx)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     fn get_timer(&self, id: TimerId) -> StoreResult<Option<Timer>> {
         Store::get_timer(self, id)
     }
@@ -98,6 +112,44 @@ impl RunDb for Store {
 }
 
 impl RunDb for Transaction<'_> {
+    fn in_tx(&self, f: &mut dyn FnMut(&dyn RunDb) -> ReplyResult<()>) -> ReplyResult<()> {
+        // Already inside the caller's transaction (the fire path).
+        f(self)
+    }    fn get_timer(&self, id: TimerId) -> StoreResult<Option<Timer>> {
+        store::get_timer_conn(self, id)
+    }
+    fn get_run(&self, run_id: Uuid) -> StoreResult<Option<RunClaim>> {
+        store::get_run_conn(self, run_id)
+    }
+    fn runs_for_timer(&self, timer_id: TimerId) -> StoreResult<Vec<RunClaim>> {
+        store::runs_for_timer_conn(self, timer_id)
+    }
+    fn get_run_state(&self, run_id: Uuid) -> StoreResult<Option<RunStateRow>> {
+        store::get_run_state_conn(self, run_id)
+    }
+    fn current_run_state(&self, timer_id: TimerId) -> StoreResult<Option<RunStateRow>> {
+        store::current_run_state_conn(self, timer_id)
+    }
+    fn update_run_state(&self, row: &RunStateRow) -> StoreResult<()> {
+        store::update_run_state_conn(self, row)
+    }
+    fn last_acked_sequence(&self, timer_id: TimerId) -> StoreResult<u64> {
+        store::last_acked_sequence_conn(self, timer_id)
+    }
+    fn armed_deadlines(&self) -> StoreResult<Vec<RunStateRow>> {
+        store::armed_deadlines_conn(self)
+    }
+    fn enqueue_event(&self, rec: &EventRecord) -> StoreResult<()> {
+        store::enqueue_event_conn(self, rec)
+    }
+}
+
+impl RunDb for store::ImmediateTx<'_> {
+    fn in_tx(&self, f: &mut dyn FnMut(&dyn RunDb) -> ReplyResult<()>) -> ReplyResult<()> {
+        // Already inside the transaction this guard represents.
+        f(self)
+    }
+
     fn get_timer(&self, id: TimerId) -> StoreResult<Option<Timer>> {
         store::get_timer_conn(self, id)
     }
@@ -157,15 +209,33 @@ pub struct MonoDeadline {
     pub at: Instant,
 }
 
-/// Live monotonic countdowns keyed by run id (R7/R8). The persisted
-/// wall-clock deadline on the run row is the restart-reconstruction source
-/// only — the active countdown never reads the wall clock, so wall jumps
-/// (NTP, suspend, DST) cannot fire a deadline early or late.
-pub type SharedDeadlines = Arc<Mutex<HashMap<Uuid, MonoDeadline>>>;
+/// Live monotonic countdowns keyed by run id (R7/R8) plus a drainable
+/// hint queue. The persisted wall-clock deadline on the run row is the
+/// restart-reconstruction source only — the active countdown never reads
+/// the wall clock, so wall jumps (NTP, suspend, DST) cannot fire a
+/// deadline early or late. Armed-deadline hints let the scheduler heap
+/// wake at the exact wall-estimated instant; the book stays the truth.
+#[derive(Debug, Default)]
+pub struct DeadlineBook {
+    /// run_id → monotonic deadline.
+    pub entries: HashMap<Uuid, MonoDeadline>,
+    /// Armed deadlines awaiting a scheduler-heap entry (drained by the
+    /// watcher loop and forwarded to the scheduler's control channel).
+    armed_hints: Vec<(Uuid, DeadlineKind, DateTime<Utc>)>,
+}
+
+impl DeadlineBook {
+    fn arm_hint(&mut self, run_id: Uuid, kind: DeadlineKind, wall_at: DateTime<Utc>) {
+        self.armed_hints.push((run_id, kind, wall_at));
+    }
+}
+
+/// The shared deadline book (scheduler fire path, `run_now`, watcher).
+pub type SharedDeadlines = Arc<Mutex<DeadlineBook>>;
 
 /// Fresh empty deadline book.
 pub fn new_deadlines() -> SharedDeadlines {
-    Arc::new(Mutex::new(HashMap::new()))
+    Arc::new(Mutex::new(DeadlineBook::default()))
 }
 
 /// Everything the reply lifecycle needs that is not per-call state.
@@ -247,23 +317,34 @@ pub type ReplyResult<T> = Result<T, ReplyError>;
 impl ReplyEngine {
     /// Register a just-committed fire: the pickup countdown starts on
     /// Bellman's monotonic clock at the fire transaction commit (R7), and
-    /// the duration anchor is set for `duration_ms`.
-    pub fn register_fire(&self, run_id: Uuid) {
+    /// the duration anchor is set for `duration_ms`. A heap hint lets the
+    /// scheduler wake at the exact wall-estimated instant.
+    pub fn register_fire(&self, run_id: Uuid, now_wall: DateTime<Utc>) {
         let now = Instant::now();
         self.anchors
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .insert(run_id, now);
-        self.deadlines
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(
-                run_id,
-                MonoDeadline {
-                    kind: DeadlineKind::Pickup,
-                    at: now + self.pickup_grace,
-                },
-            );
+        let wall_at = now_wall
+            + ChronoDuration::from_std(self.pickup_grace)
+                .unwrap_or_else(|_| ChronoDuration::seconds(60));
+        let mut book = self.deadlines.lock().unwrap_or_else(|p| p.into_inner());
+        book.entries.insert(
+            run_id,
+            MonoDeadline {
+                kind: DeadlineKind::Pickup,
+                at: now + self.pickup_grace,
+            },
+        );
+        book.arm_hint(run_id, DeadlineKind::Pickup, wall_at);
+    }
+
+    /// Drain armed-deadline hints for the scheduler heap (the watcher loop
+    /// forwards them to the scheduler's control channel; without a
+    /// scheduler, the periodic poll remains the driver).
+    pub fn take_deadline_hints(&self) -> Vec<(Uuid, DeadlineKind, DateTime<Utc>)> {
+        let mut book = self.deadlines.lock().unwrap_or_else(|p| p.into_inner());
+        std::mem::take(&mut book.armed_hints)
     }
 
     /// Drop any live countdowns for a run (supersede / cancel).
@@ -271,6 +352,7 @@ impl ReplyEngine {
         self.deadlines
             .lock()
             .unwrap_or_else(|p| p.into_inner())
+            .entries
             .remove(&run_id);
     }
 
@@ -286,7 +368,7 @@ impl ReplyEngine {
         let mut added = 0;
         let mut book = self.deadlines.lock().unwrap_or_else(|p| p.into_inner());
         for row in db.armed_deadlines()? {
-            if book.contains_key(&row.run_id) {
+            if book.entries.contains_key(&row.run_id) {
                 continue;
             }
             let entry = if let Some(deadline) = row.pickup_deadline {
@@ -301,7 +383,7 @@ impl ReplyEngine {
                 })
             };
             if let Some(entry) = entry {
-                book.insert(row.run_id, entry);
+                book.entries.insert(row.run_id, entry);
                 added += 1;
             }
         }
@@ -322,7 +404,14 @@ impl ReplyEngine {
         now_wall: DateTime<Utc>,
         mono_now: Instant,
     ) -> ReplyResult<IngestOutcome> {
-        self.ingest_inner(db, timer, doc, digest, now_wall, mono_now, None)
+        // The transition and its outbox rows commit TOGETHER (R10): a crash
+        // can never leave a logged transition over a stale lifecycle row.
+        let mut outcome = None;
+        db.in_tx(&mut |db| {
+            outcome = Some(self.ingest_inner(db, timer, doc, digest, now_wall, mono_now, None)?);
+            Ok(())
+        })?;
+        Ok(outcome.expect("in_tx ran the closure"))
     }
 
     /// Pre-fire barrier variant: treat `as_current` as the current run even
@@ -339,7 +428,20 @@ impl ReplyEngine {
         now_wall: DateTime<Utc>,
         mono_now: Instant,
     ) -> ReplyResult<IngestOutcome> {
-        self.ingest_inner(db, timer, doc, digest, now_wall, mono_now, Some(as_current))
+        let mut outcome = None;
+        db.in_tx(&mut |db| {
+            outcome = Some(self.ingest_inner(
+                db,
+                timer,
+                doc,
+                digest,
+                now_wall,
+                mono_now,
+                Some(as_current),
+            )?);
+            Ok(())
+        })?;
+        Ok(outcome.expect("in_tx ran the closure"))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -529,15 +631,19 @@ impl ReplyEngine {
         // accepted non-terminal reply while enabled; terminal disarms.
         {
             let mut book = self.deadlines.lock().unwrap_or_else(|p| p.into_inner());
-            if book.get(&row.run_id).is_some_and(|d| d.kind == DeadlineKind::Pickup) {
-                book.remove(&row.run_id);
+            if book
+                .entries
+                .get(&row.run_id)
+                .is_some_and(|d| d.kind == DeadlineKind::Pickup)
+            {
+                book.entries.remove(&row.run_id);
             }
             if new_state.is_terminal() {
-                book.remove(&row.run_id);
+                book.entries.remove(&row.run_id);
                 row.watchdog_deadline = None;
             } else if row.error_detection == Some(true) && row.expected_secs.unwrap_or(0) > 0 {
                 let at = self.watchdog_instant(row.expected_secs.unwrap(), mono_now);
-                book.insert(
+                book.entries.insert(
                     row.run_id,
                     MonoDeadline {
                         kind: DeadlineKind::Watchdog,
@@ -545,13 +651,17 @@ impl ReplyEngine {
                     },
                 );
                 // The persisted wall deadline is the restart-reconstruction
-                // copy of the same countdown.
-                row.watchdog_deadline =
-                    Some(self.watchdog_wall(row.expected_secs.unwrap(), now_wall));
-            } else {
-                if book.get(&row.run_id).is_some_and(|d| d.kind == DeadlineKind::Watchdog) {
-                    book.remove(&row.run_id);
-                }
+                // copy of the same countdown; the heap hint lets the
+                // scheduler wake at the exact wall-estimated instant.
+                let wall = self.watchdog_wall(row.expected_secs.unwrap(), now_wall);
+                row.watchdog_deadline = Some(wall);
+                book.arm_hint(row.run_id, DeadlineKind::Watchdog, wall);
+            } else if book
+                .entries
+                .get(&row.run_id)
+                .is_some_and(|d| d.kind == DeadlineKind::Watchdog)
+            {
+                book.entries.remove(&row.run_id);
             }
         }
 
@@ -662,14 +772,16 @@ impl ReplyEngine {
         run_id: Option<Uuid>,
         reason: &str,
     ) -> ReplyResult<()> {
-        let mut rec = EventRecord::new(RunState::ReplyRejected)
-            .with_timer(timer.id, timer.name.clone())
-            .with_message(reason);
-        if let Some(run_id) = run_id {
-            rec = rec.with_run(run_id);
-        }
-        db.enqueue_event(&rec)?;
-        Ok(())
+        db.in_tx(&mut |db| {
+            let mut rec = EventRecord::new(RunState::ReplyRejected)
+                .with_timer(timer.id, timer.name.clone())
+                .with_message(reason);
+            if let Some(run_id) = run_id {
+                rec = rec.with_run(run_id);
+            }
+            db.enqueue_event(&rec)?;
+            Ok(())
+        })
     }
 
     /// Pickup satisfied by the slot-feed cursor advancing past this run
@@ -703,7 +815,8 @@ impl ReplyEngine {
         if !pickup_pending && !revise_no_ack {
             return Ok(false);
         }
-        self.mark_acknowledged(db, timer, &claim, row, now_wall)?;
+        // The transition and its outbox row commit together (R10).
+        db.in_tx(&mut |db| self.mark_acknowledged(db, timer, &claim, row.clone(), now_wall))?;
         Ok(true)
     }
 
@@ -771,8 +884,24 @@ impl ReplyEngine {
     }
 
     /// One pickup-deadline transition for `run_id` of `timer`, re-read under
-    /// the caller's gate. Returns true when a transition happened.
+    /// the caller's gate. The transition and its outbox row commit together
+    /// (R10). Returns true when a transition happened.
     pub fn expire_pickup_one(
+        &self,
+        db: &dyn RunDb,
+        timer: &Timer,
+        run_id: Uuid,
+        now_wall: DateTime<Utc>,
+    ) -> ReplyResult<bool> {
+        let mut transitioned = false;
+        db.in_tx(&mut |db| {
+            transitioned = self.expire_pickup_one_inner(db, timer, run_id, now_wall)?;
+            Ok(())
+        })?;
+        Ok(transitioned)
+    }
+
+    fn expire_pickup_one_inner(
         &self,
         db: &dyn RunDb,
         timer: &Timer,
@@ -851,8 +980,24 @@ impl ReplyEngine {
         Ok(transitioned)
     }
 
-    /// One watchdog transition for `run_id`, re-read under the caller's gate.
+    /// One watchdog transition for `run_id`, re-read under the caller's
+    /// gate. The transition and its outbox row commit together (R10).
     pub fn expire_watchdog_one(
+        &self,
+        db: &dyn RunDb,
+        timer: &Timer,
+        run_id: Uuid,
+        now_wall: DateTime<Utc>,
+    ) -> ReplyResult<bool> {
+        let mut transitioned = false;
+        db.in_tx(&mut |db| {
+            transitioned = self.expire_watchdog_one_inner(db, timer, run_id, now_wall)?;
+            Ok(())
+        })?;
+        Ok(transitioned)
+    }
+
+    fn expire_watchdog_one_inner(
         &self,
         db: &dyn RunDb,
         timer: &Timer,
@@ -905,6 +1050,7 @@ impl ReplyEngine {
         self.deadlines
             .lock()
             .unwrap_or_else(|p| p.into_inner())
+            .entries
             .iter()
             .filter(|(_, d)| d.kind == kind && d.at <= mono_now)
             .map(|(id, _)| *id)
@@ -913,8 +1059,8 @@ impl ReplyEngine {
 
     fn clear_deadlines_kind(&self, run_id: Uuid, kind: DeadlineKind) {
         let mut book = self.deadlines.lock().unwrap_or_else(|p| p.into_inner());
-        if book.get(&run_id).is_some_and(|d| d.kind == kind) {
-            book.remove(&run_id);
+        if book.entries.get(&run_id).is_some_and(|d| d.kind == kind) {
+            book.entries.remove(&run_id);
         }
     }
 

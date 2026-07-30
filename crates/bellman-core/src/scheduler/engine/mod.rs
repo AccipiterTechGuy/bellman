@@ -126,11 +126,17 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         self.heap.len()
     }
 
-    /// Peek the next fire on the heap (if any).
+    /// Peek the next wake on the heap (if any): a timer fire or a lifecycle
+    /// deadline. Deadline entries report the nil id — only `fire_at` drives
+    /// sleep sizing.
     pub fn peek_next(&self) -> Option<(DateTime<Utc>, TimerId)> {
-        self.heap
-            .peek()
-            .map(|Reverse(e)| (e.fire_at, e.timer_id))
+        self.heap.peek().map(|Reverse(e)| {
+            let id = match e.kind {
+                types::HeapKind::Fire { timer_id } => timer_id,
+                types::HeapKind::Deadline { .. } => TimerId::nil(),
+            };
+            (e.fire_at, id)
+        })
     }
 
     /// Consume the scheduler, returning the action sink (tests read recorded fires).

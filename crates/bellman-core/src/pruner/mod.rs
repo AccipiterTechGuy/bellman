@@ -88,6 +88,10 @@ pub struct PruneReport {
     pub orphan_folders_removed: usize,
     /// True when this pass was a no-op because prune was not yet due.
     pub skipped_not_due: bool,
+    /// True when the publisher lease was held elsewhere, so rotation and
+    /// retention did NOT happen and `last_prune` was deliberately NOT
+    /// stamped — the next pass must retry.
+    pub skipped_not_leader: bool,
 }
 
 /// Errors from prune / ensure-timer helpers.
@@ -233,10 +237,19 @@ pub fn run_prune(
         });
     }
 
-    // Rotation goes through the elected publisher (R11) — never a side path.
-    let (archived, retain) = publisher
+    // Rotation goes through the elected publisher (R11) — never a side
+    // path. When the lease is held elsewhere (the live watcher leads this
+    // second), NOTHING was rotated: report it honestly and do NOT stamp
+    // last_prune — the next pass must retry.
+    let (leader, archived, retain) = publisher
         .rotate_and_retain(store)
         .map_err(|e| PruneError::EventLog(e.to_string()))?;
+    if !leader {
+        return Ok(PruneReport {
+            skipped_not_leader: true,
+            ..PruneReport::default()
+        });
+    }
     // Log every archive prune — never silent.
     if retain.removed_count() > 0 {
         let note = EventRecord::new(RunState::Pruned)
@@ -260,6 +273,7 @@ pub fn run_prune(
         pruned_timer_ids: Vec::new(),
         orphan_folders_removed: 0,
         skipped_not_due: false,
+        skipped_not_leader: false,
     };
 
     let candidates = store.list_timers()?;

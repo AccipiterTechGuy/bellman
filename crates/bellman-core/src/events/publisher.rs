@@ -160,7 +160,18 @@ impl EventPublisher {
     /// threshold would be crossed, and publish health. This is the live
     /// feeder — it runs after local enqueues and on the periodic tick, so a
     /// row committed by another process never waits for an in-process signal.
+    ///
+    /// The lease is HELD FOR ONE CYCLE ONLY: election happens every cycle,
+    /// so scheduled maintenance (the weekly prune's rotation) can win the
+    /// lease when it needs it. At most one leader exists at any moment.
     pub fn publish_cycle(&mut self, store: &Store) -> PublishReport {
+        let report = self.cycle_inner(store);
+        // Release for the next election.
+        self.lease = None;
+        report
+    }
+
+    fn cycle_inner(&mut self, store: &Store) -> PublishReport {
         let mut report = PublishReport::default();
         match self.ensure_leadership() {
             Ok(false) => {
@@ -288,24 +299,28 @@ impl EventPublisher {
         // 1. Record intent, rename current → .rotating, sync the parent dir.
         store.set_rotation_journal(&journal)?;
         fs::rename(&current, &journal.rotating)?;
-        sync_dir(&self.log.config().logs_dir);
+        sync_dir(&self.log.config().logs_dir)?;
 
         // 2. Compress → temp, sync, rename to the final archive, sync dir.
         gzip_file(&journal.rotating, &journal.gz_tmp)?;
         fs::rename(&journal.gz_tmp, &journal.final_path)?;
-        sync_dir(&archive_dir);
+        sync_dir(&archive_dir)?;
         let mut j = journal.clone();
         j.phase = RotationPhase::Finalized;
         store.set_rotation_journal(&j)?;
 
-        // 3. Delete the .rotating source, sync the parent dir.
+        // 3. Delete the .rotating source, sync ITS parent dir (logs/, where
+        //    the source lived — syncing archive/ here would not make the
+        //    deletion durable).
         fs::remove_file(&journal.rotating)?;
-        sync_dir(&archive_dir);
+        sync_dir(&self.log.config().logs_dir)?;
         j.phase = RotationPhase::SourceRemoved;
         store.set_rotation_journal(&j)?;
 
-        // 4. New current only after the archive is durable; clear journal.
+        // 4. New current only after the archive is durable; sync the parent,
+        //    then clear the journal.
         self.log.reopen()?;
+        sync_dir(&self.log.config().logs_dir)?;
         store.clear_rotation_journal()?;
         Ok(Some(journal.final_path))
     }
@@ -342,30 +357,35 @@ impl EventPublisher {
             let _ = fs::remove_file(&journal.gz_tmp);
             gzip_file(&journal.rotating, &journal.gz_tmp)?;
             fs::rename(&journal.gz_tmp, &journal.final_path)?;
-            sync_dir(&self.log.archive_dir());
+            sync_dir(&self.log.archive_dir())?;
             let _ = fs::remove_file(&journal.rotating);
         } else {
             let _ = fs::remove_file(&journal.gz_tmp);
         }
-        // Ensure the new current exists (the old handle was renamed away).
+        // Deletions + the new current land in logs/ — make them durable.
+        sync_dir(&self.log.config().logs_dir)?;
         self.log.reopen()?;
+        sync_dir(&self.log.config().logs_dir)?;
         store.clear_rotation_journal()?;
         Ok(())
     }
 
-    /// Journaled rotation + archive retention (the prune path). Retention
-    /// also runs under the lease — the publisher owns every rotation.
+    /// Journaled rotation + archive retention (the prune path). Rotation
+    /// goes through the lease — the publisher owns every rotation. Returns
+    /// `false` as the first tuple element when the lease was held elsewhere
+    /// and NOTHING was rotated (the caller must not stamp the work as done).
     pub fn rotate_and_retain(
         &mut self,
         store: &Store,
-    ) -> EventLogResult<(Option<PathBuf>, RetainReport)> {
-        let mut out = (None, RetainReport::default());
+    ) -> EventLogResult<(bool, Option<PathBuf>, RetainReport)> {
+        let mut out = (false, None, RetainReport::default());
         if !self.ensure_leadership()? {
             return Ok(out);
         }
         self.recover_rotation(store)?;
-        out.0 = self.rotate_journaled(store)?;
-        out.1 = self.log.retain()?;
+        out.0 = true;
+        out.1 = self.rotate_journaled(store)?;
+        out.2 = self.log.retain()?;
         Ok(out)
     }
 
@@ -375,12 +395,17 @@ impl EventPublisher {
         self.last_error_at = Some(Utc::now());
     }
 
-    /// Write the operator-visible health doc when it changed.
+    /// Write the operator-visible health doc when it changed. A FOLLOWER
+    /// never clobbers a file that currently reports an elected leader —
+    /// `leader: false` is only ever written when no leader is recorded.
     fn write_health(&mut self, store: &Store, leader: bool, cycle_error: Option<String>) {
         let pending_events = store.count_pending_events().unwrap_or(0);
         let error = cycle_error.or_else(|| self.last_error.clone());
         let key = (leader, error.clone(), pending_events);
         if self.last_written.as_ref() == Some(&key) {
+            return;
+        }
+        if !leader && self.health_file_reports_leader() {
             return;
         }
         let doc = PublisherHealth {
@@ -400,6 +425,19 @@ impl EventPublisher {
         {
             self.last_written = Some(key);
         }
+    }
+
+    /// True when the health file on disk currently reports `leader: true`
+    /// (another process is the elected publisher right now).
+    fn health_file_reports_leader(&self) -> bool {
+        let path = self.log.config().logs_dir.join(HEALTH_FILE_NAME);
+        let Ok(bytes) = fs::read(&path) else {
+            return false;
+        };
+        serde_json::from_slice::<serde_json::Value>(&bytes)
+            .ok()
+            .and_then(|v| v.get("leader")?.as_bool())
+            .unwrap_or(false)
     }
 }
 
@@ -476,12 +514,12 @@ fn verify_gzip(path: &Path) -> bool {
     std::io::Read::read_to_end(&mut decoder, &mut sink).is_ok()
 }
 
-/// Best-effort directory fsync (rename durability where the platform
-/// supports it).
-fn sync_dir(dir: &Path) {
-    if let Ok(d) = fs::File::open(dir) {
-        let _ = d.sync_all();
-    }
+/// Directory fsync (rename/delete/create durability). Errors PROPAGATE —
+/// advancing the journal past an unsynced step would make recovery lie.
+fn sync_dir(dir: &Path) -> EventLogResult<()> {
+    let d = fs::File::open(dir)?;
+    d.sync_all()?;
+    Ok(())
 }
 
 #[cfg(test)]

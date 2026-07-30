@@ -18,6 +18,15 @@ pub enum ControlMsg {
     Shutdown,
     /// Flip the global pause-all flag (true = scheduler parks the heap).
     SetPauseAll(bool),
+    /// Arm a lifecycle deadline entry on the heap (IK3 pickup/watchdog).
+    /// Sent by the watcher when a reply arms/rearms a deadline outside the
+    /// scheduler thread. Disarming needs no message: the expiry check is
+    /// lazy (a disarmed entry is a no-op on wake).
+    ArmDeadline {
+        run_id: uuid::Uuid,
+        kind: crate::reply::DeadlineKind,
+        wall_at: DateTime<Utc>,
+    },
 }
 
 /// Cloneable handle for waking the engine from another thread / caller.
@@ -38,6 +47,23 @@ impl ControlHandle {
     /// Toggle the global pause-all flag at runtime. The next tick observes it.
     pub fn set_pause_all(&self, paused: bool) {
         let _ = self.tx.send(ControlMsg::SetPauseAll(paused));
+    }
+
+    /// Arm a lifecycle deadline heap entry (IK3). Sent by the watcher when
+    /// a reply arms/rearms a pickup/watchdog deadline outside the scheduler
+    /// thread. Disarming needs no message — a disarmed entry is a lazy
+    /// no-op on wake.
+    pub fn arm_deadline(
+        &self,
+        run_id: uuid::Uuid,
+        kind: crate::reply::DeadlineKind,
+        wall_at: DateTime<Utc>,
+    ) {
+        let _ = self.tx.send(ControlMsg::ArmDeadline {
+            run_id,
+            kind,
+            wall_at,
+        });
     }
 
     pub fn sender(&self) -> Sender<ControlMsg> {
@@ -95,19 +121,63 @@ impl From<StoreError> for SchedulerError {
 
 pub type SchedulerResult<T> = Result<T, SchedulerError>;
 
-/// One slot in the near-horizon heap: earliest `fire_at` wins, `timer_id`
+/// What a heap slot wakes for.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(super) enum HeapKind {
+    /// A timer's scheduled fire.
+    Fire { timer_id: TimerId },
+    /// An IK3 lifecycle deadline (pickup / opt-in watchdog). The wall time
+    /// is a WAKE HINT: the monotonic deadline book decides whether the
+    /// deadline has actually lapsed (wall jumps can never fire it early —
+    /// on such a wake the entry is simply re-armed for the remainder).
+    Deadline {
+        run_id: uuid::Uuid,
+        kind: crate::reply::DeadlineKind,
+    },
+}
+
+impl HeapKind {
+    fn sort_key(&self) -> (u8, String) {
+        match self {
+            Self::Fire { timer_id } => (0, timer_id.to_string()),
+            Self::Deadline { run_id, .. } => (1, run_id.to_string()),
+        }
+    }
+}
+
+/// One slot in the near-horizon heap: earliest `fire_at` wins, the kind key
 /// breaks ties so ordering is total and deterministic.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(super) struct HeapEntry {
     pub(super) fire_at: DateTime<Utc>,
-    pub(super) timer_id: TimerId,
+    pub(super) kind: HeapKind,
+}
+
+impl HeapEntry {
+    pub(super) fn fire(fire_at: DateTime<Utc>, timer_id: TimerId) -> Self {
+        Self {
+            fire_at,
+            kind: HeapKind::Fire { timer_id },
+        }
+    }
+
+    pub(super) fn deadline(
+        wall_at: DateTime<Utc>,
+        run_id: uuid::Uuid,
+        kind: crate::reply::DeadlineKind,
+    ) -> Self {
+        Self {
+            fire_at: wall_at,
+            kind: HeapKind::Deadline { run_id, kind },
+        }
+    }
 }
 
 impl Ord for HeapEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.fire_at
             .cmp(&other.fire_at)
-            .then_with(|| self.timer_id.cmp(&other.timer_id))
+            .then_with(|| self.kind.sort_key().cmp(&other.kind.sort_key()))
     }
 }
 

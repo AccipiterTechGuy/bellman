@@ -331,3 +331,36 @@ fn one_event_line_stays_under_the_4kb_cap() {
         line.len()
     );
 }
+
+#[test]
+fn a_follower_never_clobbers_the_leaders_health_file() {
+    let mut h = Harness::new();
+    // Step 1: the leader writes leader:true.
+    let report = h.publisher.publish_cycle(&h.store);
+    assert!(report.leader);
+    assert_eq!(h.health()["leader"], true);
+
+    // Step 2: the leader holds the lease; a second publisher's cycle is a
+    // follower and must NOT overwrite the file with leader:false.
+    assert!(h.publisher.ensure_leadership().unwrap());
+    let second_store =
+        Store::open_with(h.dir.path().join("timers.db"), OpenOptions::default()).unwrap();
+    let mut follower =
+        EventPublisher::with_config(EventLogConfig::new(h.dir.path().join("logs"))).unwrap();
+    let report = follower.publish_cycle(&second_store);
+    assert!(!report.leader, "the lease is held elsewhere");
+    assert_eq!(
+        h.health()["leader"],
+        true,
+        "the leader's health survives a follower cycle"
+    );
+
+    // Step 3: with the lease free again, a follower state's cycle writes
+    // honestly (nothing to clobber — the file already says leader:true from
+    // a real leader, so this asserts only that leadership still works).
+    drop(h.publisher);
+    let mut next =
+        EventPublisher::with_config(EventLogConfig::new(h.dir.path().join("logs"))).unwrap();
+    let report = next.publish_cycle(&second_store);
+    assert!(report.leader);
+}
