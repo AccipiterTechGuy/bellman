@@ -45,9 +45,30 @@ small local writes — enqueue the job, compute `next_fire`, move on. It never w
 action. Publication lives *here* precisely so it can never queue behind a slow action (see
 the publication rule below).
 
-**On the workers: action execution only** — process launch, output capture, retries, and any
-output the *action itself* owns (e.g. a `write_slot` action's payload). Workers never publish
-firing records; if a worker is writing `status.json`, this card has been implemented wrong.
+**On the workers: action execution only** — process launch, output capture of the launched
+process, retries. Workers never publish firing records; if a worker is writing `status.json`
+**or a slot fire notification**, this card has been implemented wrong.
+
+### The slot notification MOVES — this is a semantic change, stated on purpose
+
+There is no `write_slot` *action* — `Action` is `Launch · Notify · None`
+(`store/models.rs`). The fire notification is written by `ActionRunner::write_fire_slot()`
+(`runner.rs:244`), today **inside the worker path, after the primary action succeeds**.
+Leaving it there under this card resurrects the defect: with a configured fixed
+`write_slot_file`, a slow first firing finishing late would write its notification **over**
+the second firing's — or, kept strictly ordered, the second firing's notification would wait
+out the first firing's whole action. Either way the folder lies.
+
+So: `write_fire_slot()` / the `write_slot_*` config **move into scheduler-side publication**,
+run **exactly once per firing**, and are **removed from the worker and the retry-success
+path**.
+
+The observable semantics change from *"notify only after the action succeeded"* to
+*"notify at fire — even while the action is queued, skipped, retrying, or ultimately
+failing."* That is intentional, not collateral: the notification reports the **firing**;
+the action's outcome is reported where outcomes live — the event log and `status.json`
+(`wake_delivered` / `wake_failed`). An integration that needs "only notify on action
+success" is conflating two facts this design deliberately separates.
 
 ### Rules
 
@@ -112,6 +133,13 @@ the scope has slipped.
 - **A full queue drains without a restart:** fill the queue, persist one more claim, let a
   worker finish — the pending claim is dispatched by the pump, with Bellman never restarted
   during the test.
+- **Slot notification ownership:** with a **fixed** configured `write_slot_file`, a slow
+  first firing and a second firing that publishes while it runs — the first firing's late
+  completion neither overwrites nor duplicates the second's notification, and each firing's
+  notification was written exactly once, at fire time. Asserted with the first action still
+  running when the second's notification is checked.
+- A firing whose action is skipped (`Skip` overlap) or ultimately fails still produced its
+  fire notification — the semantic change above, asserted so it is load-bearing, not prose.
 - **A second fire publishes immediately even while the first action still runs**: fire a
   timer whose action takes 30 s, fire it again at 10 s — at ~10 s the folder already shows
   the new `run_id` and `superseded` is already logged, while the first action is still
