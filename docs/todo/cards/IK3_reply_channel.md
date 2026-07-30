@@ -28,19 +28,80 @@ change is gone.
 | `status.json` | Bellman | everyone |
 | `reply.json` | **the app** | Bellman |
 
-`reply.json` is the entire app-facing surface. The app **overwrites** it at each step and
-never reads it back, never merges, never implements our schema:
+`reply.json` is the entire app-facing surface.
+
+### Bellman pre-creates the stub
+
+At fire, Bellman writes **both** `status.json` and an empty `reply.json` stub. Matches the
+existing convention of pre-generated free slot stubs, and it means the folder shows an app
+exactly what to fill in.
+
+**T0 — Bellman fires. `reply.json`:**
 
 ```json
 {
   "schema": "bellman-reply/1",
-  "run_id": "9f2c…",
+  "run_id": "9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08",
+  "state": null,
+  "app_name": null,
+  "hint": "set state to acknowledged | running | completed | failed, and app_name to your app"
+}
+```
+
+`state: null` is how Bellman tells "stub, untouched" from "the app answered". Bellman writes
+this once and **never writes the file again** — from T0 onward the app is its only writer.
+
+**T1 — the app acknowledges.** Overwrites the whole file:
+
+```json
+{
+  "schema": "bellman-reply/1",
+  "run_id": "9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08",
+  "app_name": "lightbulb",
+  "state": "acknowledged",
+  "acknowledged_at": "2026-07-30T05:00:00Z",
+  "expected_secs": 15
+}
+```
+
+**T2 — running (optional heartbeat):**
+
+```json
+{
+  "schema": "bellman-reply/1",
+  "run_id": "9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08",
+  "app_name": "lightbulb",
+  "state": "running",
+  "heartbeat_at": "2026-07-30T05:00:07Z",
+  "progress": "bulb on, 7s elapsed"
+}
+```
+
+**T3 — completed:**
+
+```json
+{
+  "schema": "bellman-reply/1",
+  "run_id": "9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08",
   "app_name": "lightbulb",
   "state": "completed",
   "completed_at": "2026-07-30T05:00:15Z",
   "result": { "on_duration_secs": 15.02 }
 }
 ```
+
+### Each write is a COMPLETE statement, not a diff
+
+Note that T3 does not repeat `acknowledged_at` or `expected_secs`. It does not have to —
+**Bellman accumulates; the app does not.** Every earlier field is already folded into
+`status.json` and appended to the event log.
+
+This is the property that keeps the client trivial: an app never reads `reply.json` back,
+never merges, never carries state between writes. It states where it is right now, in four
+required fields (`schema`, `run_id`, `app_name`, `state`) plus whatever that state carries.
+
+Consequence for the implementation: **do not treat a missing field as a retraction.**
+`expected_secs` absent at T3 does not mean the app withdrew its estimate.
 
 Bellman watches it, validates, logs the transition, and folds the result into `status.json`.
 
@@ -103,6 +164,9 @@ keep that safe:
 - An app that never replies stays `running` **indefinitely** — no auto-complete, no auto-fail.
 - With `error_detection` on: the deadline marks `failed`/`timed_out`; a heartbeat before it
   prevents that; a late `completed` revises the state and the log retains both.
+- The stub exists at T0 with `state: null`, and Bellman does not act on it.
+- A reply omitting a field set earlier (e.g. `expected_secs` at T3) does **not** retract it —
+  `status.json` retains the accumulated view.
 - Duplicate reply is a no-op. Unknown `run_id`, wrong `app_name`, oversize, or a reserved
   `state` are each quarantined and change nothing.
 - A test proves a reply cannot cause execution of anything.
