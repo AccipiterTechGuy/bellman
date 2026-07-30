@@ -198,17 +198,17 @@ fn reply_stub_is_create_only_and_stale_replies_are_removed() {
     let folder = tree.create_for_timer(&timer, Some("lightbulb")).unwrap();
 
     let run_a = Uuid::new_v4();
-    let stub_a = tree.create_reply_stub(&folder, run_a).unwrap();
+    let stub_a = tree.create_reply_stub(&folder, run_a, "lightbulb").unwrap();
     assert_eq!(stub_a.file_name().unwrap(), reply_file_name(run_a).as_str());
     // O_EXCL: an app-written reply at the path is never clobbered.
     std::fs::write(&stub_a, b"{\"state\":\"completed\"}").unwrap();
-    let again = tree.create_reply_stub(&folder, run_a).unwrap();
+    let again = tree.create_reply_stub(&folder, run_a, "lightbulb").unwrap();
     assert_eq!(std::fs::read_to_string(&again).unwrap(), "{\"state\":\"completed\"}");
 
     // Next run: a fresh per-run file; the previous run's path is removed,
     // never overwritten.
     let run_b = Uuid::new_v4();
-    tree.create_reply_stub(&folder, run_b).unwrap();
+    tree.create_reply_stub(&folder, run_b, "lightbulb").unwrap();
     tree.remove_stale_replies(&folder, run_b).unwrap();
     assert!(!stub_a.exists());
     assert!(folder.join(reply_file_name(run_b)).exists());
@@ -224,7 +224,7 @@ fn fire_projection_writes_firing_snapshot_only() {
 
     let scheduled_for = Utc::now();
     let claim = store.claim_run(timer.id, scheduled_for).unwrap();
-    project_run_started(&tree, &store, &timer, &claim, &FireKind::OnTime, &mut log).unwrap();
+    project_run_started(&tree, &store, &timer, &claim, &FireKind::OnTime, &mut log, None, Utc::now()).unwrap();
 
     let raw = std::fs::read_to_string(
         tree.folder_for(timer.id).unwrap().join(STATUS_FILE_NAME),
@@ -265,13 +265,13 @@ fn owned_timer_refire_supersedes_even_when_claim_completed() {
     // First fire, and its wake action WAS delivered (claim completed) — but
     // the app never replied, so the run is still unresolved in R5 terms.
     let claim1 = store.claim_run(timer.id, Utc::now()).unwrap();
-    project_run_started(&tree, &store, &timer, &claim1, &FireKind::OnTime, &mut log).unwrap();
+    project_run_started(&tree, &store, &timer, &claim1, &FireKind::OnTime, &mut log, None, Utc::now()).unwrap();
     store.complete_run(claim1.run_id).unwrap();
 
     let claim2 = store
         .claim_run(timer.id, Utc::now() + chrono::Duration::days(1))
         .unwrap();
-    project_run_started(&tree, &store, &timer, &claim2, &FireKind::OnTime, &mut log).unwrap();
+    project_run_started(&tree, &store, &timer, &claim2, &FireKind::OnTime, &mut log, None, Utc::now()).unwrap();
 
     let (recs, _) = crate::events::read_events(log.current_path()).unwrap();
     let sup: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Superseded).collect();
@@ -293,12 +293,12 @@ fn unowned_timer_refire_supersedes_only_an_unfinished_claim() {
 
     // First fire completed its action claim → resolved → no superseded.
     let claim1 = store.claim_run(timer.id, Utc::now()).unwrap();
-    project_run_started(&tree, &store, &timer, &claim1, &FireKind::OnTime, &mut log).unwrap();
+    project_run_started(&tree, &store, &timer, &claim1, &FireKind::OnTime, &mut log, None, Utc::now()).unwrap();
     store.complete_run(claim1.run_id).unwrap();
     let claim2 = store
         .claim_run(timer.id, Utc::now() + chrono::Duration::days(1))
         .unwrap();
-    project_run_started(&tree, &store, &timer, &claim2, &FireKind::OnTime, &mut log).unwrap();
+    project_run_started(&tree, &store, &timer, &claim2, &FireKind::OnTime, &mut log, None, Utc::now()).unwrap();
     let (recs, _) = crate::events::read_events(log.current_path()).unwrap();
     assert!(
         !recs.iter().any(|r| r.kind == RunState::Superseded),
@@ -309,7 +309,7 @@ fn unowned_timer_refire_supersedes_only_an_unfinished_claim() {
     let claim3 = store
         .claim_run(timer.id, Utc::now() + chrono::Duration::days(2))
         .unwrap();
-    project_run_started(&tree, &store, &timer, &claim3, &FireKind::OnTime, &mut log).unwrap();
+    project_run_started(&tree, &store, &timer, &claim3, &FireKind::OnTime, &mut log, None, Utc::now()).unwrap();
     let (recs, _) = crate::events::read_events(log.current_path()).unwrap();
     let sup: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Superseded).collect();
     assert_eq!(sup.len(), 1);
@@ -327,7 +327,7 @@ fn second_fire_supersedes_unresolved_first_run() {
 
     // First fire left unresolved (claimed, never completed).
     let claim1 = store.claim_run(timer.id, Utc::now()).unwrap();
-    project_run_started(&tree, &store, &timer, &claim1, &FireKind::OnTime, &mut log).unwrap();
+    project_run_started(&tree, &store, &timer, &claim1, &FireKind::OnTime, &mut log, None, Utc::now()).unwrap();
     let reply1 = tree.folder_for(timer.id).unwrap().join(reply_file_name(claim1.run_id));
     assert!(reply1.exists(), "owned timer gets a per-run reply stub");
 
@@ -336,7 +336,7 @@ fn second_fire_supersedes_unresolved_first_run() {
     let claim2 = store
         .claim_run(timer.id, Utc::now() + chrono::Duration::days(1))
         .unwrap();
-    project_run_started(&tree, &store, &timer, &claim2, &FireKind::OnTime, &mut log).unwrap();
+    project_run_started(&tree, &store, &timer, &claim2, &FireKind::OnTime, &mut log, None, Utc::now()).unwrap();
 
     let (recs, _) = crate::events::read_events(log.current_path()).unwrap();
     let sup: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Superseded).collect();

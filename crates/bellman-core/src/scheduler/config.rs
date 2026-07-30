@@ -36,6 +36,14 @@ pub struct SchedulerConfig {
     pub log_rotation_max_bytes: u64,
     /// Retained-log budget for current + archives (default 1 GiB).
     pub log_retention_budget_bytes: u64,
+    /// Aggregate ceiling for the reply quarantine (default 64 MiB).
+    pub quarantine_budget_bytes: u64,
+    /// Pickup deadline for integration-owned runs (IK3; default 60 s).
+    pub pickup_grace: Duration,
+    /// Opt-in watchdog factor: deadline = `expected_secs × factor` (IK3).
+    pub watchdog_factor: f64,
+    /// Monotonic duration anchors shared with the reply watcher (IK3).
+    pub anchors: crate::reply::SharedAnchors,
 }
 
 impl Default for SchedulerConfig {
@@ -63,6 +71,10 @@ impl SchedulerConfig {
             ack_grace: cfg.ack_grace(),
             log_rotation_max_bytes: cfg.log_rotation_max_bytes,
             log_retention_budget_bytes: cfg.log_retention_budget_bytes,
+            quarantine_budget_bytes: cfg.quarantine_budget_bytes,
+            pickup_grace: cfg.pickup_grace(),
+            watchdog_factor: cfg.watchdog_factor,
+            anchors: crate::reply::new_anchors(),
         }
     }
 
@@ -94,6 +106,27 @@ impl SchedulerConfig {
     pub fn with_data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.data_dir = Some(dir.into());
         self
+    }
+
+    /// Share a duration-anchor registry with the reply watcher (IK3). The
+    /// GUI wires one registry into both so `duration_ms` stays monotonic
+    /// across the fire thread and the ingest thread.
+    pub fn with_anchors(mut self, anchors: crate::reply::SharedAnchors) -> Self {
+        self.anchors = anchors;
+        self
+    }
+
+    /// Build the IK3 reply engine for this configuration (None when no data
+    /// dir is set — unit tests keep a pure store).
+    pub fn reply_engine(&self) -> Option<crate::reply::ReplyEngine> {
+        let data_dir = self.data_dir.clone()?;
+        Some(crate::reply::ReplyEngine {
+            tree: crate::tree::TimersTree::new(&data_dir),
+            data_dir,
+            pickup_grace: self.pickup_grace,
+            watchdog_factor: self.watchdog_factor,
+            anchors: self.anchors.clone(),
+        })
     }
 }
 

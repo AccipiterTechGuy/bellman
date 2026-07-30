@@ -30,6 +30,10 @@ pub struct RunNowOptions {
     pub skip_retry_sleep: bool,
     /// Notification sink to install on the runner. `None` keeps the stub.
     pub notify_sink: Option<Arc<dyn NotifySink>>,
+    /// IK3 duration anchors shared with the reply watcher. `None` starts a
+    /// fresh registry (CLI one-shots): the terminal event then falls back to
+    /// the wall-clock duration, marked `duration_source: "wall_clock"`.
+    pub anchors: Option<crate::reply::SharedAnchors>,
 }
 
 impl std::fmt::Debug for RunNowOptions {
@@ -57,6 +61,7 @@ impl Clone for RunNowOptions {
             write_slot_file: self.write_slot_file.clone(),
             skip_retry_sleep: self.skip_retry_sleep,
             notify_sink: self.notify_sink.clone(),
+            anchors: self.anchors.clone(),
         }
     }
 }
@@ -133,16 +138,35 @@ pub fn run_now(
         claimed_at: claim.claimed_at,
     };
 
-    // IK2: project the fire into the per-timer folder tree (view only —
-    // failures surface but never break the run).
-    let tree = db_path.parent().map(crate::tree::TimersTree::new);
-    if let Some(tree) = &tree {
+    // IK2/IK3: project the fire into the per-timer folder tree (view only —
+    // failures surface but never break the run). The R10 gate is held across
+    // the barrier + projections and released before the action runs.
+    if let Some(data_dir) = db_path.parent() {
+        let engine = crate::reply::ReplyEngine {
+            tree: crate::tree::TimersTree::new(data_dir),
+            data_dir: data_dir.to_path_buf(),
+            pickup_grace: app_cfg.pickup_grace(),
+            watchdog_factor: app_cfg.watchdog_factor,
+            anchors: opts
+                .anchors
+                .clone()
+                .unwrap_or_else(crate::reply::new_anchors),
+        };
         if let Some(log) = runner.event_log_mut() {
-            if let Err(e) =
-                crate::tree::project_run_started(tree, store, &timer, &claim, &ctx.kind, log)
-            {
+            let gate = crate::reply::gate::acquire(&engine.data_dir, timer.id).ok();
+            if let Err(e) = crate::tree::project_run_started(
+                &engine.tree,
+                store,
+                &timer,
+                &claim,
+                &ctx.kind,
+                log,
+                Some(&engine),
+                Utc::now(),
+            ) {
                 eprintln!("bellman: timer tree fire projection failed: {e}");
             }
+            drop(gate);
         }
     }
 
@@ -190,7 +214,8 @@ pub fn run_now(
     // IK2: refresh timer.json with the advanced next_fire. status.json stays
     // the firing snapshot: the R5 `completed` state is an app report (IK3),
     // and the claim ledger's `Completed` only means wake_delivered.
-    if let Some(tree) = &tree {
+    if let Some(data_dir) = db_path.parent() {
+        let tree = crate::tree::TimersTree::new(data_dir);
         let owner = store.get_timer_owner(timer.id).ok().flatten();
         if let Err(e) = tree.sync_timer_json(&timer, owner.as_deref()) {
             eprintln!("bellman: timer.json refresh failed: {e}");

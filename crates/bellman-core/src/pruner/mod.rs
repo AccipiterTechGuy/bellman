@@ -56,6 +56,8 @@ pub struct PruneConfig {
     pub max_current_bytes: u64,
     /// Retained-log budget: current + final archives stay within this.
     pub budget_bytes: u64,
+    /// Aggregate ceiling for the reply quarantine (`timers/bad/`).
+    pub quarantine_budget_bytes: u64,
 }
 
 impl Default for PruneConfig {
@@ -66,6 +68,7 @@ impl Default for PruneConfig {
             ack_grace: DEFAULT_ACK_GRACE,
             max_current_bytes: crate::events::DEFAULT_MAX_CURRENT_BYTES,
             budget_bytes: crate::events::DEFAULT_BUDGET_BYTES,
+            quarantine_budget_bytes: crate::app_config::DEFAULT_QUARANTINE_BUDGET_BYTES,
         }
     }
 }
@@ -320,6 +323,35 @@ pub fn run_prune(
         }
         if let Err(e) = crate::tree::reconcile_folders(tree, store) {
             eprintln!("bellman: timer folder reconcile failed: {e}");
+        }
+        // Reply quarantine retention: 30-day window + aggregate ceiling,
+        // oldest payload/sidecar pairs first. Shares the quarantine lock
+        // with artifact creation (the pruner holds no timer shard here).
+        let bad = crate::reply::quarantine::quarantine_dir(tree.root());
+        if let Ok(_lock) = crate::reply::gate::acquire_quarantine(
+            tree.root().parent().unwrap_or(tree.root()),
+        ) {
+            match crate::reply::quarantine::prune(
+                &bad,
+                config.retention,
+                config.quarantine_budget_bytes,
+                now,
+            ) {
+                Ok(0) => {}
+                Ok(n) => {
+                    let note = EventRecord::new(RunState::Pruned)
+                        .with_logged_at(now)
+                        .with_message("reply_quarantine_retention")
+                        .with_detail(serde_json::json!({
+                            "reason": "quarantine_retention",
+                            "artifacts_removed": n,
+                        }));
+                    if let Err(e) = event_log.append(&note) {
+                        eprintln!("bellman: quarantine prune log failed: {e}");
+                    }
+                }
+                Err(e) => eprintln!("bellman: reply quarantine prune failed: {e}"),
+            }
         }
     }
 

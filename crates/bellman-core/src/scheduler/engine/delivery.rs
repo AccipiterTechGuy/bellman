@@ -268,21 +268,30 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
 
         let ctx = FireContext::from_claim(timer, claim, kind.clone());
 
-        // IK2: project the fire into the per-timer folder tree (view only —
-        // failures surface but never break the fire path).
-        let tree = self
-            .config
-            .data_dir
-            .as_ref()
-            .map(|d| crate::tree::TimersTree::new(d));
-        if let (Some(tree), Some(data_dir)) = (tree.as_ref(), self.config.data_dir.as_ref()) {
-            match crate::events::EventLog::open_under_configured(data_dir) {
+        // IK2/IK3: project the fire into the per-timer folder tree (view
+        // only — failures surface but never break the fire path). The R10
+        // per-timer gate is held across the barrier read, the supersede
+        // decision and the projections, and released BEFORE the action runs.
+        if let Some(engine) = self.config.reply_engine() {
+            match crate::events::EventLog::open_under_configured(&engine.data_dir) {
                 Ok(mut log) => {
+                    let tree = engine.tree.clone();
+                    let gate =
+                        crate::reply::gate::acquire(&engine.data_dir, timer.id).ok();
+                    let now = self.clock.wall_now();
                     if let Err(e) = crate::tree::project_run_started(
-                        tree, &self.store, timer, claim, &ctx.kind, &mut log,
+                        &tree,
+                        &self.store,
+                        timer,
+                        claim,
+                        &ctx.kind,
+                        &mut log,
+                        Some(&engine),
+                        now,
                     ) {
                         eprintln!("bellman: timer tree fire projection failed: {e}");
                     }
+                    drop(gate);
                 }
                 Err(e) => eprintln!("bellman: timer tree fire projection (log open) failed: {e}"),
             }
@@ -300,6 +309,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                     ack_grace: self.config.ack_grace,
                     max_current_bytes: self.config.log_rotation_max_bytes,
                     budget_bytes: self.config.log_retention_budget_bytes,
+                    quarantine_budget_bytes: self.config.quarantine_budget_bytes,
                 };
                 let now = self.clock.wall_now();
                 if let Err(e) =
@@ -338,8 +348,8 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             // failure is honest in the claim ledger and the wake_failed event
             // (R5 `failed` is reserved for app reports, IK3). timer.json
             // still picks up the advanced next_fire.
-            if let Some(tree) = tree.as_ref() {
-                refresh_timer_json(tree, &self.store, timer.id);
+            if let Some(data_dir) = self.config.data_dir.clone() {
+                refresh_timer_json(&crate::tree::TimersTree::new(&data_dir), &self.store, timer.id);
             }
             return Err(SchedulerError::Action(e));
         }
@@ -348,8 +358,8 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         // mark_fired/requeue above. status.json intentionally stays at the
         // firing snapshot: the R5 `completed` state is an app report (IK3),
         // and the claim ledger's `Completed` only means wake_delivered.
-        if let Some(tree) = tree.as_ref() {
-            refresh_timer_json(tree, &self.store, timer.id);
+        if let Some(data_dir) = self.config.data_dir.clone() {
+            refresh_timer_json(&crate::tree::TimersTree::new(&data_dir), &self.store, timer.id);
         }
 
         Ok(Some(DeliveredFire {

@@ -227,6 +227,37 @@ impl SlotService {
         }
     }
 
+    /// IK3: after a slot request advanced the `ack_through` cursor, satisfy
+    /// pickup for the current run (or revise its provisional `no_ack`).
+    /// Best-effort: a failure here is retried by the reply watcher's
+    /// pickup-expiry pass, which also consults the cursor.
+    fn reply_ack_hook(store: &Store, data_dir: &Path, timer_id: Uuid, through: u64) {
+        let Ok(Some(timer)) = store.get_timer(timer_id) else {
+            return;
+        };
+        let app_cfg = crate::app_config::AppConfig::load(data_dir).unwrap_or_default();
+        let engine = crate::reply::ReplyEngine {
+            tree: crate::tree::TimersTree::new(data_dir),
+            data_dir: data_dir.to_path_buf(),
+            pickup_grace: app_cfg.pickup_grace(),
+            watchdog_factor: app_cfg.watchdog_factor,
+            anchors: crate::reply::new_anchors(),
+        };
+        let Ok(_gate) = crate::reply::gate::acquire(data_dir, timer_id) else {
+            return;
+        };
+        match crate::events::EventLog::open_under_configured(data_dir) {
+            Ok(mut log) => {
+                if let Err(e) =
+                    engine.on_ack_through(store, &mut log, &timer, through, Utc::now())
+                {
+                    eprintln!("bellman: ack_through reply hook failed: {e}");
+                }
+            }
+            Err(e) => eprintln!("bellman: ack_through reply hook (log open) failed: {e}"),
+        }
+    }
+
     fn process_work_file(&self, work_path: &Path, store: &mut Store) -> SlotResult<()> {
         refuse_symlink(work_path)?;
         let bytes = read_capped(work_path, self.config.max_read_bytes)?;
@@ -311,6 +342,24 @@ impl SlotService {
 
         let response: SlotResponse = serde_json::from_str(&rec.response_json)
             .map_err(|e| SlotError::Internal(format!("stored response corrupt: {e}")))?;
+
+        // IK3: the slot feed is a durable acknowledgement path that predates
+        // the reply channel — a cursor advance past the current run satisfies
+        // pickup (and revises a provisional `no_ack`) while that run is
+        // current. Post-commit, best-effort like the other view projections.
+        if response.status == SlotStatus::Ok {
+            if let (Some(tree), Some(payload_v)) = (&self.timers_tree, req.payload.as_ref()) {
+                if let Ok(payload) = serde_json::from_value::<SlotPayload>(payload_v.clone()) {
+                    if let (Some(ack), Some(tid)) =
+                        (payload.ack_through, payload.resolved_timer_id())
+                    {
+                        if let Some(data_dir) = tree.root().parent().map(|p| p.to_path_buf()) {
+                            Self::reply_ack_hook(store, &data_dir, tid, ack);
+                        }
+                    }
+                }
+            }
+        }
 
         // IK2: project the folder tree post-commit (view only — never fails
         // the request).

@@ -360,17 +360,48 @@ impl TimersTree {
         }
     }
 
-    /// Create the per-run reply stub `reply-<run_id>.json` with `O_EXCL`
-    /// (create-only; an existing path is never overwritten — a lost race to a
-    /// real reply is the correct outcome). Only integration-owned timers get
+    /// Create the per-run reply stub `reply-<run_id>.json`, pre-filled with
+    /// everything the app should not have to know (`schema`, `run_id`,
+    /// `app_name`, `state: null`, hint) — the app edits; it does not
+    /// reconstruct. Create-only semantics: the content is written to a temp
+    /// file and hard-linked into place, so an existing path (an app that
+    /// already wrote a real reply) is never overwritten — a lost race to a
+    /// real reply is the correct outcome. Only integration-owned timers get
     /// a stub. Returns the stub path (created or already present).
-    pub fn create_reply_stub(&self, folder: &Path, run_id: Uuid) -> TreeResult<PathBuf> {
+    pub fn create_reply_stub(
+        &self,
+        folder: &Path,
+        run_id: Uuid,
+        app_name: &str,
+    ) -> TreeResult<PathBuf> {
         let path = folder.join(reply_file_name(run_id));
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(_) => Ok(path),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(path),
-            Err(e) => Err(e.into()),
+        if path.exists() {
+            return Ok(path);
         }
+        let tmp = folder.join(format!(".reply-{run_id}.tmp"));
+        let bytes = crate::reply::stub_bytes(run_id, app_name);
+        fs::write(&tmp, &bytes)?;
+        if let Ok(f) = fs::File::open(&tmp) {
+            let _ = f.sync_all();
+        }
+        match fs::hard_link(&tmp, &path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            // Filesystems without hard links: fall back to O_EXCL create.
+            Err(_) => match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut f) => {
+                    use std::io::Write;
+                    f.write_all(&bytes)?;
+                }
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(e) => {
+                    let _ = fs::remove_file(&tmp);
+                    return Err(e.into());
+                }
+            },
+        }
+        let _ = fs::remove_file(&tmp);
+        Ok(path)
     }
 
     /// Delete `reply-*.json` files that do not belong to `keep_run` (a new
@@ -489,8 +520,11 @@ fn occurrence_view(kind: &OccurrenceKind) -> serde_json::Value {
 
 // ── status.json (bellman-run/1) ─────────────────────────────────────────
 
-/// The current-run mirror. Optional fields the app never sent are simply
-/// absent — never rendered as empty or "never".
+/// The current-run mirror. `cat status.json` must always show the truth
+/// right now — Bellman's own fields plus everything the app has reported,
+/// accumulated (a reply that omits an earlier field never retracts it).
+/// Optional fields the app never sent are simply absent — never rendered as
+/// empty or "never".
 #[derive(Debug, Clone, Serialize)]
 pub struct RunStatus {
     pub schema: String,
@@ -504,11 +538,29 @@ pub struct RunStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub acknowledged_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_detection: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heartbeat_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_truncated: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failed_at: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub no_ack_at: Option<DateTime<Utc>>,
 }
 
 impl RunStatus {
@@ -524,9 +576,51 @@ impl RunStatus {
             scheduled_for: claim.scheduled_for,
             fired_at: claim.claimed_at,
             app_name: owner.map(str::to_string),
+            acknowledged_at: None,
+            expected_secs: None,
+            error_detection: None,
+            heartbeat_at: None,
+            progress: None,
             completed_at: None,
+            result: None,
+            result_truncated: None,
             failed_at: None,
             reason: None,
+            failure_kind: None,
+            no_ack_at: None,
+        }
+    }
+
+    /// Project the accumulated database row (IK3) into the mirror. This is
+    /// how `status.json` is rebuilt after a crash and how every accepted
+    /// reply folds in: the database is the truth, the file is the present.
+    pub fn from_run_state(
+        timer: &Timer,
+        claim: &RunClaim,
+        row: &crate::store::RunStateRow,
+    ) -> Self {
+        Self {
+            schema: RUN_SCHEMA_V1.to_string(),
+            state: row.state.clone(),
+            run_id: claim.run_id,
+            timer_id: timer.id,
+            timer_name: timer.name.clone(),
+            occurrence_kind: timer.occurrence.kind().kind_label().to_string(),
+            scheduled_for: claim.scheduled_for,
+            fired_at: row.fired_at,
+            app_name: Some(row.app_name.clone()),
+            acknowledged_at: row.acknowledged_at,
+            expected_secs: row.expected_secs,
+            error_detection: row.error_detection,
+            heartbeat_at: row.heartbeat_at,
+            progress: row.progress.clone(),
+            completed_at: row.completed_at,
+            result: row.result_json.clone(),
+            result_truncated: row.result_truncated.then_some(true),
+            failed_at: row.failed_at,
+            reason: row.reason.clone(),
+            failure_kind: row.failure_kind.map(|k| k.as_str().to_string()),
+            no_ack_at: row.no_ack_at,
         }
     }
 }
@@ -565,6 +659,16 @@ pub fn write_status(tree: &TimersTree, timer: &Timer, status: &RunStatus) -> Tre
 ///   (`claimed`).
 ///
 /// `exclude_run` skips the just-claimed run when called from a fire.
+///
+/// The exact R5 unresolved test:
+///
+/// - **Owned run with a lifecycle row** (IK3): unresolved means the app
+///   lifecycle is non-terminal (`completed` / `failed` / `no_ack` /
+///   `cancelled` / `superseded` close it — provisionally for the first three,
+///   but terminal enough that the next firing supersedes regardless).
+/// - **Owned run without a row** (predates IK3): conservatively open.
+/// - **Unowned run**: unresolved means the action claim is not finished
+///   (`claimed`).
 fn current_unresolved_run(
     store: &Store,
     timer: &Timer,
@@ -579,28 +683,39 @@ fn current_unresolved_run(
     let Some(prev) = latest else {
         return Ok(None);
     };
-    let unresolved = if owner.is_some() {
-        // No terminal app state exists pre-IK3 — an owned run stays open.
-        true
-    } else {
-        prev.status == ClaimStatus::Claimed
+    let unresolved = match store.get_run_state(prev.run_id)? {
+        Some(row) => !row.is_terminal(),
+        None => {
+            if owner.is_some() {
+                // No lifecycle row (predates IK3) — an owned run stays open.
+                true
+            } else {
+                prev.status == ClaimStatus::Claimed
+            }
+        }
     };
     Ok(unresolved.then(|| prev.clone()))
 }
 
 /// Fire-time projection, after the run claim committed and before/with the
-/// action run:
+/// action run. With an IK3 [`ReplyEngine`] this is the full fire lifecycle:
 ///
-/// 1. If the previous run (the one this firing replaces as current) is still
-///    unresolved, it is logged `superseded` — loudly; for an owned timer it
-///    means the app never reported an ending before the next firing came.
-///    The previous run's reply path is never overwritten: its stale reply
-///    file is deleted and the new run gets its own.
-/// 2. `status.json` is rewritten fresh for this run (`fired` /
-///    `fired_late` / `coalesced`). It is the firing snapshot — Bellman's
-///    delivery outcome stays in the claim ledger and event log; the R5
-///    `completed` / `failed` states are written only from app replies (IK3).
-/// 3. Integration-owned timers get a fresh per-run reply stub (`O_EXCL`).
+/// 1. **Pre-fire barrier (R10)**: the previous current run's reply file is
+///    synchronously read and ingested FIRST, so a valid `completed` the
+///    watcher has not processed yet is folded in before the run can be
+///    superseded. The caller holds the per-timer gate across this call.
+/// 2. If the previous run is still unresolved *after* the barrier, it is
+///    logged `superseded` — loudly; for an owned timer it means the app
+///    never reported an ending before the next firing came. Its lifecycle
+///    row is marked `superseded` and its deadlines are consumed.
+/// 3. The new run gets its lifecycle row (owner snapshotted, pickup deadline
+///    started at the fire commit) and its monotonic duration anchor.
+/// 4. Projections, in the R10 order: fresh `status.json` snapshot →
+///    create-only pre-filled reply stub → fire notification under
+///    `slots/fires/` (never eligible while either projection is missing).
+///    The previous run's reply path is never overwritten: its stale file is
+///    deleted after its final ingest and the new run gets its own.
+#[allow(clippy::too_many_arguments)]
 pub fn project_run_started(
     tree: &TimersTree,
     store: &Store,
@@ -608,11 +723,27 @@ pub fn project_run_started(
     claim: &RunClaim,
     kind: &FireKind,
     log: &mut EventLog,
+    engine: Option<&crate::reply::ReplyEngine>,
+    now: DateTime<Utc>,
 ) -> TreeResult<()> {
     let owner = store.get_timer_owner(timer.id)?;
     let folder = tree.sync_timer_json(timer, owner.as_deref())?;
 
-    // 1. Supersede the previous run when it is still unresolved.
+    // 1. Pre-fire barrier: ingest whatever the previous run's app already
+    //    wrote before deciding whether it is unresolved.
+    if let Some(engine) = engine {
+        let prev = store
+            .runs_for_timer(timer.id)?
+            .into_iter()
+            .rev()
+            .find(|r| r.run_id != claim.run_id);
+        if let Some(prev) = prev {
+            crate::reply::barrier_ingest(engine, store, log, timer, &folder, prev.run_id, now)
+                .map_err(|e| TreeError::Io(e.to_string()))?;
+        }
+    }
+
+    // 2. Supersede the previous run when it is still unresolved.
     if let Some(prev) = current_unresolved_run(store, timer, Some(claim.run_id))? {
         log.emit(
             EventRecord::new(RunState::Superseded)
@@ -622,16 +753,57 @@ pub fn project_run_started(
                 .with_message("superseded by a new firing while still unresolved"),
         )
         .map_err(|e| TreeError::Io(e.to_string()))?;
+        if let Some(mut row) = store.get_run_state(prev.run_id)? {
+            row.state = RunState::Superseded.as_str().to_string();
+            row.pickup_deadline = None;
+            row.watchdog_deadline = None;
+            store.update_run_state(&row)?;
+        }
     }
-    // The new run owns the channel: drop stale reply files (never overwrite),
-    // then write the fresh status snapshot.
+
+    // 3. The new run's lifecycle row + duration anchor (integration-owned).
+    if let (Some(app_name), Some(engine)) = (owner.as_deref(), engine) {
+        let deadline = now
+            + chrono::Duration::from_std(engine.pickup_grace)
+                .unwrap_or_else(|_| chrono::Duration::seconds(60));
+        let row = crate::store::RunStateRow::fired(
+            claim.run_id,
+            timer.id,
+            app_name,
+            fire_state(kind),
+            claim.claimed_at,
+            deadline,
+        );
+        store.insert_run_state(&row)?;
+        engine
+            .anchors
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(claim.run_id, std::time::Instant::now());
+    }
+
+    // 4a. The new run owns the channel: drop stale reply files (never
+    //     overwrite), then write the fresh status snapshot.
     tree.remove_stale_replies(&folder, claim.run_id)?;
     let status = RunStatus::fired(timer, claim, kind, owner.as_deref());
     write_status(tree, timer, &status)?;
 
-    // 3. Integration-owned run: fresh per-run reply stub.
-    if owner.is_some() {
-        tree.create_reply_stub(&folder, claim.run_id)?;
+    // 4b. Integration-owned run: fresh pre-filled per-run reply stub
+    //     (create-only), then the fire notification — in that order, so no
+    //     app ever observes a `reply_path` Bellman has not projected.
+    if let Some(app_name) = owner.as_deref() {
+        tree.create_reply_stub(&folder, claim.run_id, app_name)?;
+        if let Some(engine) = engine {
+            crate::reply::publish_fire_notification(
+                engine,
+                timer,
+                claim,
+                fire_state(kind),
+                &folder,
+                app_name,
+            )
+            .map_err(|e| TreeError::Io(e.to_string()))?;
+        }
     }
     Ok(())
 }
@@ -655,6 +827,14 @@ pub fn log_cancelled_for_open_runs(
                 .with_message("timer deleted while its run was open"),
         )
         .map_err(|e| TreeError::Io(e.to_string()))?;
+        // Close the lifecycle row too: its deadlines must not fire `no_ack`
+        // or a watchdog for a timer that no longer exists.
+        if let Some(mut row) = store.get_run_state(run.run_id)? {
+            row.state = RunState::Cancelled.as_str().to_string();
+            row.pickup_deadline = None;
+            row.watchdog_deadline = None;
+            store.update_run_state(&row)?;
+        }
         n += 1;
     }
     Ok(n)
