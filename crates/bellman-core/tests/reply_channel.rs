@@ -168,8 +168,10 @@ fn end_to_end_no_ack_when_the_app_never_answers() {
     let mut e = E2e::new();
     let timer = e.add_owned_timer("silent-app", "lightbulb");
     // The pickup deadline is its own config knob — 1s here so the test is fast.
-    let mut cfg = bellman_core::app_config::AppConfig::default();
-    cfg.pickup_grace_secs = 1;
+    let cfg = bellman_core::app_config::AppConfig {
+        pickup_grace_secs: 1,
+        ..Default::default()
+    };
     cfg.save(e.data_dir()).unwrap();
     let anchors = new_anchors();
     let engine = e.engine(Duration::from_secs(1), anchors.clone());
