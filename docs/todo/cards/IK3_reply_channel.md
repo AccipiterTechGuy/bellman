@@ -110,6 +110,20 @@ Read-modify-write is safe here **only** because the app is the sole writer after
 the same property that made the split necessary in the first place — do not later "optimise"
 it by letting Bellman touch this file again.
 
+### Heartbeats are optional, and absence is not a state
+
+`heartbeat_at` and `progress` are entirely optional. An app that never sends one is a normal,
+fully-supported app — most will be. So:
+
+- **Never require it.** No warning, no degraded status, no "last heartbeat: never".
+- **Never display it when absent.** A missing `heartbeat_at` means the app does not do
+  heartbeats; it does not mean the app is unhealthy. `status.json` and the GUI simply omit
+  the field rather than showing an empty or placeholder value.
+- **The watchdog works without it.** With `error_detection: true` and no heartbeats, the
+  deadline is `expected_secs × factor` and never extends. That is correct behaviour, not a
+  fallback.
+- Absence is never a reason to fail, flag or escalate a run.
+
 ### Robustness rules
 
 - **Only `state` is required from the app.** Everything else is optional and depends on the
@@ -173,7 +187,8 @@ held to a deadline **it declared itself** — not Bellman guessing. Default fals
 
 - Deadline = `expected_secs × factor`, configurable, default forgiving (~2×). Failing at the
   exact stated second makes every app pad its estimate and the field becomes fiction.
-- **A heartbeat restarts the countdown** — this is what makes heartbeats worth sending.
+- **A heartbeat restarts the countdown** — this is what makes heartbeats worth sending, and
+  the only way a long job can say "still alive, don't give up on me".
 - Outcome is `failed` with `failure_kind: "timed_out"` (vs `"reported"`).
 - **Marking is not killing.** Flag the run; do not terminate the process.
 
@@ -215,8 +230,9 @@ keep that safe:
   completed 05:22" survives. That sequence is the interesting story.
 - **One direction only.** An app's report beats Bellman's inference — Bellman *deduced*
   silence, the app *knows*. Bellman must never flip an app's `completed` back to failed.
-- **`runs/` must not freeze at the deadline** or the archive is frozen wrong. Freeze on an app
-  report, or let a late reply rewrite it.
+- **Only while the run is still current.** A reply for a run the folder has already moved past
+  (the timer fired again) is rejected as `superseded`, not applied. Revision reaches back
+  through time, never across runs.
 
 ## Validation on every read
 

@@ -92,10 +92,9 @@ When enabled:
   - **One direction only.** An app's own report always beats Bellman's inference — Bellman
     *deduced* silence, the app *knows*. Bellman must never flip an app's `completed` back to
     failed. Bellman's guesses are overridable; the app's claims are not.
-  - **`runs/` must not freeze too early.** A run archived at the deadline would be frozen
-    wrong. Either freeze only on an app report, or let a late reply rewrite the frozen file.
-    Lateness is bounded naturally: once the run is pruned its `run_id` is unknown and the
-    reply is rejected, which is already a rule.
+  - **Only while the run is still current.** A reply for a run the folder has already moved
+    past — the timer fired again — is rejected as `superseded`, not applied. Revision reaches
+    back through time, never across runs.
 
 Cheap to implement precisely because Bellman is a scheduler — a watchdog deadline is one
 entry in the heap it already runs.
@@ -208,34 +207,6 @@ With the opt-in watchdog, mid-run:
 An app may write `acknowledged`, `running`, `completed`, `failed`. Never `fired`, never
 `no_ack` — those are Bellman's.
 
-### `runs/2026-07-30T05-00-00Z.json` — `bellman-run/1`, frozen
-
-`status.json` at close, plus two computed fields. Filename is the UTC scheduled time so the
-folder sorts chronologically in any file manager.
-
-```json
-{
-  "schema": "bellman-run/1",
-  "state": "completed",
-  "run_id": "9f2c…",
-  "timer_id": "3f1a…",
-  "timer_name": "bulb-test",
-  "occurrence_kind": "daily",
-  "scheduled_for": "2026-07-30T05:00:00Z",
-  "fired_at": "2026-07-30T05:00:00Z",
-  "app_name": "lightbulb",
-  "acknowledged_at": "2026-07-30T05:00:00Z",
-  "expected_secs": 15,
-  "completed_at": "2026-07-30T05:00:15Z",
-  "result": { "on_duration_secs": 15.02 },
-
-  "closed_at": "2026-07-30T05:00:15Z",
-  "duration_ms": 15020
-}
-```
-
-A late reply may rewrite this file — it must not be treated as immutable the moment it lands.
-
 ### Event log line — `bellman-event/1`
 
 ```json
@@ -292,9 +263,9 @@ no CLI, no log parsing.
 ~/.bellman/timers/
 ├── README.txt
 ├── bulb-test-3f1a/
-│   ├── timer.json      what the timer IS      (Bellman writes, you read)
-│   ├── status.json     the CURRENT run        (Bellman + the app write)
-│   └── runs/           one file per past run  (frozen at close)
+│   ├── timer.json      what the timer IS        (Bellman writes, you read)
+│   ├── status.json     the CURRENT run          (Bellman writes, everyone reads)
+│   └── reply.json      where the app answers    (the app writes, Bellman reads)
 └── morning-backup-7b22/
 ```
 
@@ -317,7 +288,7 @@ depend on it; the live name lives in `timer.json`.
 
 ## Deletion — decided
 
-**Deleting a timer deletes its folder, including `runs/`.** No tombstone, no orphan tree.
+**Deleting a timer deletes its folder.** No tombstone, no orphan tree.
 
 Safe precisely because the event log survives: "what fired, and when" is answerable forever
 from `events.current.jsonl` regardless of which folders still exist.
@@ -330,27 +301,20 @@ Two cases that follow:
 - **Orphan folders.** A crash between the database delete and the folder delete leaves a tree
   with no timer. The pruner already does orphan sweeps for slots — extend it here.
 
-## `runs/` retention — decided
+## No history in the folder — a new run wipes it
 
-Three limits, each protecting something different. All configurable.
+The folder holds the **current** run only. When a timer fires again, `status.json` and
+`reply.json` are overwritten fresh; nothing from the previous run is kept there.
 
-| limit | default | protects |
-|---|---|---|
-| **Total tree size** | **1 GB** | disk. A hard ceiling — size always wins |
-| **Age** | **30 days** | staleness. Matches the event-log archive policy already in place |
-| **Runs per timer** | **50** | browsability |
+There is deliberately no `runs/` directory. History already has two homes — the append-only
+`events.current.jsonl`, and the Run history page in the GUI (`ui/src/HistoryPage.svelte`). A
+third copy in the folder would buy only "browse past runs in a file manager", and would cost
+size caps, age caps, per-timer count caps, pruning and a freeze-before-wipe ordering rule.
+Not worth it.
 
-Order of operations when pruning: sweep by age first, then by per-timer count, then — if the
-tree is still over the ceiling — delete oldest-first across all timers until it is under.
-
-**Why the count cap is not redundant.** A run file is ~600 bytes, so a per-minute interval
-timer produces 43,200 runs ≈ **26 MB in 30 days** — 2.6% of the 1 GB ceiling. Roughly forty
-such timers would be needed before size ever triggers, and by then each folder holds tens of
-thousands of files. The size cap protects the disk; only the count cap protects the property
-this tree exists for, which is opening a folder and being able to read it.
-
-Nothing is lost to pruning: `events.current.jsonl` still records every fire. Log what was
-pruned — never silently.
+**Consequence, accepted:** if a run is still open when the timer fires again, its outcome is
+never known. The new run overwrites it. Log `superseded` **loudly** — it means the interval
+is shorter than the app takes, which is a misconfiguration worth seeing.
 
 ## `timer.json` is readable, not authoritative
 

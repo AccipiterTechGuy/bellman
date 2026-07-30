@@ -14,8 +14,12 @@ CLI, no log parsing.
 ├── bulb-test-3f1a/
 │   ├── timer.json      what the timer IS
 │   ├── status.json     the CURRENT run
-│   └── runs/           frozen past runs
+│   └── reply.json      where the app answers   (IK3)
 ```
+
+**The folder holds the current run only.** There is no `runs/` directory and no history here:
+a new fire overwrites `status.json` and `reply.json` fresh. History lives in
+`events.current.jsonl` and in the GUI's Run history page, both of which already exist.
 
 ## This tree is a VIEW, not the record
 
@@ -26,7 +30,7 @@ request/response **channel**. Two trees, two jobs.
 
 ## Scope
 
-- `timers/<slug>-<short-id>/` with `timer.json`, `status.json`, `runs/`, and a `README.txt`
+- `timers/<slug>-<short-id>/` with `timer.json`, `status.json`, `reply.json` (IK3) and a `README.txt`
   at the root explaining the layout to whoever opens it. The README must state which file
   answers the question: **`status.json` is the truth; `reply.json` is only the app's side.**
   They diverge whenever Bellman judged a run (`no_ack`, watchdog expiry) and the app did not
@@ -39,11 +43,10 @@ request/response **channel**. Two trees, two jobs.
   ignored. It carries the `note` field saying so, because someone will edit the time and
   wonder why nothing happened.
 - `status.json` written by Bellman at fire (`state: "fired"`). IK3 adds the app's side and
-  folds it in. It is the **mirror**: `cat status.json` shows the truth right now, which is
+  folds it in. Optional fields the app never sent (`heartbeat_at`, `progress`, `expected_secs`)
+  are simply absent — never rendered as empty or "never". It is the **mirror**: `cat status.json` shows the truth right now, which is
   the reason a human opens this folder at all.
-- `runs/<UTC-scheduled>.json` frozen at close, plus `closed_at` and `duration_ms`. The
-  filename sorts chronologically in any file manager.
-- **Deletion:** deleting a timer deletes its folder including `runs/`. No tombstone. Close any
+- **Deletion:** deleting a timer deletes its folder. No tombstone. Close any
   open run as `cancelled` in the event log **first**; an app whose `status.json` vanished must
   read that as cancelled, not crash.
 - **Orphan sweep:** a crash between the database delete and the folder delete leaves a tree
@@ -94,23 +97,17 @@ accepts it as `/`.
 flag). Avoid `sanitise-file-name` — single release, January 2022, no updates since. Either
 way, own the reserved-name check rather than trusting a dependency with it.
 
-## Why the count cap is not redundant
-
-A run file is ~600 bytes, so a per-minute interval timer makes 43,200 runs ≈ **26 MB in 30
-days** — 2.6% of the ceiling. Size would never trigger, and the folder would hold tens of
-thousands of files. Size protects the disk; only the count protects the browsable property
-this whole card exists for.
-
 ## Exit gate
 
 - Create a timer → its folder appears with `timer.json` and a `README.txt` at the root.
-- Fire it → `status.json` shows `fired`; close it → a file lands in `runs/`.
+- Fire it → `status.json` shows `fired`; close it → `closed_at` and `duration_ms` appear.
+- Fire it **again** → the run files are wiped fresh; if the previous run was open, `superseded`
+  is logged.
 - Rename the timer → folder path unchanged, `timer.json` shows the new name.
-- Delete the timer → folder gone; the fire is still findable in `events.current.jsonl`.
+- Delete the timer → folder gone; every fire is still findable in `events.current.jsonl`.
 - Delete a timer **with an open run** → the run is logged `cancelled` before removal.
 - **Slug tests, unit-level and OS-independent** — real Windows validation belongs to M9:
   - `CON`, `con`, `COM1`, `COM¹`, `LPT3`, `COM0` each produce a safe folder name.
   - `backup.` and `backup` produce **different** folder names — the trailing-dot collision.
   - `a:b`, `a/b`, `a<b`, and a name containing `0x07` are each sanitised.
   - `CONX` is left alone — it was never reserved, and over-escaping is its own bug.
-- Retention: exceeding any of the three limits prunes correctly and logs what went.

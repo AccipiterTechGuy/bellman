@@ -12,7 +12,7 @@ example a third party copies.
 2. The app writes `reply.json` — `acknowledged`, `app_name: "lightbulb"`, `expected_secs: 15`.
 3. The bulb turns **on** — visibly, on screen — and stays on for **15 seconds**.
 4. The app overwrites `reply.json` — `completed`, with the measured on-duration.
-5. Bellman validates, folds it into `status.json`, closes the run, freezes it into `runs/`.
+5. Bellman validates, folds it into `status.json` and closes the run.
 
 Keep it small and readable. It is documentation that happens to compile, and it must be
 genuinely observable: a human watching the screen sees the bulb light and go out.
@@ -54,7 +54,7 @@ existing clients (Python, bash, PowerShell, Node) to cover the reply direction.
 ## Exit gate
 
 - Full round trip observed live: fire → acknowledge → bulb visibly on for 15s → completed →
-  validated, closed, frozen into `runs/`. Every transition in `events.current.jsonl`.
+  validated and closed. Every transition in `events.current.jsonl`.
 - The lightbulb's reply logic is under ~10 lines in each documented language.
 - **Someone (or something) that has not seen the code follows `INTEGRATION.md` and their
   client works.** That is the real test of this card — not that the bulb lights.
