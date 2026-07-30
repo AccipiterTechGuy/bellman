@@ -52,8 +52,22 @@ pre-generated free slot stubs.
 supplies it. When a timer was created by a human rather than an app there is no owner: leave
 it `null` and let the first responder fill it in.
 
-`state: null` is how Bellman tells "stub, untouched" from "the app answered". **Bellman writes
-this file once and never again** — from T0 the app is its only writer.
+`state: null` is how Bellman tells "stub, untouched" from "the app answered". **While the run
+is live and the file is valid for it, the app is the only writer.** Bellman touches
+`reply.json` again in exactly three cases, each of which is a **new T0**, not an exception:
+
+- the timer fires again — the new run's stub replaces the old file;
+- the file is missing or permanently corrupt — rebuilt as the current run's stub;
+- the file holds a **stale `run_id`** — a previous run's app finished after the new stub was
+  written and clobbered it. Bellman logs `superseded` for that reply, then **restores the
+  current run's stub**.
+
+The third case is a real race, not a hypothetical: app A is mid-run, the timer fires again,
+Bellman writes run B's stub, then A completes and atomically replaces it with run A's
+`run_id`. No ordering in the database prevents a live file write. It does **not** need a
+lock: Bellman already reads every write to this file, the stale `run_id` identifies the
+clobber on sight, and the old app is terminating — it writes at most once more. Restore
+converges; a lock protocol is the shared-file design this split exists to avoid.
 
 ### The app edits; it does not reconstruct
 
@@ -126,8 +140,12 @@ fully-supported app — most will be. So:
 
 ### Robustness rules
 
-- **Only `state` is required from the app.** Everything else is optional and depends on the
-  state being reported.
+- **Only `state` is required from the app** — meaning it is the only field the app must
+  *set*. A valid reply still carries the identity fields, because the stub already has them:
+  the minimal reply is `schema` + `run_id` + `app_name` + `state`, nothing less.
+  `{"state": "completed"}` alone is not a reply — with no `run_id` it cannot be matched to a
+  run and is rejected. An app editing the stub gets this for free; an app composing from
+  scratch must copy the three identity fields from the stub or the fire notification.
 - **Never treat a missing field as a retraction.** If an app writes a minimal file rather than
   editing the stub, `status.json` retains what was folded in earlier. Both styles must work.
 - The app must **not** be required to read `status.json`. Its whole interaction is one file.
@@ -370,7 +388,7 @@ handled differently:
 | failure | response |
 |---|---|
 | JSON does not parse | wait the debounce window, re-read. Bytes changed ⇒ keep waiting. **Same invalid bytes still there** ⇒ `reply_rejected` |
-| parses, but wrong `run_id` / `app_name` / reserved `state` / oversize | reject **immediately** — these are decidable on sight and waiting cannot change them |
+| parses, but a semantic rule below fails | decide **immediately** — these are decidable on sight and waiting cannot change them |
 
 Never quarantine on the first unparseable read. Never debounce a semantic rejection.
 
@@ -378,9 +396,17 @@ If the file is deleted or permanently corrupt: the database still identifies the
 Bellman reports the channel as missing, and the next fire (or startup) replaces it. A
 hand-edited `run_id` is never trusted.
 
-- `run_id` must match the run open in that folder — stale or unknown ⇒ quarantine to `bad/`.
+**A `run_id` that is not the current run has exactly two cases — one rule each, stated once:**
+
+| the `run_id` is… | it means | Bellman does |
+|---|---|---|
+| a **previous run of this timer** | a slow app finished after the timer fired again — expected, meaningful | log `superseded` (duplicates no-op), do **not** apply it, restore the current stub |
+| **unknown entirely** | garbage, tampering, or a hand edit | `reply_rejected` + quarantine to `bad/` |
+
+Everything else:
+
 - `app_name` must match the first acker; a second app cannot take over a run.
-- `state` must be one an app may write — never `fired`, never `no_ack`.
+- `state` must be one an app may write — never `fired`, never `no_ack`, never `cancelled`.
 - Bounded payload and bounded free text; oversize ⇒ quarantine, unread.
 - **R9: a reply is data, never a command.** Bellman parses, validates, logs. It must never
   launch, execute, schedule or modify anything because an app wrote it. Worst case for a
@@ -400,7 +426,10 @@ hand-edited `run_id` is never trusted.
   even if the event log is perfect.
 - Fields folded in earlier survive later writes that omit them (`expected_secs` from T1 is
   still in `status.json` after T3).
-- An app that never replies stays `running` **indefinitely** — no auto-complete, no auto-fail.
+- An app that **acknowledged or entered `running` but never closes** stays `running`
+  **indefinitely** — no auto-complete, no auto-fail (unless it opted into the watchdog). An
+  app that never replies **at all** is a different case: `no_ack` after the 60s pickup grace.
+  The two must not be conflated — one said "I'm working", the other said nothing.
 - With `error_detection` on: the deadline marks `failed`/`timed_out`; a heartbeat before it
   prevents that; a late `completed` revises the state and the log retains both.
 - **On watchdog expiry `reply.json` is byte-identical to what the app last wrote** — Bellman
@@ -415,6 +444,13 @@ hand-edited `run_id` is never trusted.
   `status.json` retains the accumulated view.
 - Duplicate reply is a no-op. Unknown `run_id`, wrong `app_name`, oversize, or a reserved
   `state` are each quarantined and change nothing.
+- **The stub-clobber race:** while run B's stub sits in the folder, write a completed reply
+  carrying run A's `run_id` (the previous run). Asserted: `superseded` logged once, run B's
+  state untouched, and the stub is **restored with run B's `run_id`** so an app reading it
+  next gets the current run — not run A's leftovers.
+- A previous-run reply logs `superseded`; a fabricated `run_id` logs `reply_rejected` and
+  quarantines. Different events — asserted separately, because collapsing them hides real
+  slow-app behaviour inside a tamper bucket.
 - A test proves a reply cannot cause execution of anything.
 - A run can be stopped/closed while nothing holds a token — the abort path is never gated.
 - **A reply written while Bellman was stopped survives the restart** — stop Bellman, write

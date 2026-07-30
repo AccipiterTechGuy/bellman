@@ -51,9 +51,13 @@ request/response **channel**. Two trees, two jobs.
   read that as cancelled, not crash.
 - **Orphan sweep:** a crash between the database delete and the folder delete leaves a tree
   with no timer. Extend the pruner's existing orphan sweep.
-- **Retention**, all configurable: **1 GB** total (hard ceiling, always wins) · **30 days** ·
-  **50 runs per timer**. Prune by age, then per-timer count, then oldest-first across all
-  timers if still over. Log every prune; never silent.
+- **The folders need no retention.** Each holds three small files for the current run and
+  nothing accumulates — a "50 runs per timer" or size cap here would be pruning history that
+  this tree, by design, does not keep. Retention belongs to the **event-log archives**
+  (`rotate_and_retain` already exists): **1 GB** total hard ceiling · **30 days**, both
+  configurable. Log every prune; never silent.
+- **State the window honestly.** History is findable for the retention window, not forever.
+  Anywhere the README or docs describe history, say "30-day history (configurable)".
 
 ## Slug rules — verified against Microsoft Learn, 2026-07-30
 
@@ -100,12 +104,16 @@ way, own the reserved-name check rather than trusting a dependency with it.
 ## Exit gate
 
 - Create a timer → its folder appears with `timer.json` and a `README.txt` at the root.
-- Fire it → `status.json` shows `fired`; close it → `closed_at` and `duration_ms` appear.
+- Fire it → `status.json` shows `fired`; the app completes it → `state: "completed"` with
+  `completed_at`, per the `bellman-run/1` shape. (`duration_ms` is on the **log event** only —
+  a `duration_ms` appearing in `status.json` means a field IK1 never defined was invented.)
 - Fire it **again** → the run files are wiped fresh; if the previous run was open, `superseded`
   is logged.
 - Rename the timer → folder path unchanged, `timer.json` shows the new name.
-- Delete the timer → folder gone; every fire is still findable in `events.current.jsonl`.
-- Delete a timer **with an open run** → the run is logged `cancelled` before removal.
+- Delete the timer → folder gone; every fire within the retention window is still findable in
+  `events.current.jsonl` / its archives.
+- Delete a timer **with an open run** → the run is logged `cancelled` (in the R5 vocabulary)
+  before removal.
 - **Slug tests, unit-level and OS-independent** — real Windows validation belongs to M9:
   - `CON`, `con`, `COM1`, `COM¹`, `LPT3`, `COM0` each produce a safe folder name.
   - `backup.` and `backup` produce **different** folder names — the trailing-dot collision.

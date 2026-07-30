@@ -57,6 +57,15 @@ it would tell nobody anything they were not about to be told anyway. At 1× it i
 warning; at 2× it is a judgement. **The label never fires an event** — no log line, no state
 change, nothing but pixels.
 
+**The label's clock starts at `fired_at`.** `overdue` ⇔ `now − fired_at > expected_secs`,
+both from `status.json`. This is deliberately a *different* anchor from the watchdog, which
+counts on Bellman's monotonic clock from the moment it received the reply (R8) — and that is
+fine, because the two answer different questions. The label answers the human one: "this
+fired 20 minutes ago and said 15" — which is exactly R8's advisory example. The watchdog
+answers a contractual one and needs the tamper-proof clock. `fired_at` is Bellman's own
+stamp, exists on every run from T0, and needs no new field; anchoring the label on
+`acknowledged_at` would mean a slow-to-ack app postpones its own warning.
+
 For an app that never opted in, only the label exists. That is R8's advisory case, unchanged:
 "running, overdue — 47m elapsed, expected 10m", and Bellman never acts on it.
 
@@ -98,6 +107,8 @@ Bellman's design point is a small resident footprint (`docs/PERF.md`).
   obvious-looking wrong move.
 - Crossing into `overdue` writes **nothing** — no event, no log line, no state change.
   Asserted by counting log lines across the boundary.
+- The label anchors on `fired_at`: a run that fired at T, acked at T+5m, `expected_secs: 900`
+  reads `overdue` at **T+15m**, not T+20m.
 - An app with no `error_detection` shows `overdue` and is **never** failed for it, however
   long it runs.
 - The run can still reach `completed` after `overdue`, with the row updating to match.

@@ -49,9 +49,16 @@ slot/file writes.
 
 - **No thread per timer.** One shared pool, bounded by the existing
   `max_concurrent_actions`. A thousand timers must not mean a thousand threads.
-- **Same timer stays ordered.** Two jobs for one timer never run out of order. The existing
-  `in_flight` set in `runner.rs:301` and the overlap policy are the seed of this — extend
-  them, do not duplicate.
+- **Publication and execution are different things, and only execution queues.** When a timer
+  fires again while its previous action is still running, the *record* of the new fire — the
+  claim, the `superseded` line, the fresh `status.json` and `reply.json` stub — is published
+  **immediately**, at fire time, on the scheduler side. It is short local work and it is the
+  IK contract ("a new firing always proceeds"). Only the *action* — the process launch —
+  waits its turn in the timer's lane. Queuing the publication behind a 15-minute action would
+  leave the folder claiming the old run is current for 15 minutes, which breaks IK3's mirror.
+- **Same timer's ACTIONS stay ordered.** Two action executions for one timer never run
+  concurrently or out of order. The existing `in_flight` set in `runner.rs:301` and the
+  overlap policy are the seed of this — extend them, do not duplicate.
 - **Different timers run in parallel**, up to the cap.
 - **The queue is bounded, and a full queue never drops a fire.** The claim is already durable
   in SQLite before enqueue, so backpressure means "stays pending", never "lost". If the queue
@@ -78,7 +85,12 @@ the scope has slipped.
   card; it fails today.
 - Peak in-flight actually reaches the cap under a mass-fire, and never exceeds it —
   `LimiterStats::peak_in_flight` already reports this.
-- Two fires of the **same** timer are delivered in order, never concurrently.
+- Two fires of the **same** timer execute their actions in order, never concurrently.
+- **A second fire publishes immediately even while the first action still runs**: fire a
+  timer whose action takes 30 s, fire it again at 10 s — at ~10 s the folder already shows
+  the new `run_id` and `superseded` is already logged, while the first action is still
+  executing in its lane. Asserted on wall-clock, because "queue the whole fire" passes every
+  ordering test and still breaks this.
 - A full queue under a resume mass-fire loses nothing: every claim is eventually delivered,
   and the count matches.
 - Kill mid-flight: on restart the undelivered claims re-queue, with no duplicate delivery of

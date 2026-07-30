@@ -42,6 +42,7 @@ everything about one timer. Both present on every message where they apply.
 | `completed` | **the app** | yes |
 | `failed` | **the app** | yes |
 | `no_ack` | Bellman — nobody picked it up | yes |
+| `cancelled` | Bellman — the timer was deleted while its run was open | yes |
 | `failed` (`failure_kind: "timed_out"`) | Bellman — only if the app set `error_detection` | **revisable** — a late app reply supersedes it |
 | `skipped_misfire`, `coalesced`, `pruned`, `wake_*`, `year_recalibrate` | Bellman | as today |
 
@@ -334,8 +335,12 @@ depend on it; the live name lives in `timer.json`.
 
 **Deleting a timer deletes its folder.** No tombstone, no orphan tree.
 
-Safe precisely because the event log survives: "what fired, and when" is answerable forever
-from `events.current.jsonl` regardless of which folders still exist.
+Safe precisely because the event log survives: "what fired, and when" is answerable from
+`events.current.jsonl` and its archives regardless of which folders still exist — **for the
+log's retention window, not forever**. Archives are pruned (default 30 days / 1 GB), so every
+place the docs or GUI describe history must say "30-day history", never "permanent". A
+retention window nobody states reads as a data-loss bug the first time someone looks for a
+31-day-old run.
 
 Two cases that follow:
 
