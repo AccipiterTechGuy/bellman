@@ -1,7 +1,11 @@
 # Bellman card index — all queued work, in order
 
-Every card below is minted on the board and parked in **DESIGNING**. None are sealed or
-railed: they are created only, until the cards already on the rails have shipped.
+**2026-07-30: the integration kit is ON THE RAILS.** IK1 already SHIPPED
+(`bellman-ik1-normalise-the-json-shapes` — R1–R6 landed in `4c2d7d7`/`03e0363`). IK2 departed
+with crew `2026-07-30_0003`; IK3 → SCH1 → IK4 → IK5 → IK6 queued behind it in that order,
+loadout `SU=claude:sonnet:medium · CO=kimi:K3:high · AU=codex:gpt-5.6-sol:high`. The design
+was frozen after 8 adversarial audit rounds. The OVL1 and M1–M10 cards below remain parked
+in **DESIGNING** — created only, not sealed, not railed.
 
 Design documents:
 - `macro_recorder_security_plan.md` — decisions **D-1 … D-16** for the macro feature
