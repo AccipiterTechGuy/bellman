@@ -152,6 +152,11 @@ fully-supported app — most will be. So:
 
 Bellman watches it, validates, logs the transition, and folds the result into `status.json`.
 
+**Build the ingest transport-agnostic.** The watcher's job ends at "here is a parsed reply";
+validation, transitions, folding and logging live in one function that does not know a file
+exists. IK6 later adds a socket transport that must call the **same** function — if reply
+handling is welded to the watcher, that card starts by unpicking this one.
+
 ### Every transition is appended to the event log
 
 With no `runs/`, **`events.current.jsonl` is the only per-run record**. A transition that

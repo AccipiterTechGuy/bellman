@@ -23,6 +23,7 @@ Design documents:
 | **IK3** | `reply.json` — outcome reporting, opt-in watchdog, revisable state, crash/startup ordering | IK2 |
 | **IK4** | Lightbulb app + "connect your own application" docs | IK1–IK3 |
 | **IK5** | Live run state in the GUI — no new tab | IK3 |
+| **IK6** | Dual transport: local IPC + files, chosen **per firing**. One ingest path; **no generated `adapter.py`** — connection info is data, not code. Files stay canonical | IK3 shipped, IK4 proven |
 
 ## Scheduler internals
 
@@ -32,13 +33,9 @@ Design documents:
 
 ### Deferred — worth doing, not now
 
-**Local IPC transport** (Unix socket / named pipe / local HTTP) as an *additional* way for an
-app to talk to Bellman. Genuinely better for interactive apps: live progress with no watcher
-latency, and no file to parse. But it is a second transport, not a replacement — the file
-channel's whole value is that `echo '{...}' > reply.json` works from bash, cron or a one-line
-Python script with no client library, and an app that was not running when the timer fired
-finds its reply waiting rather than needing a reconnect-and-request-pending-fires handshake.
-Files stay canonical. Revisit after IK4 ships and a real integration exists to measure.
+**`bellman-client` convenience packages** (Python first) wrapping IK6's socket protocol.
+Optional sugar only — the raw protocol must stay documented well enough that any language
+speaks it without a library, exactly like the file protocol.
 
 ### Decided against — do not re-propose
 
