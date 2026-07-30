@@ -73,8 +73,17 @@ When enabled:
 
 - **Deadline = `expected_secs × factor`**, configurable, default forgiving (≈2×). Failing at
   exactly the stated second means every app pads its estimate and the field becomes fiction.
+- **The countdown runs on Bellman's own monotonic clock**, started at the moment Bellman
+  *receives* the reply — never on the app's timestamp. An app's wall clock can be skewed,
+  can jump on NTP correction, and can be wrong on purpose: trusting it means a slow clock
+  fails a healthy app and a fast one extends its own deadline forever. The app's timestamps
+  stay in the file as display and history data; they are never arithmetic inputs.
+  - A **persisted wall-clock deadline** is written alongside it, used only to reconstruct the
+    countdown after a restart — a monotonic clock does not survive the process.
+  - Clock jumps and DST therefore do not disturb an active countdown, which is the point.
 - **A heartbeat restarts the countdown.** An app reporting progress is alive and must not be
-  timed out. This is what makes heartbeats worth sending.
+  timed out. This is what makes heartbeats worth sending. The restart is timed from Bellman's
+  receipt, per the rule above.
 - **The outcome is `failed` with `failure_kind: "timed_out"`.** One state to reason about,
   and the distinction is preserved where it matters: `reported` means the app said it
   failed, `timed_out` means the app went quiet past its own deadline. Those need different
@@ -102,6 +111,36 @@ entry in the heap it already runs.
 **R9 — a reply is data, never a command.** Bellman parses, validates and logs it. It must
 never launch, execute, schedule or modify anything because an app said so. Worst case for a
 hostile reply is one bad log line.
+
+**R10 — the database commits before the folder changes, and reads it before firing.**
+
+The folder is a view (see the tree section). Two ordering rules make that true in practice
+rather than in principle:
+
+- **One transaction per fire.** The previous run's final known state, its `superseded` event
+  if the run was open, the new `run_id`, the `fired` event and any pending log lines commit
+  to SQLite **together**. Only then is `status.json` rewritten. Crash before the commit and
+  the previous firing is still current; crash after it and startup rebuilds the file. There
+  is no window where the folder claims something the database never recorded.
+- **Startup reads replies before the scheduler fires anything.** An app can answer while
+  Bellman is stopped. If the scheduler runs first, the next fire overwrites that reply and
+  it is lost **silently** — the worst kind of loss, because nothing anywhere records that it
+  happened. So: scan every `reply.json`, fold in what is valid and still current, flush
+  pending log lines, rebuild stale or missing files from the database, and only then start
+  delivery.
+
+**R11 — one writer owns the event log.**
+
+Every event goes through a single synchronised writer, and rotation goes through the same
+one. This is not hypothetical: `EventLog::open` is called from five independent places
+outside tests (`pruner/mod.rs`, `service/run_now.rs`, `service/log_query.rs`, twice in
+`bellman-cli/src/commands.rs`). `rotate()` takes `&mut self`, so a single instance is safe —
+but the pruner renaming `events.current.jsonl` while another instance holds it open is a live
+hazard today.
+
+A line is durable when it is flushed, not when it is created: hold it in SQLite, append,
+flush, then mark it published, and retry after a failed write or a restart. `event_id` is
+already in the shape and is what makes the retry safe — republishing cannot duplicate.
 
 ## The shapes
 

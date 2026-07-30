@@ -18,10 +18,25 @@ Design documents:
 
 | card | scope | depends on |
 |---|---|---|
-| **IK1** | Normalise the three JSON shapes. No new features | — |
-| **IK2** | Per-timer folder tree: `timer.json`, `status.json`, `runs/` | IK1 |
-| **IK3** | `reply.json` — outcome reporting, opt-in watchdog, revisable state | IK2 |
+| **IK1** | Normalise the JSON shapes (R1–R11). No new features | — |
+| **IK2** | Per-timer folder tree: `timer.json`, `status.json`. **No `runs/`** | IK1 |
+| **IK3** | `reply.json` — outcome reporting, opt-in watchdog, revisable state, crash/startup ordering | IK2 |
 | **IK4** | Lightbulb app + "connect your own application" docs | IK1–IK3 |
+| **IK5** | Live run state in the GUI — no new tab | IK3 |
+
+### Decided against — do not re-propose
+
+**One shared `output.json` per timer, guarded by a `.output.lock`.** Reviewed 2026-07-30 and
+rejected. It reintroduces the lost-update race the split exists to prevent, then pays for it
+with an advisory-lock protocol every integrating app must implement correctly — killing the
+"a shell script can integrate" story, since `flock(1)` is not on macOS by default. It also
+moves the stale-`run_id` check from Bellman (where it cannot be skipped) to the app (where it
+can). The proposal reaches the same conclusion itself: Bellman's inferred states cannot live
+in a file the app owns, so the mirror property needs "a separate Bellman-owned `status.json`".
+
+Four sections of that review **were** adopted: R10 (fire transaction + startup ordering), R11
+(single log writer), the monotonic watchdog clock in R8, and the transition/debounce rules in
+IK3.
 
 ## Macro feature
 
