@@ -1,38 +1,44 @@
 //! The transport-agnostic reply ingest engine.
 //!
 //! Everything from "here is a parsed reply" onward lives here: validation,
-//! state transitions, event-log lines, `status.json` folding, watchdog
-//! arming. This module does not know a file exists — the file watcher and
-//! (later, IK6) the socket transport both call [`ReplyEngine::ingest`].
+//! state transitions, event outbox rows, watchdog arming. This module does
+//! not know a file exists — the file watcher and (later, IK6) the socket
+//! transport both call [`ReplyEngine::ingest`]. Event lines are ENQUEUED
+//! into the SQLite outbox (R11); the elected publisher appends them.
 //!
 //! Rules encoded here (docs/todo/json_normalization.md R5–R9, R12):
 //!
-//! - The log records **state transitions only**. `acknowledged` once (the
-//!   first answer), `running` once (first entry), one line per terminal
-//!   report. Heartbeats and progress are NEVER logged. Transitions the
-//!   watcher missed are reconstructed from the accumulated timestamps.
+//! - The log records **state transitions only**. `acknowledged` is logged
+//!   when the app says `acknowledged`, or reconstructed when the file's own
+//!   `acknowledged_at` proves the app answered earlier — Bellman never
+//!   invents it. `running` once (first entry), one line per terminal report.
+//!   Heartbeats and progress are NEVER logged.
 //! - A terminal report never moves backwards to a non-terminal one — but
 //!   the app's latest terminal report always wins on the still-current run,
 //!   from either source (its own earlier verdict or Bellman's watchdog
 //!   inference; there is no `failure_kind` special case).
 //! - Bellman's provisional `no_ack` / watchdog `timed_out` may be revised by
 //!   any valid app reply while the run is still current.
-//! - `status.json` is the mirror: after every accepted reply it shows the
-//!   current state and every field reported so far. Bellman accumulates —
-//!   a write that omits an earlier field never retracts it.
-//! - The app may re-send `expected_secs` mid-run; the latest accepted value
-//!   re-anchors the watchdog at Bellman's receipt.
+//! - Deadlines run on Bellman's MONOTONIC clock (the deadline book keyed by
+//!   run id). The persisted wall-clock deadline exists only to rebuild the
+//!   countdown after a restart — the same explicit clock-jump limitation R8
+//!   documents.
 //! - `duration_ms` is Bellman's clock both ends: monotonic fire-commit →
 //!   terminal-ingest elapsed, with a wall-clock fallback after a restart
 //!   (`duration_source: "wall_clock"` marks the estimate).
 //!
-//! Concurrency: callers hold the R10 per-timer gate (`reply::gate`) around
-//! read-check-write sequences; this engine re-reads nothing it is handed.
+//! DB access goes through [`RunDb`] so the fire transaction can compose the
+//! barrier ingest, the supersede, the new claim and the fired event into
+//! ONE atomic commit. `status.json` projection is always the caller's job
+//! (post-commit), via [`ReplyEngine::project_status`].
 
-use crate::events::{EventLog, EventRecord, RunState};
-use crate::store::{FailureKind, RunClaim, RunStateRow, Store, StoreError, Timer, TimerId};
+use crate::events::{EventRecord, RunState};
+use crate::store::{
+    self, FailureKind, RunClaim, RunStateRow, Store, StoreError, StoreResult, Timer, TimerId,
+};
 use crate::tree::{self, RunStatus, TimersTree, TreeError};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use rusqlite::Transaction;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -44,6 +50,85 @@ use super::document::{
     MAX_RESULT_EVENT_BYTES, MAX_RESULT_STATUS_BYTES,
 };
 
+// ── Database abstraction ────────────────────────────────────────────────
+
+/// The read/write surface the reply lifecycle needs, so the same code runs
+/// on a plain `Store` (single-statement commits) and inside the R10 fire
+/// transaction.
+pub trait RunDb {
+    fn get_timer(&self, id: TimerId) -> StoreResult<Option<Timer>>;
+    fn get_run(&self, run_id: Uuid) -> StoreResult<Option<RunClaim>>;
+    fn runs_for_timer(&self, timer_id: TimerId) -> StoreResult<Vec<RunClaim>>;
+    fn get_run_state(&self, run_id: Uuid) -> StoreResult<Option<RunStateRow>>;
+    fn current_run_state(&self, timer_id: TimerId) -> StoreResult<Option<RunStateRow>>;
+    fn update_run_state(&self, row: &RunStateRow) -> StoreResult<()>;
+    fn last_acked_sequence(&self, timer_id: TimerId) -> StoreResult<u64>;
+    fn armed_deadlines(&self) -> StoreResult<Vec<RunStateRow>>;
+    fn enqueue_event(&self, rec: &EventRecord) -> StoreResult<()>;
+}
+
+impl RunDb for Store {
+    fn get_timer(&self, id: TimerId) -> StoreResult<Option<Timer>> {
+        Store::get_timer(self, id)
+    }
+    fn get_run(&self, run_id: Uuid) -> StoreResult<Option<RunClaim>> {
+        Store::get_run(self, run_id)
+    }
+    fn runs_for_timer(&self, timer_id: TimerId) -> StoreResult<Vec<RunClaim>> {
+        Store::runs_for_timer(self, timer_id)
+    }
+    fn get_run_state(&self, run_id: Uuid) -> StoreResult<Option<RunStateRow>> {
+        Store::get_run_state(self, run_id)
+    }
+    fn current_run_state(&self, timer_id: TimerId) -> StoreResult<Option<RunStateRow>> {
+        Store::current_run_state(self, timer_id)
+    }
+    fn update_run_state(&self, row: &RunStateRow) -> StoreResult<()> {
+        Store::update_run_state(self, row)
+    }
+    fn last_acked_sequence(&self, timer_id: TimerId) -> StoreResult<u64> {
+        Store::last_acked_sequence(self, timer_id)
+    }
+    fn armed_deadlines(&self) -> StoreResult<Vec<RunStateRow>> {
+        Store::armed_deadlines(self)
+    }
+    fn enqueue_event(&self, rec: &EventRecord) -> StoreResult<()> {
+        Store::enqueue_event(self, rec)
+    }
+}
+
+impl RunDb for Transaction<'_> {
+    fn get_timer(&self, id: TimerId) -> StoreResult<Option<Timer>> {
+        store::get_timer_conn(self, id)
+    }
+    fn get_run(&self, run_id: Uuid) -> StoreResult<Option<RunClaim>> {
+        store::get_run_conn(self, run_id)
+    }
+    fn runs_for_timer(&self, timer_id: TimerId) -> StoreResult<Vec<RunClaim>> {
+        store::runs_for_timer_conn(self, timer_id)
+    }
+    fn get_run_state(&self, run_id: Uuid) -> StoreResult<Option<RunStateRow>> {
+        store::get_run_state_conn(self, run_id)
+    }
+    fn current_run_state(&self, timer_id: TimerId) -> StoreResult<Option<RunStateRow>> {
+        store::current_run_state_conn(self, timer_id)
+    }
+    fn update_run_state(&self, row: &RunStateRow) -> StoreResult<()> {
+        store::update_run_state_conn(self, row)
+    }
+    fn last_acked_sequence(&self, timer_id: TimerId) -> StoreResult<u64> {
+        store::last_acked_sequence_conn(self, timer_id)
+    }
+    fn armed_deadlines(&self) -> StoreResult<Vec<RunStateRow>> {
+        store::armed_deadlines_conn(self)
+    }
+    fn enqueue_event(&self, rec: &EventRecord) -> StoreResult<()> {
+        store::enqueue_event_conn(self, rec)
+    }
+}
+
+// ── Shared registries ───────────────────────────────────────────────────
+
 /// Monotonic fire-commit anchors for `duration_ms`, keyed by run id. Shared
 /// between the fire path (registers at commit) and the ingest path (consumes
 /// at the terminal transition). A process restart loses them — the wall-clock
@@ -52,6 +137,34 @@ pub type SharedAnchors = Arc<Mutex<HashMap<Uuid, Instant>>>;
 
 /// Fresh empty anchor registry.
 pub fn new_anchors() -> SharedAnchors {
+    Arc::new(Mutex::new(HashMap::new()))
+}
+
+/// Which deadline a book entry is counting down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeadlineKind {
+    /// No pickup signal yet — `no_ack` when it lapses.
+    Pickup,
+    /// The app opted into `error_detection` — `failed`/`timed_out` when it
+    /// lapses.
+    Watchdog,
+}
+
+/// One live countdown: Bellman's monotonic clock, armed at receipt.
+#[derive(Debug, Clone, Copy)]
+pub struct MonoDeadline {
+    pub kind: DeadlineKind,
+    pub at: Instant,
+}
+
+/// Live monotonic countdowns keyed by run id (R7/R8). The persisted
+/// wall-clock deadline on the run row is the restart-reconstruction source
+/// only — the active countdown never reads the wall clock, so wall jumps
+/// (NTP, suspend, DST) cannot fire a deadline early or late.
+pub type SharedDeadlines = Arc<Mutex<HashMap<Uuid, MonoDeadline>>>;
+
+/// Fresh empty deadline book.
+pub fn new_deadlines() -> SharedDeadlines {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
@@ -68,6 +181,8 @@ pub struct ReplyEngine {
     pub watchdog_factor: f64,
     /// Monotonic duration anchors shared with the fire path.
     pub anchors: SharedAnchors,
+    /// Monotonic deadline book shared with the fire path and the watcher.
+    pub deadlines: SharedDeadlines,
 }
 
 /// What became of one ingested reply.
@@ -94,7 +209,6 @@ pub enum IngestOutcome {
 pub enum ReplyError {
     Store(StoreError),
     Tree(TreeError),
-    Log(crate::events::EventLogError),
     Io(std::io::Error),
 }
 
@@ -103,7 +217,6 @@ impl std::fmt::Display for ReplyError {
         match self {
             Self::Store(e) => write!(f, "reply store: {e}"),
             Self::Tree(e) => write!(f, "reply tree: {e}"),
-            Self::Log(e) => write!(f, "reply log: {e}"),
             Self::Io(e) => write!(f, "reply io: {e}"),
         }
     }
@@ -123,12 +236,6 @@ impl From<TreeError> for ReplyError {
     }
 }
 
-impl From<crate::events::EventLogError> for ReplyError {
-    fn from(e: crate::events::EventLogError) -> Self {
-        Self::Log(e)
-    }
-}
-
 impl From<std::io::Error> for ReplyError {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)
@@ -138,20 +245,84 @@ impl From<std::io::Error> for ReplyError {
 pub type ReplyResult<T> = Result<T, ReplyError>;
 
 impl ReplyEngine {
+    /// Register a just-committed fire: the pickup countdown starts on
+    /// Bellman's monotonic clock at the fire transaction commit (R7), and
+    /// the duration anchor is set for `duration_ms`.
+    pub fn register_fire(&self, run_id: Uuid) {
+        let now = Instant::now();
+        self.anchors
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(run_id, now);
+        self.deadlines
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(
+                run_id,
+                MonoDeadline {
+                    kind: DeadlineKind::Pickup,
+                    at: now + self.pickup_grace,
+                },
+            );
+    }
+
+    /// Drop any live countdowns for a run (supersede / cancel).
+    pub fn clear_deadlines(&self, run_id: Uuid) {
+        self.deadlines
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&run_id);
+    }
+
+    /// Rebuild the countdowns from the persisted wall-clock deadlines after
+    /// a restart (R8: the wall value exists only for this reconstruction).
+    /// Existing live entries always win.
+    pub fn sync_deadline_book(
+        &self,
+        db: &dyn RunDb,
+        now_wall: DateTime<Utc>,
+        mono_now: Instant,
+    ) -> ReplyResult<usize> {
+        let mut added = 0;
+        let mut book = self.deadlines.lock().unwrap_or_else(|p| p.into_inner());
+        for row in db.armed_deadlines()? {
+            if book.contains_key(&row.run_id) {
+                continue;
+            }
+            let entry = if let Some(deadline) = row.pickup_deadline {
+                Some(MonoDeadline {
+                    kind: DeadlineKind::Pickup,
+                    at: mono_now + remaining(deadline, now_wall),
+                })
+            } else {
+                row.watchdog_deadline.map(|deadline| MonoDeadline {
+                    kind: DeadlineKind::Watchdog,
+                    at: mono_now + remaining(deadline, now_wall),
+                })
+            };
+            if let Some(entry) = entry {
+                book.insert(row.run_id, entry);
+                added += 1;
+            }
+        }
+        Ok(added)
+    }
+
     /// Ingest one parsed reply for `timer`. `digest` identifies the exact
     /// reply content (transport-computed) so an exact duplicate is a no-op
-    /// and cannot re-arm the watchdog. `now` is Bellman's wall clock at
-    /// receipt — the only clock the watchdog ever counts on.
+    /// and cannot re-arm the watchdog. `now_wall` is Bellman's wall clock at
+    /// receipt (timestamps only); `mono_now` is Bellman's monotonic receipt
+    /// (the only clock deadlines count on).
     pub fn ingest(
         &self,
-        store: &Store,
-        log: &mut EventLog,
+        db: &dyn RunDb,
         timer: &Timer,
         doc: &ReplyDocument,
         digest: &str,
-        now: DateTime<Utc>,
+        now_wall: DateTime<Utc>,
+        mono_now: Instant,
     ) -> ReplyResult<IngestOutcome> {
-        self.ingest_inner(store, log, timer, doc, digest, now, None)
+        self.ingest_inner(db, timer, doc, digest, now_wall, mono_now, None)
     }
 
     /// Pre-fire barrier variant: treat `as_current` as the current run even
@@ -160,26 +331,26 @@ impl ReplyEngine {
     #[allow(clippy::too_many_arguments)]
     pub fn ingest_as_current(
         &self,
-        store: &Store,
-        log: &mut EventLog,
+        db: &dyn RunDb,
         timer: &Timer,
         doc: &ReplyDocument,
         digest: &str,
         as_current: Uuid,
-        now: DateTime<Utc>,
+        now_wall: DateTime<Utc>,
+        mono_now: Instant,
     ) -> ReplyResult<IngestOutcome> {
-        self.ingest_inner(store, log, timer, doc, digest, now, Some(as_current))
+        self.ingest_inner(db, timer, doc, digest, now_wall, mono_now, Some(as_current))
     }
 
     #[allow(clippy::too_many_arguments)]
     fn ingest_inner(
         &self,
-        store: &Store,
-        log: &mut EventLog,
+        db: &dyn RunDb,
         timer: &Timer,
         doc: &ReplyDocument,
         digest: &str,
-        now: DateTime<Utc>,
+        now_wall: DateTime<Utc>,
+        mono_now: Instant,
         current_override: Option<Uuid>,
     ) -> ReplyResult<IngestOutcome> {
         // ── Sight-decidable validation (never debounced) ────────────────
@@ -204,7 +375,7 @@ impl ReplyEngine {
         }
 
         // ── Run identification: current, previous-of-this-timer, unknown ─
-        let Some(claim) = store.get_run(run_id)? else {
+        let Some(claim) = db.get_run(run_id)? else {
             return Ok(IngestOutcome::Rejected(ReplyRejection::UnknownRun));
         };
         if claim.timer_id != timer.id {
@@ -212,13 +383,13 @@ impl ReplyEngine {
         }
         let current = match current_override {
             Some(id) => Some(id),
-            None => store.runs_for_timer(timer.id)?.last().map(|c| c.run_id),
+            None => db.runs_for_timer(timer.id)?.last().map(|c| c.run_id),
         };
         if current != Some(run_id) {
             // A slow app finished after the timer fired again — expected and
             // meaningful. Log `superseded` once per distinct content; never
             // apply it; the transport deletes the stale file.
-            let row = store.get_run_state(run_id)?;
+            let row = db.get_run_state(run_id)?;
             if row
                 .as_ref()
                 .and_then(|r| r.reply_digest.as_deref())
@@ -226,8 +397,8 @@ impl ReplyEngine {
             {
                 return Ok(IngestOutcome::Superseded);
             }
-            log.emit(
-                EventRecord::new(RunState::Superseded)
+            db.enqueue_event(
+                &EventRecord::new(RunState::Superseded)
                     .with_timer(timer.id, timer.name.clone())
                     .with_run(run_id)
                     .with_scheduled_for(claim.scheduled_for)
@@ -235,13 +406,13 @@ impl ReplyEngine {
             )?;
             if let Some(mut row) = row {
                 row.reply_digest = Some(digest.to_string());
-                store.update_run_state(&row)?;
+                db.update_run_state(&row)?;
             }
             return Ok(IngestOutcome::Superseded);
         }
 
         // ── Current run: owner, regression and estimate validation ──────
-        let mut row = match store.get_run_state(run_id)? {
+        let mut row = match db.get_run_state(run_id)? {
             Some(r) => r,
             // Defensive: the run predates run_states (upgrade mid-run). Rebuild
             // a fired row; this reply satisfies pickup immediately below.
@@ -251,7 +422,7 @@ impl ReplyEngine {
                 doc.app_name.as_deref().unwrap_or(""),
                 RunState::Fired.as_str(),
                 claim.claimed_at,
-                now,
+                now_wall,
             ),
         };
         if doc.app_name.as_deref() != Some(row.app_name.as_str()) {
@@ -273,25 +444,24 @@ impl ReplyEngine {
             return Ok(IngestOutcome::Duplicate);
         }
 
-        // ── Accept: accumulate, transition, log, mirror ──────────────────
-        self.apply(store, log, timer, &claim, &mut row, doc, new_state, digest, now)?;
+        // ── Accept: accumulate, transition, log ──────────────────────────
+        self.apply(db, timer, &claim, &mut row, doc, new_state, digest, now_wall, mono_now)?;
         Ok(IngestOutcome::Applied)
     }
 
-    /// The accept path, separated so deadline/cursor transitions share the
-    /// projection helpers. Caller validated the transition is legal.
+    /// The accept path. Caller validated the transition is legal.
     #[allow(clippy::too_many_arguments)]
     fn apply(
         &self,
-        store: &Store,
-        log: &mut EventLog,
+        db: &dyn RunDb,
         timer: &Timer,
         claim: &RunClaim,
         row: &mut RunStateRow,
         doc: &ReplyDocument,
         new_state: RunState,
         digest: &str,
-        now: DateTime<Utc>,
+        now_wall: DateTime<Utc>,
+        mono_now: Instant,
     ) -> ReplyResult<()> {
         let cur_state = row.run_state();
 
@@ -303,7 +473,7 @@ impl ReplyEngine {
         if row.acknowledged_at.is_none() && new_state == RunState::Acknowledged {
             // The app answered without stamping it — receipt time is the
             // honest observation.
-            row.acknowledged_at = Some(now);
+            row.acknowledged_at = Some(now_wall);
         }
         if let Some(secs) = doc.expected_secs {
             // The latest accepted estimate wins, for both consumers.
@@ -326,7 +496,7 @@ impl ReplyEngine {
 
         match new_state {
             RunState::Completed => {
-                row.completed_at = Some(doc.completed_at.unwrap_or(now));
+                row.completed_at = Some(doc.completed_at.unwrap_or(now_wall));
                 if let Some(result) = &doc.result {
                     let (capped, truncated) = cap_result(result, MAX_RESULT_STATUS_BYTES);
                     row.result_json = Some(capped);
@@ -338,7 +508,7 @@ impl ReplyEngine {
                 row.failure_kind = None;
             }
             RunState::Failed => {
-                row.failed_at = Some(doc.failed_at.unwrap_or(now));
+                row.failed_at = Some(doc.failed_at.unwrap_or(now_wall));
                 if let Some(r) = &doc.reason {
                     row.reason = Some(truncate_text(r, MAX_FREE_TEXT_BYTES));
                 }
@@ -354,17 +524,43 @@ impl ReplyEngine {
         row.pickup_deadline = None;
         row.state = new_state.as_str().to_string();
 
-        // Watchdog: every distinct accepted non-terminal reply while enabled
-        // rearms from Bellman's receipt with the latest estimate. Terminal
-        // replies disarm — the run is over.
-        if new_state.is_terminal() {
-            row.watchdog_deadline = None;
-        } else if row.error_detection == Some(true) && row.expected_secs.unwrap_or(0) > 0 {
-            row.watchdog_deadline = Some(self.watchdog_deadline(row.expected_secs.unwrap(), now));
+        // Deadlines on the monotonic book: pickup is consumed by any valid
+        // reply; the watchdog rearms from Bellman's RECEIPT of each distinct
+        // accepted non-terminal reply while enabled; terminal disarms.
+        {
+            let mut book = self.deadlines.lock().unwrap_or_else(|p| p.into_inner());
+            if book.get(&row.run_id).is_some_and(|d| d.kind == DeadlineKind::Pickup) {
+                book.remove(&row.run_id);
+            }
+            if new_state.is_terminal() {
+                book.remove(&row.run_id);
+                row.watchdog_deadline = None;
+            } else if row.error_detection == Some(true) && row.expected_secs.unwrap_or(0) > 0 {
+                let at = self.watchdog_instant(row.expected_secs.unwrap(), mono_now);
+                book.insert(
+                    row.run_id,
+                    MonoDeadline {
+                        kind: DeadlineKind::Watchdog,
+                        at,
+                    },
+                );
+                // The persisted wall deadline is the restart-reconstruction
+                // copy of the same countdown.
+                row.watchdog_deadline =
+                    Some(self.watchdog_wall(row.expected_secs.unwrap(), now_wall));
+            } else {
+                if book.get(&row.run_id).is_some_and(|d| d.kind == DeadlineKind::Watchdog) {
+                    book.remove(&row.run_id);
+                }
+            }
         }
 
         // ── Transition lines (reconstructing what the watcher missed) ───
-        if !row.acknowledged_logged {
+        // `acknowledged` is logged when the app SAYS acknowledged, or
+        // reconstructed when the file's own acknowledged_at proves the app
+        // answered earlier — Bellman never invents it (a direct
+        // fired → completed with no acknowledged_at logs completed only).
+        if !row.acknowledged_logged && row.acknowledged_at.is_some() {
             let mut detail = serde_json::json!({ "app_name": row.app_name });
             if let Some(secs) = row.expected_secs {
                 detail["expected_secs"] = serde_json::json!(secs);
@@ -372,28 +568,28 @@ impl ReplyEngine {
             if let Some(detection) = row.error_detection {
                 detail["error_detection"] = serde_json::json!(detection);
             }
-            log.emit(
-                EventRecord::new(RunState::Acknowledged)
+            db.enqueue_event(
+                &EventRecord::new(RunState::Acknowledged)
                     .with_timer(timer.id, timer.name.clone())
                     .with_run(row.run_id)
                     .with_scheduled_for(claim.scheduled_for)
                     .with_detail(detail)
-                    .with_logged_at(row.acknowledged_at.unwrap_or(now)),
+                    .with_logged_at(row.acknowledged_at.unwrap_or(now_wall)),
             )?;
             row.acknowledged_logged = true;
         }
         if new_state == RunState::Running && !row.running_logged {
-            log.emit(
-                EventRecord::new(RunState::Running)
+            db.enqueue_event(
+                &EventRecord::new(RunState::Running)
                     .with_timer(timer.id, timer.name.clone())
                     .with_run(row.run_id)
                     .with_scheduled_for(claim.scheduled_for)
-                    .with_logged_at(doc.heartbeat_at.unwrap_or(now)),
+                    .with_logged_at(doc.heartbeat_at.unwrap_or(now_wall)),
             )?;
             row.running_logged = true;
         }
         if new_state.is_terminal() && cur_state != Some(new_state) {
-            let (duration_ms, source) = self.duration_ms(row.run_id, row.fired_at, now);
+            let (duration_ms, source) = self.duration_ms(row.run_id, row.fired_at, now_wall);
             let mut rec = EventRecord::new(new_state)
                 .with_timer(timer.id, timer.name.clone())
                 .with_run(row.run_id)
@@ -412,7 +608,7 @@ impl ReplyEngine {
                             detail.insert("result_truncated".into(), serde_json::json!(true));
                         }
                     }
-                    rec = rec.with_logged_at(row.completed_at.unwrap_or(now));
+                    rec = rec.with_logged_at(row.completed_at.unwrap_or(now_wall));
                 }
                 RunState::Failed => {
                     detail.insert(
@@ -422,25 +618,25 @@ impl ReplyEngine {
                     if let Some(reason) = &row.reason {
                         rec = rec.with_message(reason.clone());
                     }
-                    rec = rec.with_logged_at(row.failed_at.unwrap_or(now));
+                    rec = rec.with_logged_at(row.failed_at.unwrap_or(now_wall));
                 }
                 _ => {}
             }
             if !detail.is_empty() {
                 rec = rec.with_detail(serde_json::Value::Object(detail));
             }
-            log.emit(rec)?;
+            db.enqueue_event(&rec)?;
         }
 
         row.reply_digest = Some(digest.to_string());
-        store.update_run_state(row)?;
-        self.project_status(store, timer, &row.run_id)?;
+        db.update_run_state(row)?;
         Ok(())
     }
 
     /// Rewrite `status.json` from the accumulated database row — the mirror
     /// holds at every step, and rebuilding it is safe precisely because it
-    /// is Bellman's alone.
+    /// is Bellman's alone. Always a POST-COMMIT projection: callers run it
+    /// after the mutating transaction, never inside it.
     pub fn project_status(
         &self,
         store: &Store,
@@ -456,12 +652,12 @@ impl ReplyEngine {
         Ok(())
     }
 
-    /// Log a `reply_rejected` event. Called by the transport when its
+    /// Enqueue a `reply_rejected` event. Called by the transport when its
     /// idempotence rules say this content is newly rejected (file transport:
     /// the quarantine artifact was just created).
     pub fn log_rejection(
         &self,
-        log: &mut EventLog,
+        db: &dyn RunDb,
         timer: &Timer,
         run_id: Option<Uuid>,
         reason: &str,
@@ -472,7 +668,7 @@ impl ReplyEngine {
         if let Some(run_id) = run_id {
             rec = rec.with_run(run_id);
         }
-        log.emit(rec)?;
+        db.enqueue_event(&rec)?;
         Ok(())
     }
 
@@ -480,18 +676,18 @@ impl ReplyEngine {
     /// (R5/R7): records `acknowledged` — never `running` or completion.
     /// Revises a provisional `no_ack` the same way. Only the current run can
     /// be affected; a later firing makes older cursor movement meaningless.
+    /// Returns true when a transition happened (caller projects status).
     pub fn on_ack_through(
         &self,
-        store: &Store,
-        log: &mut EventLog,
+        db: &dyn RunDb,
         timer: &Timer,
         through_sequence: u64,
-        now: DateTime<Utc>,
+        now_wall: DateTime<Utc>,
     ) -> ReplyResult<bool> {
-        let Some(row) = store.current_run_state(timer.id)? else {
+        let Some(row) = db.current_run_state(timer.id)? else {
             return Ok(false);
         };
-        let Some(claim) = store.get_run(row.run_id)? else {
+        let Some(claim) = db.get_run(row.run_id)? else {
             return Ok(false);
         };
         if claim.event_sequence > through_sequence {
@@ -507,7 +703,7 @@ impl ReplyEngine {
         if !pickup_pending && !revise_no_ack {
             return Ok(false);
         }
-        self.mark_acknowledged(store, log, timer, &claim, row, now)?;
+        self.mark_acknowledged(db, timer, &claim, row, now_wall)?;
         Ok(true)
     }
 
@@ -516,19 +712,19 @@ impl ReplyEngine {
     /// app timestamp) and the pickup deadline is consumed.
     fn mark_acknowledged(
         &self,
-        store: &Store,
-        log: &mut EventLog,
+        db: &dyn RunDb,
         timer: &Timer,
         claim: &RunClaim,
         mut row: RunStateRow,
-        now: DateTime<Utc>,
+        now_wall: DateTime<Utc>,
     ) -> ReplyResult<()> {
         row.state = RunState::Acknowledged.as_str().to_string();
-        row.acknowledged_at = Some(now);
+        row.acknowledged_at = Some(now_wall);
         row.pickup_deadline = None;
+        self.clear_deadlines_kind(row.run_id, DeadlineKind::Pickup);
         if !row.acknowledged_logged {
-            log.emit(
-                EventRecord::new(RunState::Acknowledged)
+            db.enqueue_event(
+                &EventRecord::new(RunState::Acknowledged)
                     .with_timer(timer.id, timer.name.clone())
                     .with_run(row.run_id)
                     .with_scheduled_for(claim.scheduled_for)
@@ -536,165 +732,208 @@ impl ReplyEngine {
                         "app_name": row.app_name,
                         "via": "ack_through",
                     }))
-                    .with_logged_at(now),
+                    .with_logged_at(now_wall),
             )?;
             row.acknowledged_logged = true;
         }
-        store.update_run_state(&row)?;
-        self.project_status(store, timer, &row.run_id)?;
+        db.update_run_state(&row)?;
         Ok(())
     }
 
-    /// Expire lapsed pickup deadlines (R7). For each: the slot-feed cursor
-    /// still counts as pickup — declaring `no_ack` while it shows the app
-    /// acked would contradict Bellman's own records. Otherwise `no_ack`:
-    /// "no acknowledgement was received" (a filesystem read leaves no trace).
+    /// Expire lapsed pickup countdowns (monotonic book). For each: the
+    /// slot-feed cursor still counts as pickup — declaring `no_ack` while it
+    /// shows the app acked would contradict Bellman's own records. Otherwise
+    /// `no_ack`: "no acknowledgement was received" (a filesystem read leaves
+    /// no trace). Returns the number of transitions (caller projects status
+    /// for each).
     pub fn expire_pickups(
         &self,
-        store: &Store,
-        log: &mut EventLog,
-        now: DateTime<Utc>,
-    ) -> ReplyResult<usize> {
-        let mut n = 0;
-        for stale in store.expired_pickups(now)? {
-            let Some(timer) = store.get_timer(stale.timer_id)? else {
+        db: &dyn RunDb,
+        now_wall: DateTime<Utc>,
+        mono_now: Instant,
+    ) -> ReplyResult<Vec<Uuid>> {
+        let due = self.due_deadlines(DeadlineKind::Pickup, mono_now);
+        let mut transitioned = Vec::new();
+        for run_id in due {
+            let Ok(Some(row)) = db.get_run_state(run_id) else {
+                self.clear_deadlines(run_id);
                 continue;
             };
-            n += self.expire_pickup_one(store, log, &timer, stale.run_id, now)?;
+            let Ok(Some(timer)) = db.get_timer(row.timer_id) else {
+                self.clear_deadlines(run_id);
+                continue;
+            };
+            if self.expire_pickup_one(db, &timer, run_id, now_wall)? {
+                transitioned.push(run_id);
+            }
         }
-        Ok(n)
+        Ok(transitioned)
     }
 
     /// One pickup-deadline transition for `run_id` of `timer`, re-read under
-    /// the caller's gate. Returns 1 when a transition happened.
+    /// the caller's gate. Returns true when a transition happened.
     pub fn expire_pickup_one(
         &self,
-        store: &Store,
-        log: &mut EventLog,
+        db: &dyn RunDb,
         timer: &Timer,
         run_id: Uuid,
-        now: DateTime<Utc>,
-    ) -> ReplyResult<usize> {
+        now_wall: DateTime<Utc>,
+    ) -> ReplyResult<bool> {
         // Re-check inside the gate: the run must still be current, still
-        // pre-pickup, and its deadline still pending.
-        let Some(row) = store.get_run_state(run_id)? else {
-            return Ok(0);
+        // pre-pickup, and its deadline still armed.
+        let Some(row) = db.get_run_state(run_id)? else {
+            return Ok(false);
         };
-        if row.pickup_deadline.is_none_or(|d| d > now) {
-            return Ok(0);
+        if row.pickup_deadline.is_none() {
+            return Ok(false);
         }
-        let current = store.current_run_state(timer.id)?;
+        let current = db.current_run_state(timer.id)?;
         if current.as_ref().map(|r| r.run_id) != Some(run_id) {
-            return Ok(0);
+            return Ok(false);
         }
-        let Some(claim) = store.get_run(run_id)? else {
-            return Ok(0);
+        let Some(claim) = db.get_run(run_id)? else {
+            return Ok(false);
         };
         if !matches!(
             row.run_state(),
             Some(RunState::Fired) | Some(RunState::FiredLate) | Some(RunState::Coalesced)
         ) {
-            return Ok(0);
+            return Ok(false);
         }
         // The slot feed is a durable acknowledgement path that predates the
         // reply channel — it counts.
-        if store.last_acked_sequence(timer.id)? >= claim.event_sequence {
-            self.mark_acknowledged(store, log, timer, &claim, row, now)?;
-            return Ok(1);
+        if db.last_acked_sequence(timer.id)? >= claim.event_sequence {
+            self.mark_acknowledged(db, timer, &claim, row, now_wall)?;
+            return Ok(true);
         }
         let mut row = row;
         row.state = RunState::NoAck.as_str().to_string();
-        row.no_ack_at = Some(now);
+        row.no_ack_at = Some(now_wall);
         row.pickup_deadline = None;
-        log.emit(
-            EventRecord::new(RunState::NoAck)
+        self.clear_deadlines(run_id);
+        db.enqueue_event(
+            &EventRecord::new(RunState::NoAck)
                 .with_timer(timer.id, timer.name.clone())
                 .with_run(run_id)
                 .with_scheduled_for(claim.scheduled_for)
                 .with_message("no acknowledgement was received")
-                .with_logged_at(now),
+                .with_logged_at(now_wall),
         )?;
-        store.update_run_state(&row)?;
-        self.project_status(store, timer, &run_id)?;
-        Ok(1)
+        db.update_run_state(&row)?;
+        Ok(true)
     }
 
-    /// Expire lapsed opt-in watchdogs (R8): `failed` with
-    /// `failure_kind: "timed_out"` — marking is not killing, and the reply
-    /// file is never touched (the divergence between the two files is the
-    /// point: `reply.json` is what the app said, `status.json` is the truth).
+    /// Expire lapsed opt-in watchdog countdowns (monotonic book): `failed`
+    /// with `failure_kind: "timed_out"` — marking is not killing, and the
+    /// reply file is never touched. Returns the transitioned runs (caller
+    /// projects status).
     pub fn expire_watchdogs(
         &self,
-        store: &Store,
-        log: &mut EventLog,
-        now: DateTime<Utc>,
-    ) -> ReplyResult<usize> {
-        let mut n = 0;
-        for stale in store.expired_watchdogs(now)? {
-            let Some(timer) = store.get_timer(stale.timer_id)? else {
+        db: &dyn RunDb,
+        now_wall: DateTime<Utc>,
+        mono_now: Instant,
+    ) -> ReplyResult<Vec<Uuid>> {
+        let due = self.due_deadlines(DeadlineKind::Watchdog, mono_now);
+        let mut transitioned = Vec::new();
+        for run_id in due {
+            let Ok(Some(row)) = db.get_run_state(run_id) else {
+                self.clear_deadlines(run_id);
                 continue;
             };
-            n += self.expire_watchdog_one(store, log, &timer, stale.run_id, now)?;
+            let Ok(Some(timer)) = db.get_timer(row.timer_id) else {
+                self.clear_deadlines(run_id);
+                continue;
+            };
+            if self.expire_watchdog_one(db, &timer, run_id, now_wall)? {
+                transitioned.push(run_id);
+            }
         }
-        Ok(n)
+        Ok(transitioned)
     }
 
     /// One watchdog transition for `run_id`, re-read under the caller's gate.
     pub fn expire_watchdog_one(
         &self,
-        store: &Store,
-        log: &mut EventLog,
+        db: &dyn RunDb,
         timer: &Timer,
         run_id: Uuid,
-        now: DateTime<Utc>,
-    ) -> ReplyResult<usize> {
-        let Some(row) = store.get_run_state(run_id)? else {
-            return Ok(0);
+        now_wall: DateTime<Utc>,
+    ) -> ReplyResult<bool> {
+        let Some(row) = db.get_run_state(run_id)? else {
+            return Ok(false);
         };
-        if row.watchdog_deadline.is_none_or(|d| d > now) {
-            return Ok(0);
+        if row.watchdog_deadline.is_none() {
+            return Ok(false);
         }
         if row.is_terminal() || row.error_detection != Some(true) {
-            return Ok(0);
+            return Ok(false);
         }
-        let current = store.current_run_state(timer.id)?;
+        let current = db.current_run_state(timer.id)?;
         if current.as_ref().map(|r| r.run_id) != Some(run_id) {
-            return Ok(0);
+            return Ok(false);
         }
-        let Some(claim) = store.get_run(run_id)? else {
-            return Ok(0);
+        let Some(claim) = db.get_run(run_id)? else {
+            return Ok(false);
         };
         let mut row = row;
         row.state = RunState::Failed.as_str().to_string();
         row.failure_kind = Some(FailureKind::TimedOut);
-        row.failed_at = Some(now);
+        row.failed_at = Some(now_wall);
         row.watchdog_deadline = None;
-        let (duration_ms, source) = self.duration_ms(run_id, row.fired_at, now);
+        self.clear_deadlines(run_id);
+        let (duration_ms, source) = self.duration_ms(run_id, row.fired_at, now_wall);
         let mut detail = serde_json::json!({ "failure_kind": FailureKind::TimedOut.as_str() });
         if let Some(source) = source {
             detail["duration_source"] = serde_json::json!(source);
         }
-        log.emit(
-            EventRecord::new(RunState::Failed)
+        db.enqueue_event(
+            &EventRecord::new(RunState::Failed)
                 .with_timer(timer.id, timer.name.clone())
                 .with_run(run_id)
                 .with_scheduled_for(claim.scheduled_for)
                 .with_duration_ms(duration_ms)
                 .with_detail(detail)
                 .with_message("error_detection watchdog expired")
-                .with_logged_at(now),
+                .with_logged_at(now_wall),
         )?;
-        store.update_run_state(&row)?;
-        self.project_status(store, timer, &run_id)?;
-        Ok(1)
+        db.update_run_state(&row)?;
+        Ok(true)
     }
 
-    /// The watchdog deadline from Bellman's receipt (`now`) — never the app's
-    /// timestamp (R8): a skewed app clock must not fail a healthy app or
-    /// extend its own deadline.
-    fn watchdog_deadline(&self, expected_secs: u64, now: DateTime<Utc>) -> DateTime<Utc> {
-        let millis = (expected_secs as f64 * self.watchdog_factor * 1000.0).max(0.0);
-        now + ChronoDuration::milliseconds(millis as i64)
+    /// Book entries of `kind` whose monotonic deadline has lapsed.
+    pub fn due_deadlines(&self, kind: DeadlineKind, mono_now: Instant) -> Vec<Uuid> {
+        self.deadlines
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .filter(|(_, d)| d.kind == kind && d.at <= mono_now)
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    fn clear_deadlines_kind(&self, run_id: Uuid, kind: DeadlineKind) {
+        let mut book = self.deadlines.lock().unwrap_or_else(|p| p.into_inner());
+        if book.get(&run_id).is_some_and(|d| d.kind == kind) {
+            book.remove(&run_id);
+        }
+    }
+
+    /// The watchdog countdown from Bellman's monotonic receipt — never the
+    /// app's timestamp (R8).
+    fn watchdog_instant(&self, expected_secs: u64, mono_now: Instant) -> Instant {
+        mono_now + self.watchdog_span(expected_secs)
+    }
+
+    /// The persisted wall-clock copy of the same countdown (restart
+    /// reconstruction only).
+    fn watchdog_wall(&self, expected_secs: u64, now_wall: DateTime<Utc>) -> DateTime<Utc> {
+        now_wall
+            + ChronoDuration::from_std(self.watchdog_span(expected_secs))
+                .unwrap_or_else(|_| ChronoDuration::seconds(0))
+    }
+
+    fn watchdog_span(&self, expected_secs: u64) -> Duration {
+        Duration::from_secs_f64((expected_secs as f64 * self.watchdog_factor).max(0.0))
     }
 
     /// `duration_ms`: Bellman's clock both ends. Monotonic anchor when the
@@ -705,7 +944,7 @@ impl ReplyEngine {
         &self,
         run_id: Uuid,
         fired_at: DateTime<Utc>,
-        now: DateTime<Utc>,
+        now_wall: DateTime<Utc>,
     ) -> (i64, Option<&'static str>) {
         if let Some(anchor) = self
             .anchors
@@ -716,9 +955,19 @@ impl ReplyEngine {
             let ms = i64::try_from(anchor.elapsed().as_millis()).unwrap_or(i64::MAX);
             return (ms.max(0), None);
         }
-        let ms = now.signed_duration_since(fired_at).num_milliseconds();
+        let ms = now_wall.signed_duration_since(fired_at).num_milliseconds();
         (ms.max(0), Some("wall_clock"))
     }
+}
+
+/// Wall-clock remainder until `deadline`, clamped at zero (clock jumps can
+/// only shorten the reconstructed countdown, never extend it — the
+/// documented restart-fallback limitation).
+fn remaining(deadline: DateTime<Utc>, now_wall: DateTime<Utc>) -> Duration {
+    deadline
+        .signed_duration_since(now_wall)
+        .to_std()
+        .unwrap_or(Duration::ZERO)
 }
 
 /// The one current run of a timer (latest claim), if any.

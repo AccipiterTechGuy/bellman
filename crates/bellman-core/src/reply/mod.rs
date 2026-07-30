@@ -27,16 +27,17 @@ pub use document::{
     MAX_REPLY_FILE_BYTES, MAX_RESULT_EVENT_BYTES, MAX_RESULT_STATUS_BYTES, REPLY_SCHEMA_V1,
 };
 pub use engine::{
-    current_claim, new_anchors, IngestOutcome, ReplyEngine, ReplyError, ReplyResult, SharedAnchors,
+    current_claim, new_anchors, new_deadlines, DeadlineKind, IngestOutcome, MonoDeadline,
+    ReplyEngine, ReplyError, ReplyResult, SharedAnchors, SharedDeadlines,
 };
+pub use engine::RunDb;
 pub use notification::{
     fire_notification_name, fires_dir, write_fire_notification, FireNotification,
     FIRES_DIR_NAME, FIRE_SCHEMA_V1,
 };
 pub use watcher::{
-    barrier_ingest, poll_once, publish_fire_notification, reconcile, spawn_reply_thread,
-    startup_scan, InvalidTracker, PollStats, ReplyWatcherStop, DEFAULT_DEBOUNCE,
-    DEFAULT_POLL_INTERVAL,
+    barrier_read, poll_once, publish_fire_notification, reconcile, startup_scan, InvalidTracker,
+    PollStats, DEFAULT_DEBOUNCE, DEFAULT_POLL_INTERVAL, RECONCILE_EVERY_POLLS,
 };
 
 #[cfg(test)]
