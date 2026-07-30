@@ -67,6 +67,28 @@ pub fn acquire_quarantine(data_dir: &Path) -> io::Result<GateGuard> {
     acquire_path(data_dir.join("locks").join("quarantine.lock"))
 }
 
+/// Non-blocking exclusive acquire of an arbitrary lock file (the R11
+/// publisher lease). Returns `Ok(None)` when another process holds it —
+/// the caller is then a follower, not an error case.
+pub fn try_acquire_file(path: &Path) -> io::Result<Option<GateGuard>> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
+    match try_lock_exclusive(&file)? {
+        true => Ok(Some(GateGuard {
+            file,
+            path: path.to_path_buf(),
+        })),
+        false => Ok(None),
+    }
+}
+
 /// Map a timer id to its shard path: `<data_dir>/locks/gate-<NN>.lock` where
 /// `NN` is the first UUID byte as two lowercase hex digits. Visible for tests.
 pub fn shard_path(data_dir: &Path, timer_id: Uuid) -> PathBuf {
@@ -98,6 +120,35 @@ fn lock_exclusive(file: &File) -> io::Result<()> {
     rustix::fs::flock(file.as_fd(), rustix::fs::FlockOperation::LockExclusive)
         .map_err(|e| io::Error::from_raw_os_error(e.raw_os_error()))
     // The lock is released by closing the file on drop.
+}
+
+#[cfg(unix)]
+fn try_lock_exclusive(file: &File) -> io::Result<bool> {
+    use std::os::unix::io::AsFd;
+    match rustix::fs::flock(file.as_fd(), rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+        Ok(()) => Ok(true),
+        Err(rustix::io::Errno::WOULDBLOCK) => Ok(false),
+        Err(e) => Err(io::Error::from_raw_os_error(e.raw_os_error())),
+    }
+}
+
+#[cfg(windows)]
+fn try_lock_exclusive(file: &File) -> io::Result<bool> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{ERROR_LOCK_VIOLATION, HANDLE};
+    use windows::Win32::Storage::FileSystem::{
+        LockFileEx, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY,
+    };
+    use windows::Win32::System::IO::OVERLAPPED;
+
+    let handle = HANDLE(file.as_raw_handle() as isize);
+    let mut overlapped = OVERLAPPED::default();
+    let flags = LOCKFILE_EXCLUSIVE_LOCK.0 | LOCKFILE_FAIL_IMMEDIATELY.0;
+    match unsafe { LockFileEx(handle, flags, 0, u32::MAX, u32::MAX, &mut overlapped) } {
+        Ok(()) => Ok(true),
+        Err(e) if e.code() == ERROR_LOCK_VIOLATION.to_hresult() => Ok(false),
+        Err(e) => Err(io::Error::from_raw_os_error(e.code().0)),
+    }
 }
 
 #[cfg(windows)]

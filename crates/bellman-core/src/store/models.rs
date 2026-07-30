@@ -448,8 +448,57 @@ impl RunStateRow {
 
 /// Meta bookkeeping row (single-row table).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Meta {    pub schema_version: i32,
+pub struct Meta {
+    pub schema_version: i32,
     pub last_prune: Option<DateTime<Utc>>,
     pub last_recalibration: Option<DateTime<Utc>>,
     pub tzdata_version: Option<String>,
+}
+
+/// Rotation phase recorded in the R11 journal (`rotation_journal.phase`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RotationPhase {
+    /// Current renamed to the `.rotating` source.
+    Renamed,
+    /// Final archive durably in place.
+    Finalized,
+    /// `.rotating` source deleted after final-archive verification.
+    SourceRemoved,
+}
+
+impl RotationPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Renamed => "renamed",
+            Self::Finalized => "finalized",
+            Self::SourceRemoved => "source_removed",
+        }
+    }
+
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "renamed" => Some(Self::Renamed),
+            "finalized" => Some(Self::Finalized),
+            "source_removed" => Some(Self::SourceRemoved),
+            _ => None,
+        }
+    }
+}
+
+/// The R11 rotation journal row: every artifact of an in-flight rotation,
+/// named durably so a recovering publisher can roll any interrupted phase
+/// forward before appending or rotating again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RotationJournal {
+    /// The live current file that was renamed away.
+    pub source: std::path::PathBuf,
+    /// The plain `.rotating` working copy (readers include it while the
+    /// journal is active; never a partial gzip temp).
+    pub rotating: std::path::PathBuf,
+    /// The gzip temporary (never parsed by readers).
+    pub gz_tmp: std::path::PathBuf,
+    /// The final compressed archive.
+    pub final_path: std::path::PathBuf,
+    pub phase: RotationPhase,
+    pub started_at: DateTime<Utc>,
 }

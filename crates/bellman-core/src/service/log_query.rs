@@ -49,14 +49,16 @@ pub fn read_log_tail(
     Ok((recs, stats))
 }
 
-/// Read retained history: `logs/archive/events-*.jsonl[.gz]` (sorted) then
-/// `logs/events.current.jsonl`.
+/// Read retained history: `logs/archive/events-*.jsonl[.gz]` (sorted), then
+/// the R11 `.rotating` source while a rotation journal is active (never the
+/// partial gzip temp), then `logs/events.current.jsonl`.
 ///
 /// Used by the calendar truth model so weekly rotation does not erase
 /// durable outcomes from Week/Month views while archives remain in the
 /// retention window. Missing dirs/files yield empty (not error). Records are
 /// deduplicated by `event_id` (a crash mid-rotation can briefly leave both a
-/// plain staging archive and its compressed twin).
+/// plain staging archive and its compressed twin — and the at-least-once
+/// outbox can re-append after a crash between sync and mark-published).
 pub fn read_log_history(logs_dir: &Path) -> std::io::Result<(Vec<EventRecord>, ReadStats)> {
     let mut all = Vec::new();
     let mut stats = ReadStats::default();
@@ -88,6 +90,23 @@ pub fn read_log_history(logs_dir: &Path) -> std::io::Result<(Vec<EventRecord>, R
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e),
             }
+        }
+    }
+
+    // The plain `.rotating` source of an in-flight/interrupted rotation:
+    // while the journal is active these lines are nowhere else, so history
+    // must not briefly lose them.
+    let rotating = logs_dir.join(crate::events::ROTATING_FILE_NAME);
+    if rotating.is_file() {
+        match read_events(&rotating) {
+            Ok((recs, s)) => {
+                stats.records += s.records;
+                stats.skipped += s.skipped;
+                stats.lines += s.lines;
+                all.extend(recs);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
         }
     }
 
