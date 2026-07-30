@@ -349,20 +349,25 @@ impl EventPublisher {
 
         let final_ok = journal.final_path.exists() && verify_gzip(&journal.final_path);
         if final_ok {
-            // Final archive verified — redundant source/temp go.
-            let _ = fs::remove_file(&journal.rotating);
-            let _ = fs::remove_file(&journal.gz_tmp);
+            // Final archive verified — redundant source/temp go. Cleanup
+            // failures PROPAGATE: clearing the journal over a failed or
+            // undurable deletion would abandon redundant artifacts with no
+            // intent left for retry.
+            remove_if_exists(&journal.gz_tmp)?;
+            remove_if_exists(&journal.rotating)?;
         } else if journal.rotating.exists() {
             // Roll forward from the plain source (never the partial temp).
-            let _ = fs::remove_file(&journal.gz_tmp);
+            remove_if_exists(&journal.gz_tmp)?;
             gzip_file(&journal.rotating, &journal.gz_tmp)?;
             fs::rename(&journal.gz_tmp, &journal.final_path)?;
             sync_dir(&self.log.archive_dir())?;
-            let _ = fs::remove_file(&journal.rotating);
+            remove_if_exists(&journal.rotating)?;
         } else {
-            let _ = fs::remove_file(&journal.gz_tmp);
+            remove_if_exists(&journal.gz_tmp)?;
         }
-        // Deletions + the new current land in logs/ — make them durable.
+        // Deletions landed in archive/ (gz temp) and logs/ (rotating source,
+        // new current) — make them durable BEFORE the journal may clear.
+        sync_dir(&self.log.archive_dir())?;
         sync_dir(&self.log.config().logs_dir)?;
         self.log.reopen()?;
         sync_dir(&self.log.config().logs_dir)?;
@@ -520,6 +525,17 @@ fn sync_dir(dir: &Path) -> EventLogResult<()> {
     let d = fs::File::open(dir)?;
     d.sync_all()?;
     Ok(())
+}
+
+/// Delete a journal-named artifact. Missing is fine (a prior interrupted
+/// cleanup may have removed it); every other failure propagates so the
+/// journal stays for retry instead of abandoning the artifact.
+fn remove_if_exists(path: &Path) -> EventLogResult<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 #[cfg(test)]

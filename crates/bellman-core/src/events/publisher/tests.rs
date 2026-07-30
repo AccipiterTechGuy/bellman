@@ -364,3 +364,56 @@ fn a_follower_never_clobbers_the_leaders_health_file() {
     let report = next.publish_cycle(&second_store);
     assert!(report.leader);
 }
+
+#[test]
+fn recovery_keeps_the_journal_when_cleanup_fails() {
+    let mut h = Harness::new();
+    // Seed an interrupted rotation at phase Finalized: the final archive is
+    // durable, but the .rotating source still needs cleanup.
+    let logs = h.dir.path().join("logs");
+    let archive = logs.join("archive");
+    fs::create_dir_all(&archive).unwrap();
+    let rotating = logs.join(ROTATING_FILE_NAME);
+    let final_path = archive.join("events-2026-W31.jsonl.gz");
+    let rec = event(RunState::Completed, "archived before the crash");
+    let payload = serde_json::to_string(&rec).unwrap() + "\n";
+    fs::write(&rotating, &payload).unwrap();
+    let gz_tmp = archive.join(".events-2026-W31.jsonl.gz.tmp");
+    gzip_file(&rotating, &gz_tmp).unwrap();
+    fs::rename(&gz_tmp, &final_path).unwrap();
+    let journal = RotationJournal {
+        source: logs.join(CURRENT_FILE_NAME),
+        rotating: rotating.clone(),
+        gz_tmp,
+        final_path: final_path.clone(),
+        phase: RotationPhase::Finalized,
+        started_at: Utc::now(),
+    };
+    h.store.set_rotation_journal(&journal).unwrap();
+
+    // Fault: the .rotating path is a DIRECTORY, so deletion fails.
+    fs::remove_file(&rotating).unwrap();
+    fs::create_dir(&rotating).unwrap();
+
+    let report = h.publisher.publish_cycle(&h.store);
+    assert!(report.error.is_some(), "the cleanup failure surfaces");
+    assert!(
+        h.store.rotation_journal().unwrap().is_some(),
+        "the journal is NOT cleared over a failed cleanup — retry stays possible"
+    );
+    assert!(final_path.exists(), "the durable archive is never touched");
+
+    // Clear the fault: the next cycle completes the cleanup and clears.
+    fs::remove_dir(&rotating).unwrap();
+    fs::write(&rotating, &payload).unwrap();
+    let report = h.publisher.publish_cycle(&h.store);
+    assert!(report.error.is_none());
+    assert!(h.store.rotation_journal().unwrap().is_none());
+    assert!(!rotating.exists(), "redundant source removed");
+    let events = h.all_events();
+    assert_eq!(
+        events.iter().filter(|e| e.event_id == rec.event_id).count(),
+        1,
+        "the archived event is readable exactly once"
+    );
+}
