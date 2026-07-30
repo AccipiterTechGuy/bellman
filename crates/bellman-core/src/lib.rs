@@ -16,6 +16,7 @@ pub mod scheduler;
 pub mod service;
 pub mod slots;
 pub mod store;
+pub mod tree;
 pub mod visible;
 
 pub use actions::{
@@ -66,6 +67,12 @@ pub use store::{
     Action, ClaimStatus, Meta, MisfirePolicy, NewTimer, OpenOptions, OverlapPolicy, RetryPolicy,
     RunClaim, SlotRequestRecord, Store, StoreError, StoreResult, Timer, TimerId, TimerPatch,
     TimerUpdate,
+};
+pub use tree::{
+    folder_name, log_cancelled_for_open_runs, project_run_finished, project_run_started,
+    reconcile_folders, reply_file_name, short_id, slugify, RunStatus, TimersTree, TreeError,
+    TreeResult, README_FILE_NAME, RUN_SCHEMA_V1, STATUS_FILE_NAME, TIMER_FILE_NAME,
+    TIMER_SCHEMA_V1, TREE_DIR_NAME,
 };
 pub use visible::{
     default_backup_dir, default_snapshot_path, diff_scans, disable_task, edit_task, enable_task,
