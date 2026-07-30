@@ -140,6 +140,11 @@ pub fn spawn_slot_thread(
                 Ok(s) => s,
                 Err(_) => return,
             };
+            // IK2: slot add/modify/delete also projects the per-timer folder tree.
+            let service = match db_path.parent() {
+                Some(data_dir) => service.with_timers_tree(crate::tree::TimersTree::new(data_dir)),
+                None => service,
+            };
             let _ = run_slot_loop(&service, &mut store, poll_interval, stop_rx, |_, _| {});
         })
         .map_err(|e| SlotError::Io(format!("spawn slot thread: {e}")))?;

@@ -218,7 +218,9 @@ impl AppState {
         // be unprovable.
         let event_log = match bellman_core::EventLog::open(
             bellman_core::EventLogConfig::new(self.data_dir.join("logs"))
-                .with_retention(app_cfg.retention()),
+                .with_retention(app_cfg.retention())
+                .with_max_current_bytes(app_cfg.log_rotation_max_bytes)
+                .with_budget_bytes(app_cfg.log_retention_budget_bytes),
         ) {
             Ok(log) => Some(log),
             Err(e) => {
