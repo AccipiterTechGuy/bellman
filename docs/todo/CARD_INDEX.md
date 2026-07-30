@@ -5,7 +5,7 @@ railed: they are created only, until the cards already on the rails have shipped
 
 Design documents:
 - `macro_recorder_security_plan.md` — decisions **D-1 … D-16** for the macro feature
-- `json_normalization.md` — the JSON rules **R1 … R9**, the folder tree, retention
+- `json_normalization.md` — the JSON/runtime rules **R1 … R12**, the folder tree, retention
 - `macro_card_plan.md` — the macro ladder and why it is ordered that way
 
 ## Grid
@@ -18,18 +18,18 @@ Design documents:
 
 | card | scope | depends on |
 |---|---|---|
-| **IK1** | Normalise the JSON shapes (R1–R11). No new features | — |
-| **IK2** | Per-timer folder tree: `timer.json`, `status.json`. **No `runs/`** | IK1 |
-| **IK3** | `reply.json` — outcome reporting, opt-in watchdog, revisable state, crash/startup ordering | IK2 |
-| **IK4** | Lightbulb app + "connect your own application" docs | IK1–IK3 |
+| **IK1** | Normalise wire shapes and the shared vocabulary (**R1–R6 only**). No behaviour change | — |
+| **IK2** | Per-timer folder tree: `timer.json`, `status.json`. **No `runs/`**; retained archive policy | IK1 |
+| **IK3** | Per-run reply channel and runtime rules **R7–R12** — watchdog, revision, crash/startup, outbox/rotation, caps | IK2 |
+| **IK4** | Lightbulb app + "connect your own application" docs | IK1–IK3, SCH1 |
 | **IK5** | Live run state in the GUI — no new tab | IK3 |
-| **IK6** | Dual transport: local IPC + files, chosen **per firing**. One ingest path; **no generated `adapter.py`** — connection info is data, not code. Files stay canonical | IK3 shipped, IK4 proven |
+| **IK6** | Dual transport: local IPC + files, chosen **per firing**. One ingest path; **no generated `adapter.py`** — connection info is data, not code. Files stay canonical | IK3 + SCH1 shipped, IK4 proven |
 
 ## Scheduler internals
 
 | card | scope | depends on |
 |---|---|---|
-| **SCH1** | In-memory fire dispatcher + bounded action lanes. A slow launch currently stalls the whole heap | — (independent of IK1–IK5) |
+| **SCH1** | In-memory fire dispatcher + bounded action lanes. A slow launch currently stalls the whole heap | IK3 |
 
 ### Deferred — worth doing, not now
 

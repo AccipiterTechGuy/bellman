@@ -48,9 +48,20 @@ pre-generated free slot stubs.
 }
 ```
 
-`app_name` is pre-filled from the timer's owner (`created_by.app_name`), so the app never
-supplies it. When a timer was created by a human rather than an app there is no owner: leave
-it `null` and let the first responder fill it in.
+`app_name` is pre-filled from the timer's explicit integration owner, so the app never
+supplies it. A slot-created timer defaults that owner from `created_by.app_name`. A
+human-created timer must set an owner before enabling the reply/fire-notification channel;
+there is no `null`/first-responder claim on a shared file. Without an owner the timer may
+still execute its configured action, but Bellman creates no app reply channel, pickup
+deadline, `no_ack` or watchdog. Its action result stays in the claim/event log and its
+`status.json` remains the current firing snapshot; it is not presented as an app working.
+
+This is load-bearing, not UI ceremony: two apps can both read a null stub and atomically
+replace the same path before Bellman validates either. Rejecting the loser afterward cannot
+restore the winner's bytes. Explicit ownership is what makes "one writer" true before I/O.
+The fire transaction snapshots that owner on the run, stub and notification. Validation uses
+the run snapshot, not mutable timer configuration; an owner change applies at the next
+firing.
 
 `state: null` is how Bellman tells "stub, untouched" from "the app answered". **From T0 the
 app is the file's only writer, and Bellman never writes over a live reply file** — the one
@@ -66,6 +77,10 @@ makes the no-overwrite rule *possible* rather than aspirational. **Full id, not 
 truncated 8-hex name is 32 bits, and a colliding reuse would hand a new run the exact path a
 still-alive old app is holding — quietly rebuilding the clobber this filename exists to kill.
 The full id makes collision impossible rather than improbable, and costs a longer filename.
+
+The fire notification has the same one-path-per-purpose rule: it lives under
+`slots/fires/` (normally `fire-<full-run_id>.json`), never in the
+`slots/done/slot-<id>.json` request-response namespace.
 
 With one fixed `reply.json` across generations, two unfixable races exist:
 
@@ -173,9 +188,10 @@ handling is welded to the watcher, that card starts by unpicking this one.
 
 ### Every transition is appended to the event log
 
-With no `runs/`, **`events.current.jsonl` is the only per-run record**. A transition that
-never reaches it is gone permanently — so logging is not incidental here, it is the durability
-story.
+With no `runs/`, **the JSONL event log (`events.current.jsonl` plus its archives) is the only
+semantic per-run history**. The GUI is only a reader of that log. A transition that never
+reaches the outbox/log is absent from retained history, so logging is not incidental here;
+it is the durability boundary.
 
 The enum is `RunState` (`events/record.rs`), and **IK1's vocabulary work has partially
 landed** (`4c2d7d7`, `03e0363`): `Acknowledged`, `Running`, `Completed`, `Failed` **already
@@ -190,7 +206,7 @@ landed, which is what any list copied out of code does:
 | `running` | the app first enters `running` — **once**, on the state change | — |
 | `completed` | the app reports success | `duration_ms`, `result` (capped at 2 KB per R12 — the full 32 KB view lives in `status.json` until the next fire) |
 | `failed` | the app reports failure, or a watchdog expires | `failure_kind`, `reason` |
-| `superseded` | the timer fires again over an open run | the abandoned `run_id` |
+| `superseded` | the timer fires again over a current non-terminal run | the abandoned `run_id` |
 | `reply_rejected` | validation refuses a reply | `reason` |
 
 Every line carries `run_id` and `timer_id`, so one run's whole story is `grep`-able by id.
@@ -252,7 +268,7 @@ statement each time and never carry state.
 ## Lifecycle
 
 `fired` (Bellman) → `acknowledged` → `running` → `completed` | `failed` (all app) ·
-`no_ack` (Bellman, nobody picked it up).
+`no_ack` (Bellman, no pickup signal was recorded).
 
 ### Which moves are legal
 
@@ -267,8 +283,12 @@ two watcher ticks. What is **not** valid:
 
 - **A terminal report never moves backwards to a non-terminal one.** Once the app has said
   `completed` or `failed`, a later `running` or `acknowledged` for that run is rejected as
-  `reply_rejected`. That is not a revised verdict — it reopens a closed run and restarts a
-  watchdog, which is a bug in the writer every time.
+  `reply_rejected`. That is not a revised verdict — it moves an app-authored terminal state
+  back to non-terminal and restarts a watchdog, which is a bug in the writer every time.
+  This is specifically an app-authored
+  terminal report: Bellman's provisional `no_ack` or watchdog `timed_out` may move to a valid
+  app-authored state while current; `no_ack` may also move to `acknowledged` on late
+  `ack_through`, as defined below.
 - **Bellman never invents an app transition.** It records what the app wrote, plus its own
   `fired` / `no_ack` / watchdog `failed`. Nothing in between is inferred.
 
@@ -278,13 +298,13 @@ like:
 
 - A stale process cannot reach here. Its `run_id` belongs to a previous firing and validation
   rejects it as `superseded` before any of this applies. What remains is the same app, on the
-  run that is still open, correcting itself — far more likely a real correction than a bug.
+  run that is still current, correcting itself — far more likely a real correction than a bug.
 - Nothing is lost either way. The log is append-only, so "failed 05:15, completed 05:22"
   survives as two lines whichever one the state ends on. Refusing the second would leave
   `status.json` reading `failed` for a run that succeeded, which is exactly the lie R7 exists
   to prevent.
 
-So there is **one rule, not two**: for the run that is currently open, the app's latest
+So there is **one rule, not two**: for the run that is still current, the app's latest
 terminal report wins. It does not matter whether the state it replaces was the app's own
 report or Bellman's watchdog inference — no `failure_kind` check, no special case.
 
@@ -292,22 +312,29 @@ The revision rule below is the same rule seen from the other side, and its one h
 still holds: **Bellman never overrides the app.** A watchdog cannot flip an app's `completed`
 back to `failed`.
 
-**Nothing ever auto-completes.** A run stays open until the app closes it, and **ages** — a
-history reading "running for 3 days" is the truth, and obviously wrong to a human, without
-Bellman pretending to know why. An unfinished run is not `failed`; `failed` means the app
-said so.
+**Nothing ever auto-completes.** A non-terminal run stays non-terminal until the app reports
+an ending, and **ages** — a history reading "running for 3 days" is the truth, and obviously
+wrong to a human, without Bellman pretending to know why. An unfinished run is not `failed`;
+`failed` means the app said so.
 
 ## Timing — the asymmetry
 
 - **Pickup has a deadline** (default 60s, its own persisted setting — `ack_grace` may seed
   the default, but the pickup deadline and the pruning grace are different jobs and stay
-  separately named). **Pickup is satisfied by any of:** a valid reply in any state, **or the
+  separately named). Start it on Bellman's monotonic clock when the fire transaction commits
+  and persist the wall-clock deadline for restart recovery; action queueing, publication
+  retries and `expected_secs` do not move it. **Pickup is satisfied by any of:** a valid reply in any state, **or the
   existing slot-feed `ack_through` cursor advancing past this run** — that feed is a durable
   acknowledgement path that predates this card, and declaring `no_ack` while it shows the app
   acked would contradict Bellman's own records. Lapsed ⇒ `no_ack`, which reads "no
   acknowledgement was received" — a filesystem read leaves no trace, so "nobody read it" is
-  not knowable and must not be claimed. A late valid reply **revises** `no_ack` while the run
-  is still current, same rule as the watchdog.
+  not knowable and must not be claimed. While the run is still current, either late pickup
+  signal revises `no_ack`: a valid reply applies its reported state, and `ack_through`
+  advancing past this run records `acknowledged` without inventing `running` or completion.
+  The same current-run limit as the watchdog applies. `no_ack → acknowledged` is an allowed
+  terminal-to-non-terminal move because the first state was Bellman's provisional
+  observation, not an app-authored closing verdict; a valid app reply may similarly revise
+  watchdog `timed_out`.
 - **Completion has no timeout, ever** — by default. How long another program takes is
   unknowable.
 
@@ -338,6 +365,10 @@ Freezing the first estimate would punish the only app honest enough to correct i
 
 An app may set `error_detection: true` with `expected_secs`. It is then **consenting** to be
 held to a deadline **it declared itself** — not Bellman guessing. Default false.
+The accumulated reply must contain a positive `expected_secs` before `true` is accepted;
+otherwise the reply is semantically rejected. Omission retains the prior
+`error_detection`, while an explicit `false` cancels the pending watchdog and leaves
+`expected_secs` advisory for the GUI.
 
 - Deadline = `expected_secs × factor`, configurable, default forgiving (~2×). Failing at the
   exact stated second makes every app pad its estimate and the field becomes fiction.
@@ -345,11 +376,14 @@ held to a deadline **it declared itself** — not Bellman guessing. Default fals
   timestamp (`json_normalization.md` R8). A skewed app clock would otherwise fail a
   healthy app, and a fast one would extend its own deadline indefinitely. Persist the
   wall-clock deadline too, but only to rebuild the countdown after a restart.
-- **A heartbeat restarts the countdown** — this is what makes heartbeats worth sending, and
-  the only way a long job can say "still alive, don't give up on me". Timed from Bellman's
-  receipt of it, for the same reason.
+- **A heartbeat restarts the countdown** — concretely, every distinct accepted non-terminal
+  reply while enabled rearms from Bellman's receipt. A new `heartbeat_at`, changed progress,
+  state advance or new estimate is activity; an exact duplicate/rescan is a no-op and cannot
+  extend the deadline. The app's timestamp is display data, never arithmetic.
 - Outcome is `failed` with `failure_kind: "timed_out"` (vs `"reported"`).
 - **Marking is not killing.** Flag the run; do not terminate the process.
+  The configured wake action's existing launch timeout and SCH1 `Replace` cancellation are
+  separate action-execution policies; watchdog expiry never invokes them.
 
 Cheap to build because Bellman is a scheduler — a deadline is one entry in the existing heap.
 
@@ -404,10 +438,20 @@ why they have to be specified rather than discovered.
 file.** A valid `completed` the watcher has not processed yet must be folded in *before* the
 run can be superseded — otherwise Bellman logs "outcome unknown" over an outcome that was on
 disk. The watcher and the scheduler use the same serialization point for this file; two
-independent readers of one channel is a race by construction.
+independent readers of one channel is a race by construction. It is an **interprocess
+per-timer gate**, shared by file/IPC ingest, `ack_through`, pickup/watchdog deadlines, timer
+deletion, folder reconciliation, scheduled delivery, GUI `run_now` and standalone CLI
+`run-now`; a fire producer holds it through the barrier read, fire commit and short
+post-commit status/stub projection, then releases it before action enqueue/wait. Every other
+lifecycle mutator rechecks the current `run_id`, state and deadline inside the gate, commits
+its transition/outbox rows, and projects `status.json` before release. The reconciler
+re-reads database truth after acquiring the gate rather than writing a stale snapshot.
+Implement the gate with a bounded stable lock shard under the data root, keyed by timer UUID,
+not with a file inside the deletable timer folder; rename/deletion cannot change its identity.
 
 Then one SQLite transaction carries the previous run's final known state — including what
-the barrier just ingested — its `superseded` event if it was still open, the new `run_id`,
+the barrier just ingested — its `superseded` event if its owned app lifecycle was still
+non-terminal (an unowned run instead uses its unfinished action claim), the new `run_id`,
 the new `fired` event and any pending log lines. `status.json` and the fresh reply stub are
 written **after** it commits.
 
@@ -421,6 +465,17 @@ Rebuilding `status.json` is safe precisely because it is Bellman's alone — reg
 cannot destroy anything an app said. The reply file has no such property, which is why its
 recovery is create-only, never a rebuild.
 
+The same rule handles an ordinary I/O error without waiting for a restart: surface the
+failure and signal a bounded periodic folder reconciler. It projects `status.json` from
+SQLite and creates only an absent stub with `O_EXCL`. If an app wins that create race with a
+real reply, reconciliation leaves it untouched and normal ingest handles it.
+
+The post-commit order is `status.json` → create-only per-run stub → fire notification. A
+file-transport notification is not eligible while either required projection is missing.
+Crash or fail specifically between the first two writes and the reconciler completes the
+stub before any delivery pump exposes its `reply_path`. IK6's IPC path omits the stub but
+still waits for `status.json`.
+
 Scheduling arithmetic does not change. This is persistence around a fire, not a new policy.
 
 ### At startup: read replies before firing anything
@@ -432,12 +487,13 @@ nothing in the log to say a valid answer was sitting there. So before delivery s
 
 1. Scan every `reply-*.json` under `timers/`.
 2. Fold in each one that is valid and whose `run_id` is still the current run.
-3. Emit the transitions that were missed, using the app's own timestamps.
-4. Rebuild stale or missing `status.json` from the database; recreate missing stubs
+3. Commit outbox transitions that were missed, preserving the app's own timestamps as data.
+4. Recover the R11 rotation journal and drain/reconcile pending outbox rows through its
+   elected publisher.
+5. Rebuild stale or missing `status.json` from the database; recreate missing stubs
    **create-only** (`O_EXCL`) — startup must obey the same never-overwrite law as the
    watcher, because an app can be writing at this exact moment.
-5. Flush pending event-log lines.
-6. **Then** start the scheduler.
+6. **Then** start transport/dispatcher pumps and the scheduler.
 
 A reply for a run the database has moved past is `superseded`, not applied — the same rule as
 during normal operation, just discovered later.
@@ -454,6 +510,13 @@ handled differently:
 | parses, but a semantic rule below fails | decide **immediately** — these are decidable on sight and waiting cannot change them |
 
 Never quarantine on the first unparseable read. Never debounce a semantic rejection.
+
+The ordinary watcher releases the R10 gate between retries and may keep waiting while the
+same run remains current. The synchronous pre-fire/startup barrier is deliberately bounded:
+wait one existing 200 ms debounce window, re-read under the gate, and if bytes changed but
+remain partial, do not quarantine them and let the firing proceed. Otherwise a non-atomic
+writer can stop that timer forever. A valid reply completed after the barrier's final read
+is the already-accepted true-simultaneity race and is later rejected as superseded.
 
 **Missing vs corrupt — different responses, one shared law: never write over a file that
 exists.**
@@ -484,11 +547,39 @@ holds the rejected bytes from the read that condemned them: **copy those bytes**
 and leave the file in place, same law as the corrupt-file rule above. (Deleting a *stale*
 previous-run file is different — no current writer owns that path.)
 
+The whole-file cap is the bounded exception: if metadata reports more than 64 KB, Bellman
+does **not** read or copy the body. It leaves the live file in place and writes only a small
+diagnostic sidecar to `bad/` (`reason: "oversize"`, observed byte length, timer/run path,
+`content_copied: false`). Within the cap, quarantine copies exactly the bytes already read.
+An attacker cannot turn diagnosis into another unbounded read or disk copy.
+
+Quarantine is also **idempotent**: derive the artifact name from the source path and rejected
+content digest. For an unread oversize file use timer/run identity, path and observed length;
+a same-length replacement is intentionally the same rejection because Bellman will not read it. Create it
+once. A periodic rescan of unchanged invalid bytes produces neither another artifact nor
+another `reply_rejected`; changed bytes are a new rejection. `bad/` is pruned after the
+configurable 30-day retention window and to a configurable 64 MB aggregate ceiling, oldest
+artifact pairs first. Per-file caps without duplicate suppression and aggregate retention
+would still let one permanently corrupt reply grow the directory forever.
+
+Creation and retention pruning share a stable interprocess `bad/` lock. Payload and sidecar
+are written/synced to temporary files and installed at deterministic final names with
+create-new/no-replace semantics under it. Stale pairs are deleted together, and startup
+removes stale temporaries and an orphan half-pair. A metadata-only oversize sidecar marked
+`content_copied: false` is complete
+by itself, not an orphan. Reply ingest acquires the R10 timer shard before this lock; the
+pruner never acquires them in reverse.
+
 Everything else:
 
-- `app_name` must match the first acker; a second app cannot take over a run.
+- Open no-follow, verify a regular file on the opened handle, then size-check/read at most
+  64 KB from that same handle. Symlinks, FIFOs/devices and Windows reparse points are
+  rejected with metadata-only diagnostics; never follow or copy their target.
+- `app_name` must match the timer's configured integration owner; there is no first-acker
+  ownership race and a different app is rejected.
 - `state` must be one an app may write — never `fired`, never `no_ack`, never `cancelled`.
-- Size caps per **R12**, with its numbers: 64 KB whole file (over ⇒ quarantine, unread),
+- Size caps per **R12**, with its numbers: 64 KB whole file (over ⇒ reject body-unread,
+  bounded diagnostic metadata only),
   32 KB `result` in `status.json`, 2 KB `result` on the log event, 1 KB free text — over
   those ⇒ truncate with `result_truncated: true`, never reject. Only the whole-file cap
   rejects; a chatty app is truncated, not silenced.
@@ -510,10 +601,15 @@ Everything else:
   even if the event log is perfect.
 - Fields folded in earlier survive later writes that omit them (`expected_secs` from T1 is
   still in `status.json` after T3).
-- An app that **acknowledged or entered `running` but never closes** stays `running`
-  **indefinitely** — no auto-complete, no auto-fail (unless it opted into the watchdog). An
-  app that never replies **at all** is a different case: `no_ack` after the 60s pickup grace.
-  The two must not be conflated — one said "I'm working", the other said nothing.
+- An app that **acknowledged or entered `running` but never reports a terminal state** stays in its latest
+  non-terminal state (`acknowledged` or `running`) **indefinitely** — no auto-complete, no
+  auto-fail (unless it opted into the watchdog). An app that supplies neither pickup signal
+  — no valid reply and no `ack_through` — is the different case: `no_ack` after the 60s pickup
+  grace. The two must not be conflated — one recorded pickup, the other did not.
+- Delay action dispatch and force transport retries across the pickup boundary: `no_ack`
+  still occurs 60s from the fire commit when neither valid reply nor `ack_through` exists.
+  Restart during the interval reconstructs that same deadline rather than granting a fresh
+  grace period.
 - With `error_detection` on: the deadline marks `failed`/`timed_out`; a heartbeat before it
   prevents that; a late `completed` revises the state and the log retains both.
 - **On watchdog expiry `reply.json` is byte-identical to what the app last wrote** — Bellman
@@ -522,8 +618,16 @@ Everything else:
 - On `no_ack`, `reply.json` is still the untouched stub while `status.json` reads `no_ack`.
 - The stub exists at T0 with `state: null` and `app_name` pre-filled from the timer's owner;
   Bellman does not act on it.
+- A human-created timer with no integration owner creates no reply stub/fire notification.
+  It never becomes `no_ack` and IK5 does not poll/show it as an active app run. After an owner
+  is explicitly configured, every new fire pre-fills that non-null name and enables the
+  reply lifecycle.
 - An app that edits the stub and an app that writes a minimal file both work.
 - A reply whose `app_name` differs from the pre-filled owner is rejected.
+- Race two different apps watching the same fire directory: only the configured owner treats
+  the notification as its work; there is never a null stub that both may claim by writing.
+- Change the timer's integration owner while a firing is current: the original run owner can
+  still complete it, while the next firing's stub/notification carries only the new owner.
 - A reply omitting a field set earlier (e.g. `expected_secs` at T3) does **not** retract it —
   `status.json` retains the accumulated view.
 - Duplicate reply is a no-op. Unknown `run_id`, wrong `app_name`, oversize, or a reserved
@@ -541,42 +645,95 @@ Everything else:
   slow-app behaviour inside a tamper bucket.
 - **Pickup via the slot feed counts:** an app that advances `ack_through` for this run but
   writes no reply file is **not** `no_ack`. And a late valid reply revises `no_ack` while the
-  run is still current.
+  run is still current. Assert the symmetric late-cursor case too: `no_ack`, then
+  `ack_through` past the same still-current run, becomes `acknowledged`; once a later firing
+  is current, that cursor movement cannot revise the older run.
 - **Terminal-but-current runs are still watched:** app reports `completed`, then `failed`,
   with no fire in between — the second report is ingested, not missed. An implementation that
   unsubscribes on terminal states fails here and nowhere else.
 - **A new `expected_secs` replaces the old** for both consumers: watchdog deadline recomputed
   from Bellman's receipt with the new value; the GUI label recalculates from the unchanged
   `fired_at`.
+- `error_detection: true` without any positive accumulated `expected_secs` is rejected;
+  explicitly changing it to `false` cancels the watchdog while the overdue label continues
+  using the retained estimate.
 - **Crash between sync and mark-published:** the event may appear twice in the file;
   asserted that every reader (GUI, `log_query`) still counts it once, by `event_id`. And
   durability means **synced** — a line is only marked published after `fdatasync`, asserted
   against a write-failure fake, not by inspection.
+- **Cross-process outbox liveness:** leave the GUI publisher idle while a CLI enqueues an
+  event. Without restarting either process or sending an in-process signal, its periodic
+  safety tick appends/syncs the row. Force append failure and assert the row remains pending
+  and publisher health visibly reports the error until a later successful retry.
+- **Crash rotation at every journal phase:** after current is renamed, while gzip temp exists,
+  after final archive rename before `.rotating` deletion, and after source deletion before
+  journal clear/new-current creation. Restart reconciles pending `event_id`s across current
+  plus the journal-named artifact before any append/rotation; every event is readable once
+  logically, redundant source/temp files are removed only after final-archive verification,
+  and no append remains attached to a renamed handle. During each live phase, readers include
+  `.rotating` (never partial gzip temp), so history does not briefly disappear.
+- Cross the 64 MB current-file threshold mid-week and exercise the same journal phases;
+  current plus final archives obey the 1 GB retained budget, with only the documented bounded
+  two-extents-plus-overhead rotation workspace transiently extra.
 - **Quarantine copies:** with an invalid current file condemned, the app atomically replaces
   it with a valid reply before the quarantine executes — asserted the valid reply survives in
   place and is ingested, while `bad/` holds only the copied rejected bytes. A quarantine that
   renames the current path fails this gate.
-- `duration_ms` is Bellman's monotonic fire→terminal-ingest elapsed — asserted with a skewed
-  app clock (timestamps an hour off) producing a sane, non-negative duration.
+- **Oversize stays bounded:** point the watcher at a sparse file far over 64 KB; it reads no
+  body bytes, copies no payload, leaves the path untouched, and writes only the capped
+  `content_copied: false` diagnostic sidecar. Re-scan unchanged invalid and oversize files
+  repeatedly and assert one rejection/artifact per read-content digest or unread
+  path/run/length tuple; exceed the `bad/`
+  retention ceiling and assert the oldest payload/sidecar pairs are removed together. Crash
+  between payload and sidecar creation and assert startup removes the orphan rather than
+  retaining half a diagnostic forever.
+- `duration_ms` is Bellman's monotonic fire-commit→terminal-ingest elapsed — asserted with a
+  skewed app clock (timestamps an hour off) producing a sane, non-negative duration.
 - A test proves a reply cannot cause execution of anything.
-- A run can be stopped/closed while nothing holds a token — the abort path is never gated.
+- Deleting a timer can record its current non-terminal run `cancelled` without acquiring an
+  action-lane token; the abort path is never gated.
 - **A reply written while Bellman was stopped survives the restart** — stop Bellman, write
   `completed`, start it: the transition is folded in and logged **before** the next fire, and
   the stub is not overwritten first. The failure this catches is silent, so assert the log
   line exists rather than that nothing crashed.
 - **Kill Bellman between the commit and the file write** — on restart `status.json` matches
   the database, and the run is neither duplicated nor lost.
+- **Keep Bellman alive but fail each post-commit file operation once:** the live reconciler
+  repairs `status.json` and creates a missing stub. Race that retry against an app writing a
+  valid reply; the app wins and its bytes remain untouched.
+- **Crash between `status.json` and stub creation:** restart creates the missing stub before
+  publishing any fire notification; no app observes a `reply_path` that is absent because
+  Bellman's projection is still pending.
+- **Lifecycle races share the gate:** race app `completed` against watchdog expiry and race
+  `ack_through` against pickup expiry. Final `status.json` matches the database and ends
+  `completed` / `acknowledged` respectively; depending on lock order the log may retain the
+  provisional timeout/`no_ack` before its revision, but Bellman's inference never lands
+  after the stronger app fact. Race a stale folder-reconciler snapshot against either case
+  and assert it cannot overwrite the newer projection.
 - **The app's latest terminal report wins, from either source.** A watchdog `failed` followed
   by the app's `completed` revises; the app's **own** `failed` followed by its `completed`
   also revises. Both asserted, and asserted to take the same code path — a `failure_kind`
   check here would be the bug.
+- A distinct valid `running` reply after Bellman's watchdog `timed_out` also revises the
+  provisional inference and rearms the opted-in watchdog from Bellman's receipt. The same
+  move after an app-authored `completed` or `failed` remains rejected.
 - The one direction that does not: Bellman's watchdog never flips an app's `completed` to
   `failed`.
-- A terminal report followed by `running` or `acknowledged` **is** rejected — that reopens a
-  closed run, which is a different thing from changing a verdict.
+- An app-authored terminal report followed by `running` or `acknowledged` **is** rejected —
+  that moves an app verdict backwards, which is different from revising provisional
+  `no_ack` or watchdog `timed_out`.
 - **A mid-write file is not quarantined.** Write half a JSON document, then the rest: the
   reply is accepted. Write invalid bytes and leave them: `reply_rejected` after the debounce.
+- Keep changing a partial reply across the pre-fire barrier: after one 200 ms window the new
+  firing still proceeds, the changing file is not quarantined, and a completion landing
+  after the barrier is treated as superseded rather than silently applied to the new run.
+- Replace a reply path with a symlink/reparse point and a FIFO: Bellman neither follows nor
+  blocks on it, copies no target bytes, emits one bounded rejection, and continues processing
+  another timer.
 - **Watchdog arithmetic ignores the app's clock.** An app that stamps its heartbeat an hour in
   the future does not extend its deadline; one that stamps an hour in the past is not failed
   early. Both asserted against a fake monotonic source.
+- Re-scan an exact duplicate heartbeat repeatedly and assert the watchdog deadline does not
+  move; change accepted progress/heartbeat content once and assert it rearms from that
+  receipt.
 - A restart mid-countdown reconstructs the deadline from the persisted wall-clock value.

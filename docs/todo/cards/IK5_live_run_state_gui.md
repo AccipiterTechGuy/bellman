@@ -20,13 +20,16 @@ Nothing covers "is running right now".
 The existing tabs stay as they are: `All timers · Week · Month · Run history · Settings`.
 
 An "Active" tab would be empty almost all the time — most timers finish in milliseconds, and
-an open run only exists while an app is working. A tab that is blank 99% of the time teaches
-the operator to stop opening it, and this is the one thing they would want to notice.
+a current non-terminal run exists only while delivery or app work is unresolved. A tab that
+is blank 99% of the time teaches the operator to stop opening it, and this is the one thing
+they would want to notice.
 
 ## Scope
 
-**1. Live state on the timer's row in `All timers`.** Where the operator already looks, no
-navigation, noticed passively.
+**1. Live state on an integration-owned timer's row in `All timers`.** Where the operator
+already looks, no navigation, noticed passively. An unowned action-only timer's
+`status.json: fired` is a firing snapshot, not an app claiming to work; render its normal
+next-fire/action outcome UI and do not pin or poll it as an active app run.
 
 ```
 bulb-test          ● running · 7s · bulb on, 7s elapsed
@@ -61,6 +64,10 @@ change, nothing but pixels.
 unchanged `fired_at` with the latest accepted value — an app that learns mid-run the job is
 bigger moves its own warning later, and that is correct, not drift.
 
+A heartbeat with no new `expected_secs` does **not** move the overdue label: it restarts only
+the watchdog countdown. The label always compares the latest estimate with the original
+`fired_at`.
+
 **The label's clock starts at `fired_at`.** `overdue` ⇔ `now − fired_at > expected_secs`,
 both from `status.json`. This is deliberately a *different* anchor from the watchdog, which
 counts on Bellman's monotonic clock from the moment it received the reply (R8) — and that is
@@ -73,7 +80,7 @@ stamp, exists on every run from T0, and needs no new field; anchoring the label 
 For an app that never opted in, only the label exists. That is R8's advisory case, unchanged:
 "running, overdue — 47m elapsed, expected 10m", and Bellman never acts on it.
 
-**4. Open runs pinned to the top of `Run history`.** "What is happening" above "what
+**4. Current non-terminal runs pinned to the top of `Run history`.** "What is happening" above "what
 happened" reads naturally, and the page already exists (`ui/src/HistoryPage.svelte`).
 
 **5. A timer detail view** showing the current run in full: state, elapsed, `progress`,
@@ -86,23 +93,31 @@ without opening anything.
 
 ## Where the data comes from
 
-`status.json` — the mirror. Read it through an existing Tauri command; do not invent a second
-source of truth and do not parse the event log for this. The log has no progress in it.
+`status.json` — the mirror. Add a narrow Tauri read command (or extend `list_timers`) for this
+view; no current run-status command exists. Do not invent a second source of truth and do not
+parse the event log for this. The log has no progress in it.
 
 ## Idle cost
 
 Bellman's design point is a small resident footprint (`docs/PERF.md`).
 
-- **No polling when nothing is running.** If no timer has an open run, this feature costs
+- **No polling when nothing is running.** If no timer has a current non-terminal run, this feature costs
   nothing.
 - While a run is open, refresh at a human rate — seconds, not frames. `progress` is prose for
   a person, not telemetry.
-- Reuse whatever update mechanism the GUI already has rather than adding a second loop.
+- Extend the existing Tauri event plumbing (`timer-fired` is the current pattern) with one
+  `run-status-changed` invalidation after every accepted status projection, including a
+  terminal-but-current revision. The UI refetches the affected row; the event carries no
+  second copy of state. The seconds-rate frontend timer exists only to advance
+  elapsed/overdue text while an owned run is non-terminal; stopping it must not hide
+  `completed → failed` or a late watchdog revision. Do not add a second polling loop.
 
 ## Exit gate
 
-- A timer with an open run shows its live state in `All timers`, and the row updates as the
-  app writes `progress`.
+- An integration-owned timer with a current non-terminal run shows its live state in
+  `All timers`, and the row updates as the app writes `progress`.
+- An unowned action-only timer may have current `status.json: fired`, but it is not pinned or
+  polled as an active app run and never displays `no_ack`.
 - An app that sends **no** heartbeat and **no** progress shows `running` plus elapsed time and
   **no placeholder text anywhere** — asserted, since a stray "never" is the obvious slip.
 - **`overdue` at 1×, `failed` at `× factor`** — a run with `expected_secs: 900` and a 2×
@@ -113,11 +128,15 @@ Bellman's design point is a small resident footprint (`docs/PERF.md`).
   Asserted by counting log lines across the boundary.
 - The label anchors on `fired_at`: a run that fired at T, acked at T+5m, `expected_secs: 900`
   reads `overdue` at **T+15m**, not T+20m.
+- A heartbeat at T+14m postpones an opted-in watchdog but the row still becomes overdue at
+  T+15m; only a newly accepted `expected_secs` changes the label threshold.
 - An app with no `error_detection` shows `overdue` and is **never** failed for it, however
   long it runs.
 - The run can still reach `completed` after `overdue`, with the row updating to match.
 - `completed`, `failed:reported`, `failed:timed_out`, `no_ack` and `superseded` are each
   visually distinguishable — screenshot-reviewed on WebKitGTK first.
-- Open runs appear at the top of `Run history`; past runs still list below them.
+- With no frontend polling active, revise the same current run `completed → failed`; the
+  backend change notification refreshes the row/detail/history state.
+- Current non-terminal runs appear at the top of `Run history`; past runs still list below them.
 - **No new tab**; the five existing tabs are unchanged.
-- With no open runs, no polling occurs — proven by measurement, not assertion.
+- With no current non-terminal runs, no polling occurs — proven by measurement, not assertion.
