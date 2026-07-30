@@ -46,6 +46,11 @@ pub struct AppState {
     pub tray_pause_check: parking_lot::Mutex<Option<tauri::menu::CheckMenuItem<tauri::Wry>>>,
     /// Single-next-wake bridge (RTC arm / capability probe).
     pub wake: SingleNextWake,
+    /// IK3 reply watcher thread handle (set after `start_scheduler`).
+    pub reply_watcher: Mutex<Option<bellman_core::reply::ReplyWatcherStop>>,
+    /// IK3 duration anchors shared by the scheduler, `run_now` and the reply
+    /// watcher so `duration_ms` stays monotonic across threads.
+    pub reply_anchors: bellman_core::reply::SharedAnchors,
 }
 
 impl AppState {
@@ -66,6 +71,8 @@ impl AppState {
             control_handle: Mutex::new(None),
             tray_pause_check: parking_lot::Mutex::new(None),
             wake,
+            reply_watcher: Mutex::new(None),
+            reply_anchors: bellman_core::reply::new_anchors(),
         }
     }
 
@@ -208,8 +215,13 @@ impl AppState {
         let store = self.store.lock();
         // Engine tunables from config.json (horizon, retention, concurrency…).
         let app_cfg = self.config.lock().clone();
+        // IK3: one duration-anchor registry shared between the fire paths
+        // (scheduler thread, run_now) and the reply watcher thread, so
+        // `duration_ms` stays monotonic across both.
+        let anchors = self.reply_anchors.clone();
         let cfg = SchedulerConfig::from_app_config(&app_cfg)
-            .with_data_dir(self.data_dir.clone());
+            .with_data_dir(self.data_dir.clone())
+            .with_anchors(anchors.clone());
         // Open the JSONL event log once and hand it to the runner so
         // scheduled fires (not just run-now) land in events.current.jsonl.
         // Without this, the per-timer "live log tail" panel in the GUI
@@ -252,6 +264,27 @@ impl AppState {
         sched.boot().expect("scheduler boot");
         let handle = sched.control_handle();
         *self.control_handle.lock() = Some(handle);
+
+        // IK3: the reply watcher — ingests `reply-<run_id>.json` files,
+        // drives pickup/watchdog deadlines and the folder reconciler.
+        {
+            let engine = bellman_core::reply::ReplyEngine {
+                tree: bellman_core::TimersTree::new(&self.data_dir),
+                data_dir: self.data_dir.clone(),
+                pickup_grace: app_cfg.pickup_grace(),
+                watchdog_factor: app_cfg.watchdog_factor,
+                anchors,
+            };
+            match bellman_core::reply::spawn_reply_thread(
+                self.data_dir.clone(),
+                self.data_dir.join("timers.db"),
+                engine,
+                bellman_core::reply::DEFAULT_POLL_INTERVAL,
+            ) {
+                Ok(stop) => *self.reply_watcher.lock() = Some(stop),
+                Err(e) => log::error!("bellman: reply watcher spawn failed: {e}"),
+            }
+        }
         drop(store); // release the AppState lock for the thread
 
         thread::Builder::new()

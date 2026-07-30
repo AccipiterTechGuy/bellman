@@ -106,6 +106,7 @@ pub fn run_now(
     let db_path = state.data_dir.join("timers.db");
     let opts = RunNowOptions {
         notify_sink: Some(state.notify_sink.clone()),
+        anchors: Some(state.reply_anchors.clone()),
         ..Default::default()
     };
     let mut store = state.store.lock();

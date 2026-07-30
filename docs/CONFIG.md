@@ -21,6 +21,9 @@ the defaults below.
 | `prune_interval_secs` | u64 | `604800` (7 d) | Weekly prune cadence / startup catch-up |
 | `default_misfire_policy` | string | `"coalesce"` | Default for new calendar timers (`coalesce` / `skip` / `catch_up`) |
 | `default_misfire_grace_secs` | u64 | `3600` | Grace window for coalesce / catch_up defaults |
+| `pickup_grace_secs` | u64 | `60` | Pickup deadline for integration-owned runs: no valid reply and no `ack_through` within this window ⇒ `no_ack` (a separate job from `ack_grace_secs`, which is pruning) |
+| `watchdog_factor` | f64 | `2.0` | Opt-in watchdog multiplier: deadline = `expected_secs × factor` from Bellman's receipt of the latest distinct reply |
+| `quarantine_budget_bytes` | u64 | `67108864` (64 MiB) | Aggregate ceiling for the reply quarantine (`timers/bad/`); oldest payload/sidecar pairs pruned first |
 
 Sidecar (not JSON): `pause_all` file contains `1`/`0` for vacation mode.
 
