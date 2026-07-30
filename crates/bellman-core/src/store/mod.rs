@@ -17,8 +17,9 @@ mod schema;
 
 pub use error::{StoreError, StoreResult};
 pub use models::{
-    Action, ClaimStatus, Meta, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy, RunClaim,
-    SlotRequestRecord, Timer, TimerId, TimerPatch, TimerUpdate,
+    Action, ClaimStatus, FailureKind, Meta, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy,
+    RotationJournal, RotationPhase, RunClaim, RunStateRow, SlotRequestRecord, Timer, TimerId,
+    TimerPatch, TimerUpdate,
 };
 
 use crate::occurrence::Occurrence;
@@ -88,6 +89,18 @@ impl Store {
     /// Filesystem path of the database file.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Begin an IMMEDIATE transaction (crate-internal). The R10 fire
+    /// transaction composes barrier ingest + supersede + claim + lifecycle
+    /// row + fired event into one atomic commit; IMMEDIATE takes the write
+    /// lock up front so the SELECT-then-INSERT claim cannot die with
+    /// `BUSY_SNAPSHOT` against a concurrent commit (which `busy_timeout`
+    /// deliberately does not retry).
+    pub(crate) fn transaction(&mut self) -> StoreResult<Transaction<'_>> {
+        Ok(self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?)
     }
 
     /// Current schema version from `meta` / `user_version`.
@@ -243,51 +256,10 @@ impl Store {
         timer_id: TimerId,
         scheduled_for: DateTime<Utc>,
     ) -> StoreResult<RunClaim> {
-        let run_id = Uuid::new_v4();
-        let claimed_at = Utc::now();
         let tx = self.conn.transaction()?;
-        let next_seq: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(event_sequence), 0) + 1 FROM runs WHERE timer_id = ?1",
-            params![timer_id.to_string()],
-            |r| r.get(0),
-        )?;
-        let result = tx.execute(
-            "INSERT INTO runs (
-                run_id, timer_id, scheduled_for, status, claimed_at, completed_at, event_sequence
-             ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)",
-            params![
-                run_id.to_string(),
-                timer_id.to_string(),
-                fmt_dt(scheduled_for),
-                ClaimStatus::Claimed.as_str(),
-                fmt_dt(claimed_at),
-                next_seq,
-            ],
-        );
-        match result {
-            Ok(1) => {
-                tx.commit()?;
-                Ok(RunClaim {
-                    run_id,
-                    timer_id,
-                    scheduled_for,
-                    status: ClaimStatus::Claimed,
-                    claimed_at,
-                    completed_at: None,
-                    event_sequence: next_seq as u64,
-                })
-            }
-            Ok(_) => Err(StoreError::Internal("claim insert affected 0 rows".into())),
-            Err(rusqlite::Error::SqliteFailure(e, _))
-                if e.code == rusqlite::ErrorCode::ConstraintViolation =>
-            {
-                Err(StoreError::AlreadyClaimed {
-                    timer_id,
-                    scheduled_for,
-                })
-            }
-            Err(e) => Err(StoreError::from(e)),
-        }
+        let claim = claim_run_conn(&tx, timer_id, scheduled_for)?;
+        tx.commit()?;
+        Ok(claim)
     }
 
     /// Mark a previously claimed run as completed (wake action delivered).
@@ -322,15 +294,7 @@ impl Store {
 
     /// Fetch a run claim by id.
     pub fn get_run(&self, run_id: Uuid) -> StoreResult<Option<RunClaim>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT run_id, timer_id, scheduled_for, status, claimed_at, completed_at,
-                    COALESCE(event_sequence, 0)
-             FROM runs WHERE run_id = ?1",
-        )?;
-        let row = stmt
-            .query_row(params![run_id.to_string()], row_to_claim)
-            .optional()?;
-        Ok(row)
+        get_run_conn(&self.conn, run_id)
     }
 
     /// Pending (claimed, not completed) run claims — recovery surface after crash.
@@ -558,18 +522,7 @@ impl Store {
 
     /// All run-claim rows for a timer (ordered by event_sequence).
     pub fn runs_for_timer(&self, timer_id: TimerId) -> StoreResult<Vec<RunClaim>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT run_id, timer_id, scheduled_for, status, claimed_at, completed_at,
-                    COALESCE(event_sequence, 0)
-             FROM runs WHERE timer_id = ?1
-             ORDER BY event_sequence ASC, scheduled_for ASC, run_id ASC",
-        )?;
-        let rows = stmt.query_map(params![timer_id.to_string()], row_to_claim)?;
-        let mut out = Vec::new();
-        for r in rows {
-            out.push(r?);
-        }
-        Ok(out)
+        runs_for_timer_conn(&self.conn, timer_id)
     }
 
     /// Run-claim rows whose `scheduled_for` falls in `[from, to)` (UTC half-open).
@@ -598,13 +551,7 @@ impl Store {
 
     /// Last acknowledged event_sequence for a timer (0 if never acked).
     pub fn last_acked_sequence(&self, timer_id: TimerId) -> StoreResult<u64> {
-        let mut stmt = self.conn.prepare(
-            "SELECT last_acked_sequence FROM slot_event_acks WHERE timer_id = ?1",
-        )?;
-        let row: Option<i64> = stmt
-            .query_row(params![timer_id.to_string()], |r| r.get(0))
-            .optional()?;
-        Ok(row.unwrap_or(0) as u64)
+        last_acked_sequence_conn(&self.conn, timer_id)
     }
 
     /// Last acked sequence inside an open transaction.
@@ -688,6 +635,173 @@ impl Store {
             out.push(r?);
         }
         Ok(out)
+    }
+
+    // ── Run states (IK3 reply channel) ──────────────────────────────────
+
+    /// Insert the fire-time row for an owned run (owner snapshotted).
+    pub fn insert_run_state(&self, row: &RunStateRow) -> StoreResult<()> {
+        insert_run_state_conn(&self.conn, row)
+    }
+
+    /// Fetch the app-lifecycle row for a run, if the run is integration-owned.
+    pub fn get_run_state(&self, run_id: Uuid) -> StoreResult<Option<RunStateRow>> {
+        get_run_state_conn(&self.conn, run_id)
+    }
+
+    /// App-lifecycle row for the timer's CURRENT run (latest by event
+    /// sequence), if that run is integration-owned.
+    pub fn current_run_state(&self, timer_id: TimerId) -> StoreResult<Option<RunStateRow>> {
+        current_run_state_conn(&self.conn, timer_id)
+    }
+
+    /// Overwrite every mutable column of a run-state row (the accumulated
+    /// reply view, deadlines, transition flags).
+    pub fn update_run_state(&self, row: &RunStateRow) -> StoreResult<()> {
+        update_run_state_conn(&self.conn, row)
+    }
+
+    /// Owned runs with an armed deadline (pickup pending or watchdog
+    /// ticking) — the restart-reconstruction surface for the monotonic
+    /// deadline book.
+    pub fn armed_deadlines(&self) -> StoreResult<Vec<RunStateRow>> {
+        armed_deadlines_conn(&self.conn)
+    }
+
+    // ── Event outbox (R11) ──────────────────────────────────────────────
+
+    /// Enqueue one event for the elected publisher (single-statement, so
+    /// atomic by itself; SQLite serialises across processes — that is the
+    /// whole reason the outbox is the funnel). Idempotent by `event_id`.
+    pub fn enqueue_event(&self, rec: &crate::events::EventRecord) -> StoreResult<()> {
+        enqueue_event_conn(&self.conn, rec)
+    }
+
+    /// Enqueue inside an open transaction — this is how the fire transaction
+    /// commits run state and its events atomically.
+    pub fn enqueue_event_in_tx(
+        tx: &Transaction<'_>,
+        rec: &crate::events::EventRecord,
+    ) -> StoreResult<()> {
+        let payload = serde_json::to_string(rec)
+            .map_err(|e| StoreError::Serde(format!("serialize event: {e}")))?;
+        tx.execute(
+            "INSERT OR IGNORE INTO event_outbox (event_id, payload, enqueued_at)
+             VALUES (?1, ?2, ?3)",
+            params![rec.event_id.to_string(), payload, fmt_dt(rec.logged_at)],
+        )?;
+        Ok(())
+    }
+
+    /// Pending (unpublished) outbox rows in enqueue order.
+    pub fn pending_events(&self, limit: usize) -> StoreResult<Vec<(Uuid, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT event_id, payload FROM event_outbox
+             ORDER BY enqueued_at ASC, event_id ASC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            let (id, payload) = r?;
+            let id = Uuid::parse_str(&id)
+                .map_err(|e| StoreError::Internal(format!("bad outbox event_id: {e}")))?;
+            out.push((id, payload));
+        }
+        Ok(out)
+    }
+
+    /// Number of pending outbox rows (publisher health).
+    pub fn count_pending_events(&self) -> StoreResult<u64> {
+        let n: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM event_outbox", [], |r| r.get(0))?;
+        Ok(n as u64)
+    }
+
+    /// Mark a row published — DELETE, so the outbox actually empties. Called
+    /// only after the line is appended AND fdatasynced (a crash between sync
+    /// and this delete re-appends; readers dedupe by `event_id`).
+    pub fn mark_event_published(&self, event_id: Uuid) -> StoreResult<()> {
+        self.conn.execute(
+            "DELETE FROM event_outbox WHERE event_id = ?1",
+            params![event_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Mark inside an open transaction.
+    pub fn mark_event_published_in_tx(tx: &Transaction<'_>, event_id: Uuid) -> StoreResult<()> {
+        tx.execute(
+            "DELETE FROM event_outbox WHERE event_id = ?1",
+            params![event_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    // ── Rotation journal (R11) ──────────────────────────────────────────
+
+    /// The in-flight rotation journal, if any.
+    pub fn rotation_journal(&self) -> StoreResult<Option<RotationJournal>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT source, rotating, gz_tmp, final_path, phase, started_at
+             FROM rotation_journal WHERE id = 1",
+        )?;
+        let row = stmt
+            .query_row([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                ))
+            })
+            .optional()?;
+        let Some((source, rotating, gz_tmp, final_path, phase, started_at)) = row else {
+            return Ok(None);
+        };
+        Ok(Some(RotationJournal {
+            source: source.into(),
+            rotating: rotating.into(),
+            gz_tmp: gz_tmp.into(),
+            final_path: final_path.into(),
+            phase: RotationPhase::from_wire(&phase)
+                .ok_or_else(|| StoreError::Internal(format!("bad journal phase '{phase}'")))?,
+            started_at: parse_dt(&started_at)?,
+        }))
+    }
+
+    /// Record/advance the rotation journal (single-row upsert).
+    pub fn set_rotation_journal(&self, journal: &RotationJournal) -> StoreResult<()> {
+        self.conn.execute(
+            "INSERT INTO rotation_journal (id, source, rotating, gz_tmp, final_path, phase, started_at)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET
+                source = excluded.source, rotating = excluded.rotating,
+                gz_tmp = excluded.gz_tmp, final_path = excluded.final_path,
+                phase = excluded.phase, started_at = excluded.started_at",
+            params![
+                journal.source.to_string_lossy(),
+                journal.rotating.to_string_lossy(),
+                journal.gz_tmp.to_string_lossy(),
+                journal.final_path.to_string_lossy(),
+                journal.phase.as_str(),
+                fmt_dt(journal.started_at),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Clear the journal once the new current file exists and the archive is
+    /// durable.
+    pub fn clear_rotation_journal(&self) -> StoreResult<()> {
+        self.conn
+            .execute("DELETE FROM rotation_journal WHERE id = 1", [])?;
+        Ok(())
     }
 }
 
@@ -903,7 +1017,15 @@ fn update_timer_tx(tx: &Transaction<'_>, update: TimerUpdate) -> StoreResult<Tim
         .ok_or_else(|| StoreError::Internal("timer missing after update".into()))
 }
 
+pub(crate) fn get_timer_conn(conn: &Connection, id: TimerId) -> StoreResult<Option<Timer>> {
+    get_timer_tx_inner(conn, id)
+}
+
 fn get_timer_tx(tx: &Transaction<'_>, id: TimerId) -> StoreResult<Option<Timer>> {
+    get_timer_tx_inner(tx, id)
+}
+
+fn get_timer_tx_inner(tx: &Connection, id: TimerId) -> StoreResult<Option<Timer>> {
     let mut stmt = tx.prepare(
         "SELECT id, name, enabled, occurrence, tz, next_fire_utc, last_fired,
                 misfire_policy, overlap_policy, retry_policy,
@@ -1222,6 +1344,48 @@ fn parse_opt_dt(s: Option<String>) -> StoreResult<Option<DateTime<Utc>>> {
     }
 }
 
+/// Column list for `run_states` reads (kept in one place for the joins).
+const RUN_STATE_COLS: &str = "rs.run_id, rs.timer_id, rs.app_name, rs.state, rs.fired_at,
+     rs.pickup_deadline, rs.acknowledged_at, rs.expected_secs, rs.error_detection,
+     rs.heartbeat_at, rs.progress, rs.completed_at, rs.failed_at, rs.reason,
+     rs.failure_kind, rs.result_json, rs.result_truncated, rs.watchdog_deadline,
+     rs.no_ack_at, rs.reply_digest, rs.acknowledged_logged, rs.running_logged";
+
+fn row_to_run_state(r: &rusqlite::Row<'_>) -> rusqlite::Result<RunStateRow> {
+    let conv = |i: usize, msg: String| {
+        rusqlite::Error::FromSqlConversionFailure(i, rusqlite::types::Type::Text, msg.into())
+    };
+    let run_id_s: String = r.get(0)?;
+    let timer_id_s: String = r.get(1)?;
+    let fired_s: String = r.get(4)?;
+    let result_s: Option<String> = r.get(15)?;
+    let failure_s: Option<String> = r.get(14)?;
+    Ok(RunStateRow {
+        run_id: Uuid::parse_str(&run_id_s).map_err(|e| conv(0, e.to_string()))?,
+        timer_id: Uuid::parse_str(&timer_id_s).map_err(|e| conv(1, e.to_string()))?,
+        app_name: r.get(2)?,
+        state: r.get(3)?,
+        fired_at: parse_dt(&fired_s).map_err(|e| conv(4, e.to_string()))?,
+        pickup_deadline: parse_opt_dt(r.get(5)?).map_err(|e| conv(5, e.to_string()))?,
+        acknowledged_at: parse_opt_dt(r.get(6)?).map_err(|e| conv(6, e.to_string()))?,
+        expected_secs: r.get::<_, Option<i64>>(7)?.map(|s| s.max(0) as u64),
+        error_detection: r.get(8)?,
+        heartbeat_at: parse_opt_dt(r.get(9)?).map_err(|e| conv(9, e.to_string()))?,
+        progress: r.get(10)?,
+        completed_at: parse_opt_dt(r.get(11)?).map_err(|e| conv(11, e.to_string()))?,
+        failed_at: parse_opt_dt(r.get(12)?).map_err(|e| conv(12, e.to_string()))?,
+        reason: r.get(13)?,
+        failure_kind: failure_s.and_then(|s| FailureKind::from_wire(&s)),
+        result_json: result_s.and_then(|s| serde_json::from_str(&s).ok()),
+        result_truncated: r.get(16)?,
+        watchdog_deadline: parse_opt_dt(r.get(17)?).map_err(|e| conv(17, e.to_string()))?,
+        no_ack_at: parse_opt_dt(r.get(18)?).map_err(|e| conv(18, e.to_string()))?,
+        reply_digest: r.get(19)?,
+        acknowledged_logged: r.get(20)?,
+        running_logged: r.get(21)?,
+    })
+}
+
 // Occurrence does not expose valid_from/valid_until/max_runs getters yet —
 // we re-derive denormalized columns from the serialized JSON after clone via
 // serde round-trip helpers. Prefer dedicated accessors when they land.
@@ -1252,6 +1416,268 @@ fn occ_valid_from(occ: &Occurrence) -> Option<DateTime<Utc>> {
 
 fn occ_valid_until(occ: &Occurrence) -> Option<DateTime<Utc>> {
     occ.valid_until()
+}
+
+// ── Connection-level operations (crate-internal) ────────────────────────
+//
+// These take any `&Connection` — a `Store`'s own connection or a
+// `Transaction` (Deref) — so the R10 fire transaction can compose claim,
+// lifecycle and outbox writes into ONE atomic commit.
+
+/// A `BEGIN IMMEDIATE` guard usable from `&Store` (rusqlite's `transaction`
+/// needs `&mut`, and `unchecked_transaction` is deferred-only). Commits
+/// explicitly; rolls back on drop otherwise. The busy_timeout applies to
+/// the initial lock acquisition as usual.
+pub(crate) struct ImmediateTx<'c> {
+    conn: &'c Connection,
+    done: bool,
+}
+
+impl<'c> ImmediateTx<'c> {
+    pub(crate) fn begin(conn: &'c Connection) -> StoreResult<Self> {
+        conn.execute_batch("BEGIN IMMEDIATE")
+            .map_err(StoreError::from)?;
+        Ok(Self { conn, done: false })
+    }
+
+    pub(crate) fn commit(mut self) -> StoreResult<()> {
+        self.conn.execute_batch("COMMIT").map_err(StoreError::from)?;
+        self.done = true;
+        Ok(())
+    }
+}
+
+impl Drop for ImmediateTx<'_> {
+    fn drop(&mut self) {
+        if !self.done {
+            let _ = self.conn.execute_batch("ROLLBACK");
+        }
+    }
+}
+
+impl std::ops::Deref for ImmediateTx<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.conn
+    }
+}
+
+impl Store {
+    /// Begin an IMMEDIATE transaction from a shared store reference (the
+    /// reply engine's per-transition atomicity — R10).
+    pub(crate) fn immediate_tx(&self) -> StoreResult<ImmediateTx<'_>> {
+        ImmediateTx::begin(&self.conn)
+    }
+}
+
+/// The claim insert: new run id + durable event_sequence, in the caller's
+/// transaction/connection. `AlreadyClaimed` on the UNIQUE guard.
+pub(crate) fn claim_run_conn(
+    conn: &Connection,
+    timer_id: TimerId,
+    scheduled_for: DateTime<Utc>,
+) -> StoreResult<RunClaim> {
+    let run_id = Uuid::new_v4();
+    let claimed_at = Utc::now();
+    let next_seq: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(event_sequence), 0) + 1 FROM runs WHERE timer_id = ?1",
+        params![timer_id.to_string()],
+        |r| r.get(0),
+    )?;
+    let result = conn.execute(
+        "INSERT INTO runs (
+            run_id, timer_id, scheduled_for, status, claimed_at, completed_at, event_sequence
+         ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)",
+        params![
+            run_id.to_string(),
+            timer_id.to_string(),
+            fmt_dt(scheduled_for),
+            ClaimStatus::Claimed.as_str(),
+            fmt_dt(claimed_at),
+            next_seq,
+        ],
+    );
+    match result {
+        Ok(1) => Ok(RunClaim {
+            run_id,
+            timer_id,
+            scheduled_for,
+            status: ClaimStatus::Claimed,
+            claimed_at,
+            completed_at: None,
+            event_sequence: next_seq as u64,
+        }),
+        Ok(_) => Err(StoreError::Internal("claim insert affected 0 rows".into())),
+        Err(rusqlite::Error::SqliteFailure(e, _))
+            if e.code == rusqlite::ErrorCode::ConstraintViolation =>
+        {
+            Err(StoreError::AlreadyClaimed {
+                timer_id,
+                scheduled_for,
+            })
+        }
+        Err(e) => Err(StoreError::from(e)),
+    }
+}
+
+pub(crate) fn get_run_conn(conn: &Connection, run_id: Uuid) -> StoreResult<Option<RunClaim>> {
+    let mut stmt = conn.prepare(
+        "SELECT run_id, timer_id, scheduled_for, status, claimed_at, completed_at,
+                COALESCE(event_sequence, 0)
+         FROM runs WHERE run_id = ?1",
+    )?;
+    let row = stmt
+        .query_row(params![run_id.to_string()], row_to_claim)
+        .optional()?;
+    Ok(row)
+}
+
+pub(crate) fn runs_for_timer_conn(
+    conn: &Connection,
+    timer_id: TimerId,
+) -> StoreResult<Vec<RunClaim>> {
+    let mut stmt = conn.prepare(
+        "SELECT run_id, timer_id, scheduled_for, status, claimed_at, completed_at,
+                COALESCE(event_sequence, 0)
+         FROM runs WHERE timer_id = ?1
+         ORDER BY event_sequence ASC, scheduled_for ASC, run_id ASC",
+    )?;
+    let rows = stmt.query_map(params![timer_id.to_string()], row_to_claim)?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+pub(crate) fn get_run_state_conn(
+    conn: &Connection,
+    run_id: Uuid,
+) -> StoreResult<Option<RunStateRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {RUN_STATE_COLS} FROM run_states rs WHERE rs.run_id = ?1"
+    ))?;
+    let row = stmt
+        .query_row(params![run_id.to_string()], row_to_run_state)
+        .optional()?;
+    Ok(row)
+}
+
+pub(crate) fn current_run_state_conn(
+    conn: &Connection,
+    timer_id: TimerId,
+) -> StoreResult<Option<RunStateRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {RUN_STATE_COLS} FROM run_states rs
+         JOIN runs r ON r.run_id = rs.run_id
+         WHERE rs.timer_id = ?1
+         ORDER BY r.event_sequence DESC, r.scheduled_for DESC, r.run_id DESC
+         LIMIT 1"
+    ))?;
+    let row = stmt
+        .query_row(params![timer_id.to_string()], row_to_run_state)
+        .optional()?;
+    Ok(row)
+}
+
+pub(crate) fn insert_run_state_conn(conn: &Connection, row: &RunStateRow) -> StoreResult<()> {
+    conn.execute(
+        "INSERT INTO run_states (
+            run_id, timer_id, app_name, state, fired_at, pickup_deadline,
+            acknowledged_at, expected_secs, error_detection, heartbeat_at,
+            progress, completed_at, failed_at, reason, failure_kind,
+            result_json, result_truncated, watchdog_deadline, no_ack_at,
+            reply_digest, acknowledged_logged, running_logged
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, NULL, NULL,
+                   NULL, NULL, NULL, NULL, NULL,
+                   NULL, 0, NULL, NULL, NULL, 0, 0)",
+        params![
+            row.run_id.to_string(),
+            row.timer_id.to_string(),
+            row.app_name.as_str(),
+            row.state.as_str(),
+            fmt_dt(row.fired_at),
+            row.pickup_deadline.map(fmt_dt),
+        ],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn update_run_state_conn(conn: &Connection, row: &RunStateRow) -> StoreResult<()> {
+    conn.execute(
+        "UPDATE run_states SET
+            state = ?2, pickup_deadline = ?3, acknowledged_at = ?4,
+            expected_secs = ?5, error_detection = ?6, heartbeat_at = ?7,
+            progress = ?8, completed_at = ?9, failed_at = ?10, reason = ?11,
+            failure_kind = ?12, result_json = ?13, result_truncated = ?14,
+            watchdog_deadline = ?15, no_ack_at = ?16, reply_digest = ?17,
+            acknowledged_logged = ?18, running_logged = ?19
+         WHERE run_id = ?1",
+        params![
+            row.run_id.to_string(),
+            row.state.as_str(),
+            row.pickup_deadline.map(fmt_dt),
+            row.acknowledged_at.map(fmt_dt),
+            row.expected_secs.map(|s| s as i64),
+            row.error_detection,
+            row.heartbeat_at.map(fmt_dt),
+            row.progress.as_deref(),
+            row.completed_at.map(fmt_dt),
+            row.failed_at.map(fmt_dt),
+            row.reason.as_deref(),
+            row.failure_kind.map(|k| k.as_str()),
+            row.result_json
+                .as_ref()
+                .map(serde_json::Value::to_string),
+            row.result_truncated,
+            row.watchdog_deadline.map(fmt_dt),
+            row.no_ack_at.map(fmt_dt),
+            row.reply_digest.as_deref(),
+            row.acknowledged_logged,
+            row.running_logged,
+        ],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn last_acked_sequence_conn(conn: &Connection, timer_id: TimerId) -> StoreResult<u64> {
+    let mut stmt = conn.prepare(
+        "SELECT last_acked_sequence FROM slot_event_acks WHERE timer_id = ?1",
+    )?;
+    let row: Option<i64> = stmt
+        .query_row(params![timer_id.to_string()], |r| r.get(0))
+        .optional()?;
+    Ok(row.unwrap_or(0) as u64)
+}
+
+/// Owned runs with an armed deadline (pickup pending or watchdog ticking) —
+/// the restart-reconstruction surface for the monotonic deadline book.
+pub(crate) fn armed_deadlines_conn(conn: &Connection) -> StoreResult<Vec<RunStateRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {RUN_STATE_COLS} FROM run_states rs
+         WHERE rs.pickup_deadline IS NOT NULL OR rs.watchdog_deadline IS NOT NULL
+         ORDER BY rs.run_id ASC"
+    ))?;
+    let rows = stmt.query_map([], row_to_run_state)?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+pub(crate) fn enqueue_event_conn(
+    conn: &Connection,
+    rec: &crate::events::EventRecord,
+) -> StoreResult<()> {
+    let payload = serde_json::to_string(rec)
+        .map_err(|e| StoreError::Serde(format!("serialize event: {e}")))?;
+    conn.execute(
+        "INSERT OR IGNORE INTO event_outbox (event_id, payload, enqueued_at)
+         VALUES (?1, ?2, ?3)",
+        params![rec.event_id.to_string(), payload, fmt_dt(rec.logged_at)],
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

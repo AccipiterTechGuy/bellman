@@ -983,3 +983,84 @@ fn set_pause_all_now_observable_immediately() {
     assert_eq!(r.fires.len(), 0);
 }
 
+
+#[test]
+fn pickup_deadline_fires_from_the_scheduler_heap() {
+    // Real clock, tiny deadlines: the pickup countdown must expire via the
+    // scheduler's heap entry — no reply watcher is running in this test.
+    let dir = tempfile::tempdir().unwrap();
+    let data_dir = dir.path().to_path_buf();
+    std::fs::create_dir_all(data_dir.join("slots")).unwrap();
+    let db = data_dir.join("timers.db");
+    let mut store = Store::open_with(
+        &db,
+        crate::store::OpenOptions {
+            refuse_network_fs: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    // Owned timer, first fire essentially now, next fire far away.
+    let t0 = Utc::now();
+    let timer = interval_timer(
+        &mut store,
+        "owned-hf",
+        3600,
+        t0 - ChronoDuration::seconds(3600),
+        Some(t0 - ChronoDuration::seconds(3600)),
+        MisfirePolicy::Skip,
+    );
+    store.set_timer_owner(timer.id, "app-x").unwrap();
+    crate::tree::TimersTree::new(&data_dir)
+        .create_for_timer(&timer, Some("app-x"))
+        .unwrap();
+
+    let mut cfg = SchedulerConfig::default()
+        .with_data_dir(&data_dir)
+        .with_max_sleep(Duration::from_millis(40));
+    cfg.pickup_grace = Duration::from_millis(150);
+    let sched_store = Store::open_with(
+        &db,
+        crate::store::OpenOptions {
+            refuse_network_fs: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut sched = Scheduler::new(sched_store, SystemClock::new(), RecordingAction::new(), cfg);
+    sched.boot().unwrap();
+    // ~1s: fire at t≈0, pickup heap entry at +150ms — the scheduler itself
+    // must mark no_ack without any watcher poll.
+    sched.run_for(Duration::from_millis(900)).unwrap();
+
+    let store2 = Store::open_with(
+        &db,
+        crate::store::OpenOptions {
+            refuse_network_fs: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let rows: Vec<_> = store2
+        .runs_for_timer(timer.id)
+        .unwrap()
+        .into_iter()
+        .filter_map(|c| store2.get_run_state(c.run_id).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 1, "one owned run fired");
+    assert_eq!(
+        rows[0].state, "no_ack",
+        "the heap-driven pickup deadline fired inside run_for"
+    );
+
+    // status.json mirrors it (projection happened in the deadline path).
+    let folder = crate::tree::TimersTree::new(&data_dir)
+        .folder_for(timer.id)
+        .unwrap();
+    let status: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(folder.join(crate::tree::STATUS_FILE_NAME)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(status["state"], "no_ack");
+}

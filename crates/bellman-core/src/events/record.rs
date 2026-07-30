@@ -59,6 +59,57 @@ pub enum RunState {
     Cancelled,
     /// Bellman — a new firing replaced this still-unresolved run as current.
     Superseded,
+    /// Bellman — a reply failed validation and was refused (IK3).
+    ReplyRejected,
+}
+
+impl RunState {
+    /// Terminal for the app lifecycle: nothing more is expected from the app.
+    ///
+    /// `NoAck` and a watchdog `Failed` are *provisional* terminal — a late
+    /// valid reply or `ack_through` may still revise them while the run is
+    /// current. Provisional vs final is decided by the failure kind, not the
+    /// state, so this predicate alone does not drive revision rules.
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::Failed | Self::NoAck | Self::Cancelled | Self::Superseded
+        )
+    }
+
+    /// A state an app may write in a reply (`acknowledged`, `running`,
+    /// `completed`, `failed`) — never `fired`, `no_ack` or `cancelled`.
+    pub fn is_app_writable(self) -> bool {
+        matches!(
+            self,
+            Self::Acknowledged | Self::Running | Self::Completed | Self::Failed
+        )
+    }
+
+    /// Parse the wire string back into a state (tolerant readers).
+    pub fn from_wire(s: &str) -> Option<Self> {
+        Some(match s {
+            "registered" => Self::Registered,
+            "fired" => Self::Fired,
+            "fired_late" => Self::FiredLate,
+            "skipped_misfire" => Self::SkippedMisfire,
+            "coalesced" => Self::Coalesced,
+            "wake_delivered" => Self::WakeDelivered,
+            "wake_failed" => Self::WakeFailed,
+            "no_ack" => Self::NoAck,
+            "pruned" => Self::Pruned,
+            "year_recalibrate" => Self::YearRecalibrate,
+            "wake_capability" => Self::WakeCapability,
+            "acknowledged" => Self::Acknowledged,
+            "running" => Self::Running,
+            "completed" => Self::Completed,
+            "failed" => Self::Failed,
+            "cancelled" => Self::Cancelled,
+            "superseded" => Self::Superseded,
+            "reply_rejected" => Self::ReplyRejected,
+            _ => return None,
+        })
+    }
 }
 
 impl RunState {
@@ -81,6 +132,7 @@ impl RunState {
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
             Self::Superseded => "superseded",
+            Self::ReplyRejected => "reply_rejected",
         }
     }
 }

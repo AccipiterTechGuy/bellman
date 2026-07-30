@@ -33,6 +33,15 @@ pub const DEFAULT_MISFIRE_POLICY: &str = "coalesce";
 pub const DEFAULT_LOG_ROTATION_MAX_BYTES: u64 = 64 * 1024 * 1024;
 /// Retained-log budget for current + final archives (1 GiB).
 pub const DEFAULT_LOG_RETENTION_BUDGET_BYTES: u64 = 1024 * 1024 * 1024;
+/// Default pickup deadline: a fired run with no pickup signal (valid reply or
+/// slot-feed `ack_through`) becomes `no_ack` after this many seconds. Its own
+/// knob — `ack_grace_secs` seeds the value but is a different job (pruning).
+pub const DEFAULT_PICKUP_GRACE_SECS: u64 = DEFAULT_ACK_GRACE_SECS;
+/// Default watchdog factor: deadline = `expected_secs × factor`. Forgiving by
+/// default so apps do not pad their estimates into fiction.
+pub const DEFAULT_WATCHDOG_FACTOR: f64 = 2.0;
+/// Aggregate ceiling for the reply quarantine (`bad/`), oldest pairs first.
+pub const DEFAULT_QUARANTINE_BUDGET_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Path of the user/engine config file under the data dir.
 pub fn config_path(data_dir: &Path) -> PathBuf {
@@ -99,6 +108,20 @@ pub struct AppConfig {
     /// deleted). Product default: 1 GiB.
     #[serde(default = "default_log_retention_budget_bytes")]
     pub log_retention_budget_bytes: u64,
+
+    /// Pickup deadline (seconds) for integration-owned runs: no valid reply
+    /// and no `ack_through` within this window ⇒ `no_ack`. Product default:
+    /// 60 (seeded from the ack grace, but a separately named job).
+    #[serde(default = "default_pickup_grace_secs")]
+    pub pickup_grace_secs: u64,
+    /// Opt-in watchdog factor: deadline = `expected_secs × factor` from
+    /// Bellman's receipt of the latest distinct reply. Product default: 2.0.
+    #[serde(default = "default_watchdog_factor")]
+    pub watchdog_factor: f64,
+    /// Aggregate byte ceiling for the reply quarantine (`bad/`). Product
+    /// default: 64 MiB; oldest payload/sidecar pairs are removed first.
+    #[serde(default = "default_quarantine_budget_bytes")]
+    pub quarantine_budget_bytes: u64,
 }
 
 fn default_horizon_secs() -> u64 {
@@ -134,6 +157,15 @@ fn default_log_rotation_max_bytes() -> u64 {
 fn default_log_retention_budget_bytes() -> u64 {
     DEFAULT_LOG_RETENTION_BUDGET_BYTES
 }
+fn default_pickup_grace_secs() -> u64 {
+    DEFAULT_PICKUP_GRACE_SECS
+}
+fn default_watchdog_factor() -> f64 {
+    DEFAULT_WATCHDOG_FACTOR
+}
+fn default_quarantine_budget_bytes() -> u64 {
+    DEFAULT_QUARANTINE_BUDGET_BYTES
+}
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -153,6 +185,9 @@ impl Default for AppConfig {
             default_misfire_grace_secs: DEFAULT_MISFIRE_GRACE_SECS,
             log_rotation_max_bytes: DEFAULT_LOG_ROTATION_MAX_BYTES,
             log_retention_budget_bytes: DEFAULT_LOG_RETENTION_BUDGET_BYTES,
+            pickup_grace_secs: DEFAULT_PICKUP_GRACE_SECS,
+            watchdog_factor: DEFAULT_WATCHDOG_FACTOR,
+            quarantine_budget_bytes: DEFAULT_QUARANTINE_BUDGET_BYTES,
         }
     }
 }
@@ -224,7 +259,21 @@ impl AppConfig {
         if self.log_retention_budget_bytes < 4 * 1024 * 1024 {
             self.log_retention_budget_bytes = 4 * 1024 * 1024;
         }
+        if self.pickup_grace_secs == 0 {
+            self.pickup_grace_secs = DEFAULT_PICKUP_GRACE_SECS;
+        }
+        if !(self.watchdog_factor.is_finite() && self.watchdog_factor > 0.0) {
+            self.watchdog_factor = DEFAULT_WATCHDOG_FACTOR;
+        }
+        if self.quarantine_budget_bytes < 1024 * 1024 {
+            self.quarantine_budget_bytes = 1024 * 1024;
+        }
         self
+    }
+
+    /// Pickup deadline for integration-owned runs (R7).
+    pub fn pickup_grace(&self) -> Duration {
+        Duration::from_secs(self.pickup_grace_secs)
     }
 
     pub fn horizon(&self) -> Duration {

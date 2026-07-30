@@ -64,12 +64,17 @@ pub use platform::{
     ARM_SLACK_SECS,
 };
 pub use store::{
-    Action, ClaimStatus, Meta, MisfirePolicy, NewTimer, OpenOptions, OverlapPolicy, RetryPolicy,
-    RunClaim, SlotRequestRecord, Store, StoreError, StoreResult, Timer, TimerId, TimerPatch,
-    TimerUpdate,
+    Action, ClaimStatus, FailureKind, Meta, MisfirePolicy, NewTimer, OpenOptions, OverlapPolicy,
+    RetryPolicy, RunClaim, RunStateRow, SlotRequestRecord, Store, StoreError, StoreResult, Timer,
+    TimerId, TimerPatch, TimerUpdate,
+};
+pub mod reply;
+pub use reply::{
+    new_anchors, IngestOutcome, ReplyDocument, ReplyEngine, ReplyError, ReplyRejection,
+    ReplyResult, SharedAnchors, REPLY_SCHEMA_V1,
 };
 pub use tree::{
-    folder_name, log_cancelled_for_open_runs, project_run_started, reconcile_folders,
+    folder_name, log_cancelled_for_open_runs, project_fire, reconcile_folders,
     reply_file_name, short_id, slugify, RunStatus, TimersTree, TreeError, TreeResult,
     README_FILE_NAME, RUN_SCHEMA_V1, STATUS_FILE_NAME, TIMER_FILE_NAME, TIMER_SCHEMA_V1,
     TREE_DIR_NAME,

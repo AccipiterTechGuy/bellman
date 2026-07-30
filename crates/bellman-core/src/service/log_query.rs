@@ -25,38 +25,42 @@ pub fn logs_dir_from_data(data_dir: &Path) -> PathBuf {
     data_dir.join("logs")
 }
 
-/// Read all parseable events from the live log file.
-///
-/// `limit` (when set) caps the number of records returned (most-recent first
-/// after filtering). When `timer_id` is `Some`, only records whose
-/// `timer_id` matches are returned.
+/// Read the retained tail for the GUI / CLI: archives + the in-flight
+/// `.rotating` source + current, deduplicated by `event_id`, with the timer
+/// filter and limit applied AFTER dedupe. This is the one read path for log
+/// tails (R11: physical duplicates from the at-least-once outbox and an
+/// in-flight rotation are invisible to readers). Missing dirs/files yield
+/// empty, never an error.
 pub fn read_log_tail(
-    path: &Path,
+    logs_dir: &Path,
     timer_id: Option<uuid::Uuid>,
     limit: Option<usize>,
 ) -> std::io::Result<(Vec<EventRecord>, ReadStats)> {
-    let (mut recs, stats) = read_events(path)?;
+    let (mut recs, mut stats) = read_log_history(logs_dir)?;
     if let Some(id) = timer_id {
         recs.retain(|r| r.timer_id == Some(id));
     }
+    // The limit applies to the most recent records (the file is append-only).
     if let Some(n) = limit {
-        // Most recent first; the file is append-only so a Vec reversal + take
-        // is the cheapest correct path.
-        recs.reverse();
-        recs.truncate(n);
-        recs.reverse();
+        if recs.len() > n {
+            let drop = recs.len() - n;
+            recs.drain(..drop);
+        }
     }
+    stats.records = recs.len();
     Ok((recs, stats))
 }
 
-/// Read retained history: `logs/archive/events-*.jsonl[.gz]` (sorted) then
-/// `logs/events.current.jsonl`.
+/// Read retained history: `logs/archive/events-*.jsonl[.gz]` (sorted), then
+/// the R11 `.rotating` source while a rotation journal is active (never the
+/// partial gzip temp), then `logs/events.current.jsonl`.
 ///
 /// Used by the calendar truth model so weekly rotation does not erase
 /// durable outcomes from Week/Month views while archives remain in the
 /// retention window. Missing dirs/files yield empty (not error). Records are
 /// deduplicated by `event_id` (a crash mid-rotation can briefly leave both a
-/// plain staging archive and its compressed twin).
+/// plain staging archive and its compressed twin — and the at-least-once
+/// outbox can re-append after a crash between sync and mark-published).
 pub fn read_log_history(logs_dir: &Path) -> std::io::Result<(Vec<EventRecord>, ReadStats)> {
     let mut all = Vec::new();
     let mut stats = ReadStats::default();
@@ -88,6 +92,23 @@ pub fn read_log_history(logs_dir: &Path) -> std::io::Result<(Vec<EventRecord>, R
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e),
             }
+        }
+    }
+
+    // The plain `.rotating` source of an in-flight/interrupted rotation:
+    // while the journal is active these lines are nowhere else, so history
+    // must not briefly lose them.
+    let rotating = logs_dir.join(crate::events::ROTATING_FILE_NAME);
+    if rotating.is_file() {
+        match read_events(&rotating) {
+            Ok((recs, s)) => {
+                stats.records += s.records;
+                stats.skipped += s.skipped;
+                stats.lines += s.lines;
+                all.extend(recs);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
         }
     }
 
@@ -162,5 +183,41 @@ mod tests {
         let (recs, stats) = read_log_history(&dir.path().join("logs")).unwrap();
         assert!(recs.is_empty());
         assert_eq!(stats.records, 0);
+    }
+
+    #[test]
+    fn read_log_tail_dedupes_by_event_id_and_includes_rotating() {
+        let dir = TempDir::new().unwrap();
+        let logs = dir.path().join("logs");
+        fs::create_dir_all(&logs).unwrap();
+        let mut log = EventLog::open(EventLogConfig::new(&logs)).unwrap();
+        let timer = uuid::Uuid::new_v4();
+        let rec = EventRecord::new(RunState::Completed)
+            .with_timer(timer, "t")
+            .with_message("synced-but-unmarked");
+        // The at-least-once crash window: the same line twice on disk.
+        log.emit(rec.clone()).unwrap();
+        log.emit(rec.clone()).unwrap();
+
+        // Tail: one logical record, not two.
+        let (recs, _) = read_log_tail(&logs, None, None).unwrap();
+        assert_eq!(recs.len(), 1, "readers dedupe by event_id");
+
+        // Mid-rotation: current renamed away to .rotating — history is
+        // still live, never a false empty.
+        fs::rename(
+            logs.join(CURRENT_FILE_NAME),
+            logs.join(crate::events::ROTATING_FILE_NAME),
+        )
+        .unwrap();
+        let (recs, _) = read_log_tail(&logs, None, None).unwrap();
+        assert_eq!(recs.len(), 1, ".rotating source is read while in flight");
+        assert_eq!(recs[0].message.as_deref(), Some("synced-but-unmarked"));
+
+        // Filter + limit apply after dedupe.
+        let (recs, _) = read_log_tail(&logs, Some(uuid::Uuid::new_v4()), None).unwrap();
+        assert!(recs.is_empty());
+        let (recs, _) = read_log_tail(&logs, Some(timer), Some(1)).unwrap();
+        assert_eq!(recs.len(), 1);
     }
 }

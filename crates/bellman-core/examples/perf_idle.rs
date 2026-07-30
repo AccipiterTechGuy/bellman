@@ -16,7 +16,7 @@
 //! - `perf_idle_report.json` — measured numbers + method
 
 use bellman_core::actions::{ActionRunner, ActionRunnerConfig};
-use bellman_core::events::{read_events, RunState, EventLog, EventLogConfig};
+use bellman_core::events::{read_events, RunState};
 use bellman_core::occurrence::{Occurrence, OccurrenceKind};
 use bellman_core::scheduler::{Scheduler, SchedulerConfig, SystemClock};
 use bellman_core::store::{Action, MisfirePolicy, NewTimer, OpenOptions, Store};
@@ -94,12 +94,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let logs_dir = data_dir.join("logs");
-    let event_log = EventLog::open(EventLogConfig::new(&logs_dir))?;
+    let sink = Store::open_with(db.clone(), OpenOptions::default())?;
     let runner = ActionRunner::new(ActionRunnerConfig {
         skip_retry_sleep: true,
         ..ActionRunnerConfig::default()
     })
-    .with_event_log(event_log);
+    .with_event_sink(sink);
 
     let cfg = SchedulerConfig::default()
         .with_max_sleep(Duration::from_millis(200))
@@ -147,7 +147,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rss_end_kb = read_vm_rss_kb(pid).unwrap_or(rss_start_kb);
     rss_samples.push(rss_end_kb);
 
-    // Count fired events in the JSONL (primary wake evidence).
+    // Count fired events in the JSONL (primary wake evidence). Events are
+    // enqueued into the outbox (R11) — drain before reading.
+    {
+        let drain_store = Store::open_with(&db, OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        })?;
+        bellman_core::events::EventPublisher::drain_best_effort(&data_dir, &drain_store);
+    }
     let log_path = logs_dir.join("events.current.jsonl");
     let (recs, stats) = if log_path.exists() {
         read_events(&log_path)?
@@ -190,7 +198,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let report = serde_json::json!({
-        "method": "engine-only SystemClock + ActionRunner + EventLog; one 1s interval Action::None",
+        "method": "engine-only SystemClock + ActionRunner + R11 outbox/publisher; one 1s interval Action::None",
         "pid": pid,
         "data_dir": data_dir.display().to_string(),
         "window_secs_requested": secs,

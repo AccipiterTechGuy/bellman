@@ -1,6 +1,6 @@
 //! Slot add/delete drives the per-timer folder tree (IK2): an open run must
 //! be logged `cancelled` before the folder is removed.
-use bellman_core::events::{read_events, RunState};
+use bellman_core::events::{read_events, EventPublisher, RunState};
 use bellman_core::slots::{make_add_request, SlotConfig, SlotService};
 use bellman_core::store::{OpenOptions, Store};
 use bellman_core::tree::TimersTree;
@@ -46,7 +46,11 @@ fn slot_delete_logs_cancelled_for_open_run() {
 
     assert!(store.get_timer(timer.id).unwrap().is_none());
     assert!(TimersTree::new(data).folder_for(timer.id).is_none(), "folder removed");
-    let (recs, _) = read_events(data.join("logs/events.current.jsonl")).unwrap();
+    // The cancelled event is enqueued in the outbox (R11); drain it with the
+    // elected publisher, then read the log.
+    let mut publisher = EventPublisher::open(data).unwrap();
+    publisher.publish_cycle(&store);
+    let (recs, _) = read_events(publisher.current_path()).unwrap();
     let cancel: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Cancelled).collect();
     assert_eq!(cancel.len(), 1, "cancelled event must be logged");
     assert_eq!(cancel[0].run_id, Some(claim.run_id));

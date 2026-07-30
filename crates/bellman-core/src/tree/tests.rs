@@ -23,6 +23,27 @@ fn test_store() -> (tempfile::TempDir, Store) {
     (dir, store)
 }
 
+fn test_engine(dir: &std::path::Path) -> crate::reply::ReplyEngine {
+    crate::reply::ReplyEngine {
+        tree: TimersTree::new(dir),
+        data_dir: dir.to_path_buf(),
+        pickup_grace: std::time::Duration::from_secs(60),
+        watchdog_factor: 2.0,
+        anchors: crate::reply::new_anchors(),
+        deadlines: crate::reply::new_deadlines(),
+    }
+}
+
+/// Drain the outbox through an elected publisher and read the appended events.
+fn drain_events(dir: &std::path::Path, store: &Store) -> Vec<crate::events::EventRecord> {
+    let mut publisher =
+        crate::events::EventPublisher::with_config(crate::events::EventLogConfig::new(dir.join("logs")))
+            .unwrap();
+    publisher.publish_cycle(store);
+    let (recs, _) = crate::events::read_events(publisher.current_path()).unwrap();
+    recs
+}
+
 // ── Slug rules (IK2 exit gate) ──────────────────────────────────────────
 
 #[test]
@@ -198,17 +219,17 @@ fn reply_stub_is_create_only_and_stale_replies_are_removed() {
     let folder = tree.create_for_timer(&timer, Some("lightbulb")).unwrap();
 
     let run_a = Uuid::new_v4();
-    let stub_a = tree.create_reply_stub(&folder, run_a).unwrap();
+    let stub_a = tree.create_reply_stub(&folder, run_a, "lightbulb").unwrap();
     assert_eq!(stub_a.file_name().unwrap(), reply_file_name(run_a).as_str());
     // O_EXCL: an app-written reply at the path is never clobbered.
     std::fs::write(&stub_a, b"{\"state\":\"completed\"}").unwrap();
-    let again = tree.create_reply_stub(&folder, run_a).unwrap();
+    let again = tree.create_reply_stub(&folder, run_a, "lightbulb").unwrap();
     assert_eq!(std::fs::read_to_string(&again).unwrap(), "{\"state\":\"completed\"}");
 
     // Next run: a fresh per-run file; the previous run's path is removed,
     // never overwritten.
     let run_b = Uuid::new_v4();
-    tree.create_reply_stub(&folder, run_b).unwrap();
+    tree.create_reply_stub(&folder, run_b, "lightbulb").unwrap();
     tree.remove_stale_replies(&folder, run_b).unwrap();
     assert!(!stub_a.exists());
     assert!(folder.join(reply_file_name(run_b)).exists());
@@ -220,11 +241,9 @@ fn fire_projection_writes_firing_snapshot_only() {
     let tree = TimersTree::new(dir.path());
     let timer = daily_timer(&mut store, "bulb-test");
     tree.create_for_timer(&timer, None).unwrap();
-    let mut log = EventLog::open(crate::events::EventLogConfig::new(dir.path().join("logs"))).unwrap();
+    let engine = test_engine(dir.path());
 
-    let scheduled_for = Utc::now();
-    let claim = store.claim_run(timer.id, scheduled_for).unwrap();
-    project_run_started(&tree, &store, &timer, &claim, &FireKind::OnTime, &mut log).unwrap();
+    let claim = project_fire(&tree, &mut store, &timer, Utc::now(), &FireKind::OnTime, &engine, Utc::now()).unwrap();
 
     let raw = std::fs::read_to_string(
         tree.folder_for(timer.id).unwrap().join(STATUS_FILE_NAME),
@@ -260,20 +279,25 @@ fn owned_timer_refire_supersedes_even_when_claim_completed() {
     let timer = daily_timer(&mut store, "owned");
     store.set_timer_owner(timer.id, "lightbulb").unwrap();
     tree.create_for_timer(&timer, Some("lightbulb")).unwrap();
-    let mut log = EventLog::open(crate::events::EventLogConfig::new(dir.path().join("logs"))).unwrap();
+    let engine = test_engine(dir.path());
 
     // First fire, and its wake action WAS delivered (claim completed) — but
     // the app never replied, so the run is still unresolved in R5 terms.
-    let claim1 = store.claim_run(timer.id, Utc::now()).unwrap();
-    project_run_started(&tree, &store, &timer, &claim1, &FireKind::OnTime, &mut log).unwrap();
+    let claim1 = project_fire(&tree, &mut store, &timer, Utc::now(), &FireKind::OnTime, &engine, Utc::now()).unwrap();
     store.complete_run(claim1.run_id).unwrap();
 
-    let claim2 = store
-        .claim_run(timer.id, Utc::now() + chrono::Duration::days(1))
-        .unwrap();
-    project_run_started(&tree, &store, &timer, &claim2, &FireKind::OnTime, &mut log).unwrap();
+    project_fire(
+        &tree,
+        &mut store,
+        &timer,
+        Utc::now() + chrono::Duration::days(1),
+        &FireKind::OnTime,
+        &engine,
+        Utc::now(),
+    )
+    .unwrap();
 
-    let (recs, _) = crate::events::read_events(log.current_path()).unwrap();
+    let recs = drain_events(dir.path(), &store);
     let sup: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Superseded).collect();
     assert_eq!(
         sup.len(),
@@ -289,28 +313,39 @@ fn unowned_timer_refire_supersedes_only_an_unfinished_claim() {
     let tree = TimersTree::new(dir.path());
     let timer = daily_timer(&mut store, "plain");
     tree.create_for_timer(&timer, None).unwrap();
-    let mut log = EventLog::open(crate::events::EventLogConfig::new(dir.path().join("logs"))).unwrap();
+    let engine = test_engine(dir.path());
 
     // First fire completed its action claim → resolved → no superseded.
-    let claim1 = store.claim_run(timer.id, Utc::now()).unwrap();
-    project_run_started(&tree, &store, &timer, &claim1, &FireKind::OnTime, &mut log).unwrap();
+    let claim1 = project_fire(&tree, &mut store, &timer, Utc::now(), &FireKind::OnTime, &engine, Utc::now()).unwrap();
     store.complete_run(claim1.run_id).unwrap();
-    let claim2 = store
-        .claim_run(timer.id, Utc::now() + chrono::Duration::days(1))
-        .unwrap();
-    project_run_started(&tree, &store, &timer, &claim2, &FireKind::OnTime, &mut log).unwrap();
-    let (recs, _) = crate::events::read_events(log.current_path()).unwrap();
+    let claim2 = project_fire(
+        &tree,
+        &mut store,
+        &timer,
+        Utc::now() + chrono::Duration::days(1),
+        &FireKind::OnTime,
+        &engine,
+        Utc::now(),
+    )
+    .unwrap();
+    let recs = drain_events(dir.path(), &store);
     assert!(
         !recs.iter().any(|r| r.kind == RunState::Superseded),
         "finished unowned claim is resolved"
     );
 
     // Third fire while the second claim is still open → superseded.
-    let claim3 = store
-        .claim_run(timer.id, Utc::now() + chrono::Duration::days(2))
-        .unwrap();
-    project_run_started(&tree, &store, &timer, &claim3, &FireKind::OnTime, &mut log).unwrap();
-    let (recs, _) = crate::events::read_events(log.current_path()).unwrap();
+    project_fire(
+        &tree,
+        &mut store,
+        &timer,
+        Utc::now() + chrono::Duration::days(2),
+        &FireKind::OnTime,
+        &engine,
+        Utc::now(),
+    )
+    .unwrap();
+    let recs = drain_events(dir.path(), &store);
     let sup: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Superseded).collect();
     assert_eq!(sup.len(), 1);
     assert_eq!(sup[0].run_id, Some(claim2.run_id));
@@ -323,22 +358,27 @@ fn second_fire_supersedes_unresolved_first_run() {
     let timer = daily_timer(&mut store, "owned");
     store.set_timer_owner(timer.id, "lightbulb").unwrap();
     tree.create_for_timer(&timer, Some("lightbulb")).unwrap();
-    let mut log = EventLog::open(crate::events::EventLogConfig::new(dir.path().join("logs"))).unwrap();
+    let engine = test_engine(dir.path());
 
     // First fire left unresolved (claimed, never completed).
-    let claim1 = store.claim_run(timer.id, Utc::now()).unwrap();
-    project_run_started(&tree, &store, &timer, &claim1, &FireKind::OnTime, &mut log).unwrap();
+    let claim1 = project_fire(&tree, &mut store, &timer, Utc::now(), &FireKind::OnTime, &engine, Utc::now()).unwrap();
     let reply1 = tree.folder_for(timer.id).unwrap().join(reply_file_name(claim1.run_id));
     assert!(reply1.exists(), "owned timer gets a per-run reply stub");
 
     // Second fire: superseded is logged, status rewritten, new stub created,
     // first stub removed (never overwritten).
-    let claim2 = store
-        .claim_run(timer.id, Utc::now() + chrono::Duration::days(1))
-        .unwrap();
-    project_run_started(&tree, &store, &timer, &claim2, &FireKind::OnTime, &mut log).unwrap();
+    let claim2 = project_fire(
+        &tree,
+        &mut store,
+        &timer,
+        Utc::now() + chrono::Duration::days(1),
+        &FireKind::OnTime,
+        &engine,
+        Utc::now(),
+    )
+    .unwrap();
 
-    let (recs, _) = crate::events::read_events(log.current_path()).unwrap();
+    let recs = drain_events(dir.path(), &store);
     let sup: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Superseded).collect();
     assert_eq!(sup.len(), 1);
     assert_eq!(sup[0].run_id, Some(claim1.run_id));
@@ -360,15 +400,14 @@ fn delete_logs_cancelled_for_open_run_before_folder_removal() {
     let tree = TimersTree::new(dir.path());
     let timer = daily_timer(&mut store, "doomed");
     tree.create_for_timer(&timer, None).unwrap();
-    let mut log = EventLog::open(crate::events::EventLogConfig::new(dir.path().join("logs"))).unwrap();
     let claim = store.claim_run(timer.id, Utc::now()).unwrap();
 
-    let n = log_cancelled_for_open_runs(&store, &timer, &mut log).unwrap();
+    let n = log_cancelled_for_open_runs(&store, &timer).unwrap();
     assert_eq!(n, 1);
     store.delete_timer(timer.id).unwrap();
     assert!(tree.remove_for(timer.id).unwrap());
 
-    let (recs, _) = crate::events::read_events(log.current_path()).unwrap();
+    let recs = drain_events(dir.path(), &store);
     let cancel: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Cancelled).collect();
     assert_eq!(cancel.len(), 1);
     assert_eq!(cancel[0].run_id, Some(claim.run_id));
@@ -382,12 +421,11 @@ fn delete_cancels_owned_run_even_with_finished_claim() {
     store.set_timer_owner(timer.id, "lightbulb").unwrap();
     let claim = store.claim_run(timer.id, Utc::now()).unwrap();
     store.complete_run(claim.run_id).unwrap();
-    let mut log = EventLog::open(crate::events::EventLogConfig::new(dir.path().join("logs"))).unwrap();
 
     // The app never spoke: the owned run is still open in R5 terms.
-    let n = log_cancelled_for_open_runs(&store, &timer, &mut log).unwrap();
+    let n = log_cancelled_for_open_runs(&store, &timer).unwrap();
     assert_eq!(n, 1);
-    let (recs, _) = crate::events::read_events(log.current_path()).unwrap();
+    let recs = drain_events(dir.path(), &store);
     let cancel: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Cancelled).collect();
     assert_eq!(cancel.len(), 1);
     assert_eq!(cancel[0].run_id, Some(claim.run_id));

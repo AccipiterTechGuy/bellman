@@ -4,7 +4,7 @@ use super::concurrency::{ActionLimiter, DEFAULT_MAX_CONCURRENT_ACTIONS};
 use super::launch::{run_launch, LaunchConfig, DEFAULT_OUTPUT_CAP_BYTES, DEFAULT_TIMEOUT};
 use super::notify_sink::{NotifySink, StubNotifySink};
 use super::write_slot::{write_output_slot, WriteSlotPayload, FIRE_SCHEMA_V1};
-use crate::events::{RunState, EventLog, EventRecord};
+use crate::events::{EventRecord, RunState};
 use crate::scheduler::{FireAction, FireContext, FireKind};
 use crate::store::{Action, OverlapPolicy, TimerId};
 use std::collections::HashSet;
@@ -63,14 +63,17 @@ impl std::fmt::Display for ActionRunnerError {
     }
 }
 
-/// Executes timer wake actions and appends lifecycle events to an [`EventLog`].
+/// Executes timer wake actions and enqueues lifecycle events into the R11
+/// outbox (the elected publisher appends them — producers never write the
+/// log directly). The `fired` event itself is not emitted here: it commits
+/// with the R10 fire transaction.
 ///
 /// Overlap: tracks in-flight timer ids; [`OverlapPolicy::Skip`] (default) drops
 /// a new fire while one is active. Retry: uses the timer's [`RetryPolicy`]
 /// (default 1× / 30 s); after exhaustion emits `wake_failed` and returns Err.
 pub struct ActionRunner {
     pub config: ActionRunnerConfig,
-    event_log: Option<EventLog>,
+    event_sink: Option<crate::store::Store>,
     /// Timers with an action currently executing (overlap tracking).
     pub(crate) in_flight: HashSet<TimerId>,
     /// Last human-readable message (run-now JSON).
@@ -87,7 +90,7 @@ impl ActionRunner {
         let limiter = Arc::new(ActionLimiter::new(config.max_concurrent_actions));
         Self {
             config,
-            event_log: None,
+            event_sink: None,
             in_flight: HashSet::new(),
             last_message: None,
             notify_sink: Arc::new(StubNotifySink),
@@ -112,56 +115,20 @@ impl ActionRunner {
         &self.notify_sink
     }
 
-    pub fn with_event_log(mut self, log: EventLog) -> Self {
-        self.event_log = Some(log);
+    /// Install the R11 outbox sink (a dedicated store connection — SQLite
+    /// serialises across connections, which is the point of the funnel).
+    pub fn with_event_sink(mut self, store: crate::store::Store) -> Self {
+        self.event_sink = Some(store);
         self
     }
 
-    pub fn event_log_mut(&mut self) -> Option<&mut EventLog> {
-        self.event_log.as_mut()
-    }
-
-    pub fn take_event_log(&mut self) -> Option<EventLog> {
-        self.event_log.take()
-    }
-
-    /// Builder sink: takes ownership so call sites can chain `EventRecord::new…`.
+    /// Enqueue one event for the elected publisher. Enqueue errors surface
+    /// on stderr; the row is never silently dropped by the outbox itself.
     #[allow(clippy::needless_pass_by_value)]
     fn emit(&mut self, rec: EventRecord) {
-        if let Some(log) = self.event_log.as_mut() {
-            let _ = log.append(&rec);
-        }
-    }
-
-    fn log_fire_kind(&mut self, ctx: &FireContext<'_>) {
-        let base = || {
-            EventRecord::new(RunState::Fired)
-                .with_timer(ctx.timer.id, ctx.timer.name.clone())
-                .with_run(ctx.run_id)
-                .with_scheduled_for(ctx.scheduled_for)
-        };
-        match &ctx.kind {
-            FireKind::OnTime => self.emit(base()),
-            FireKind::Late { lateness } => {
-                self.emit(
-                    EventRecord::new(RunState::FiredLate)
-                        .with_timer(ctx.timer.id, ctx.timer.name.clone())
-                        .with_run(ctx.run_id)
-                        .with_scheduled_for(ctx.scheduled_for)
-                        .with_duration_ms(lateness.num_milliseconds()),
-                );
-            }
-            FireKind::Coalesced { missed_count } => {
-                self.emit(
-                    EventRecord::new(RunState::Coalesced)
-                        .with_timer(ctx.timer.id, ctx.timer.name.clone())
-                        .with_run(ctx.run_id)
-                        .with_scheduled_for(ctx.scheduled_for)
-                        .with_count(*missed_count),
-                );
-            }
-            FireKind::CatchUp { index } => {
-                self.emit(base().with_count(*index).with_message("catch_up"));
+        if let Some(sink) = self.event_sink.as_ref() {
+            if let Err(e) = sink.enqueue_event(&rec) {
+                eprintln!("bellman: event enqueue failed: {e}");
             }
         }
     }
@@ -295,8 +262,6 @@ fn fire_kind_label(kind: &FireKind) -> String {
 
 impl FireAction for ActionRunner {
     fn on_fire(&mut self, ctx: &FireContext<'_>) -> Result<(), String> {
-        self.log_fire_kind(ctx);
-
         if self.overlap_blocks(ctx) {
             self.emit(
                 EventRecord::new(RunState::SkippedMisfire)

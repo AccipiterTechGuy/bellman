@@ -9,7 +9,7 @@ use crate::scheduler::action::FireAction;
 use crate::scheduler::clock::Clock;
 use crate::occurrence::OccurrenceKind;
 use crate::store::{MisfirePolicy, Timer};
-use super::types::{DeliveredFire, SchedulerResult};
+use super::types::{DeliveredFire, SchedulerError, SchedulerResult};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::cmp::Reverse;
 
@@ -58,39 +58,40 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 self.heap.push(Reverse(entry));
                 break;
             }
-            if resolved.contains(&entry.timer_id) {
+            let timer_id = match entry.kind {
+                super::types::HeapKind::Deadline { run_id, kind } => {
+                    self.handle_due_deadline(run_id, kind, now)?;
+                    continue;
+                }
+                super::types::HeapKind::Fire { timer_id } => timer_id,
+            };
+            if resolved.contains(&timer_id) {
                 continue;
             }
             // Re-read timer; it may have been edited/disabled.
-            let Some(timer) = self.store.get_timer(entry.timer_id)? else {
-                resolved.insert(entry.timer_id);
+            let Some(timer) = self.store.get_timer(timer_id)? else {
+                resolved.insert(timer_id);
                 continue;
             };
             if !timer.enabled {
-                resolved.insert(entry.timer_id);
+                resolved.insert(timer.id);
                 continue;
             }
             let Some(nf) = timer.next_fire_utc else {
-                resolved.insert(entry.timer_id);
+                resolved.insert(timer.id);
                 continue;
             };
             let exec_at = apply_execution_jitter(timer.id, nf, timer.jitter_secs);
             if exec_at > now {
                 // Positive jitter still in the future — requeue at exec time.
-                self.heap.push(Reverse(super::types::HeapEntry {
-                    fire_at: exec_at,
-                    timer_id: timer.id,
-                }));
+                self.heap.push(Reverse(super::types::HeapEntry::fire(exec_at, timer.id)));
                 resolved.insert(timer.id);
                 continue;
             }
             // For negative jitter, exec_at can be before nf. handle_due still
             // requires nf <= now to deliver; if only jitter is past, wait for nf.
             if nf > now {
-                self.heap.push(Reverse(super::types::HeapEntry {
-                    fire_at: nf,
-                    timer_id: timer.id,
-                }));
+                self.heap.push(Reverse(super::types::HeapEntry::fire(nf, timer.id)));
                 resolved.insert(timer.id);
                 continue;
             }
@@ -101,6 +102,67 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             resolved.insert(timer.id);
         }
         Ok(out)
+    }
+
+    /// A lifecycle deadline heap entry woke (IK3). The wall time is only the
+    /// wake hint: the MONOTONIC deadline book decides. Not yet due
+    /// monotonically (a wall jump moved the hint early) ⇒ re-arm for the
+    /// monotonic remainder. Disarmed meanwhile ⇒ no-op.
+    fn handle_due_deadline(
+        &mut self,
+        run_id: uuid::Uuid,
+        kind: crate::reply::DeadlineKind,
+        now: DateTime<Utc>,
+    ) -> SchedulerResult<()> {
+        let Some(engine) = self.config.reply_engine() else {
+            return Ok(());
+        };
+        let book_entry = engine
+            .deadlines
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .entries
+            .get(&run_id)
+            .copied();
+        let Some(entry) = book_entry else {
+            return Ok(()); // disarmed meanwhile
+        };
+        let mono_now = std::time::Instant::now();
+        if entry.at > mono_now {
+            // Wall jumped forward: re-arm for the monotonic remainder.
+            let remaining = entry.at.saturating_duration_since(mono_now);
+            let wall_at = now
+                + chrono::Duration::from_std(remaining)
+                    .unwrap_or_else(|_| chrono::Duration::seconds(1));
+            self.heap
+                .push(Reverse(super::types::HeapEntry::deadline(wall_at, run_id, kind)));
+            return Ok(());
+        }
+        let Some(row) = self.store.get_run_state(run_id)? else {
+            return Ok(());
+        };
+        let Some(timer) = self.store.get_timer(row.timer_id)? else {
+            return Ok(());
+        };
+        // The gate serializes this transition against reply ingest and the
+        // watcher's deadline pass.
+        let _gate = crate::reply::gate::acquire(&engine.data_dir, timer.id)
+            .map_err(|e| SchedulerError::Internal(format!("per-timer gate: {e}")))?;
+        let transitioned = match kind {
+            crate::reply::DeadlineKind::Pickup => {
+                engine.expire_pickup_one(&self.store, &timer, run_id, now)
+            }
+            crate::reply::DeadlineKind::Watchdog => {
+                engine.expire_watchdog_one(&self.store, &timer, run_id, now)
+            }
+        }
+        .map_err(|e| SchedulerError::Internal(format!("deadline transition: {e}")))?;
+        if transitioned {
+            engine
+                .project_status(&self.store, &timer, &run_id)
+                .map_err(|e| SchedulerError::Internal(format!("deadline projection: {e}")))?;
+        }
+        Ok(())
     }
 }
 

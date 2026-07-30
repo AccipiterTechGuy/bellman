@@ -203,7 +203,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 let _ = self.store.fail_run(claim.run_id);
                 continue;
             };
-            if let Some(d) = self.finish_claimed_run(&timer, &claim, FireKind::Late {
+            if let Some(d) = self.act_and_close(&timer, &claim, FireKind::Late {
                 lateness: self
                     .clock
                     .wall_now()
@@ -217,45 +217,107 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
 
     /// Claim → action → complete → advance last_fired / next_fire.
     ///
-    /// If a prior crash left a `claimed` row, re-runs the action (at-least-once).
-    /// Completed claims are not re-acted (backward-jump / double-fire guard).
+    /// The claim is made by the R10 fire transaction ([`crate::tree::project_fire`]):
+    /// gate → pre-fire barrier → ONE SQLite commit (barrier transitions +
+    /// supersede + claim + lifecycle row + `fired` event) → projections.
+    /// If a prior crash left a `claimed` row, the action is re-run
+    /// (at-least-once) without re-running the transaction — its projections
+    /// are the reconciler's job. Completed claims are not re-acted
+    /// (backward-jump / double-fire guard).
     fn deliver_one(
         &mut self,
         timer: &Timer,
         scheduled_for: DateTime<Utc>,
         kind: FireKind,
     ) -> SchedulerResult<Option<DeliveredFire>> {
-        let claim = match self.store.claim_run(timer.id, scheduled_for) {
-            Ok(c) => c,
-            Err(StoreError::AlreadyClaimed {
-                timer_id,
-                scheduled_for,
-            }) => {
-                match self.store.get_claim_for(timer_id, scheduled_for)? {
-                    Some(existing) if existing.status == ClaimStatus::Claimed => {
-                        // Crash between claim and complete — recover the action.
-                        return self.finish_claimed_run(timer, &existing, kind);
+        let claim = match self.config.reply_engine() {
+            Some(engine) => {
+                let tree = engine.tree.clone();
+                let now = self.clock.wall_now();
+                match crate::tree::project_fire(
+                    &tree,
+                    &mut self.store,
+                    timer,
+                    scheduled_for,
+                    &kind,
+                    &engine,
+                    now,
+                ) {
+                    Ok(c) => {
+                        // Arm the pickup deadline on the heap (IK3): the
+                        // scheduler wakes at the exact deadline — the wall
+                        // time is the wake hint, the monotonic book decides.
+                        if self.store.get_run_state(c.run_id)?.is_some() {
+                            let wall_at = c.claimed_at
+                                + chrono::Duration::from_std(self.config.pickup_grace)
+                                    .unwrap_or_else(|_| chrono::Duration::seconds(60));
+                            self.push_deadline(
+                                c.run_id,
+                                crate::reply::DeadlineKind::Pickup,
+                                wall_at,
+                            );
+                        }
+                        c
                     }
-                    Some(_) => {
-                        // Already completed — never re-fire this slot.
-                        self.ensure_advanced_past(timer.id, scheduled_for)?;
-                        return Ok(None);
+                    Err(crate::tree::TreeError::Store(StoreError::AlreadyClaimed {
+                        timer_id,
+                        scheduled_for,
+                    })) => {
+                        match self.store.get_claim_for(timer_id, scheduled_for)? {
+                            Some(existing) if existing.status == ClaimStatus::Claimed => {
+                                // Crash between the fire commit and the action
+                                // — recover the action. The reconciler repairs
+                                // any missing projections.
+                                return self.act_and_close(timer, &existing, kind);
+                            }
+                            Some(_) => {
+                                // Already completed — never re-fire this slot.
+                                self.ensure_advanced_past(timer.id, scheduled_for)?;
+                                return Ok(None);
+                            }
+                            None => {
+                                return Err(SchedulerError::Internal(format!(
+                                    "AlreadyClaimed but no row for {timer_id} @ {scheduled_for}"
+                                )));
+                            }
+                        }
                     }
-                    None => {
-                        return Err(SchedulerError::Internal(format!(
-                            "AlreadyClaimed but no row for {timer_id} @ {scheduled_for}"
-                        )));
-                    }
+                    // The gate is required and the transaction is atomic: a
+                    // failure here means the fire did not half-happen.
+                    Err(e) => return Err(SchedulerError::Internal(format!("fire transaction: {e}"))),
                 }
             }
-            Err(e) => return Err(e.into()),
+            None => {
+                // No data dir (pure-store unit tests): bare claim, no tree.
+                match self.store.claim_run(timer.id, scheduled_for) {
+                    Ok(c) => c,
+                    Err(StoreError::AlreadyClaimed {
+                        timer_id,
+                        scheduled_for,
+                    }) => match self.store.get_claim_for(timer_id, scheduled_for)? {
+                        Some(existing) if existing.status == ClaimStatus::Claimed => {
+                            return self.act_and_close(timer, &existing, kind);
+                        }
+                        Some(_) => {
+                            self.ensure_advanced_past(timer.id, scheduled_for)?;
+                            return Ok(None);
+                        }
+                        None => {
+                            return Err(SchedulerError::Internal(format!(
+                                "AlreadyClaimed but no row for {timer_id} @ {scheduled_for}"
+                            )));
+                        }
+                    },
+                    Err(e) => return Err(e.into()),
+                }
+            }
         };
 
-        self.finish_claimed_run(timer, &claim, kind)
+        self.act_and_close(timer, &claim, kind)
     }
 
     /// Run the action for an existing claim, complete it, and advance the timer.
-    fn finish_claimed_run(
+    fn act_and_close(
         &mut self,
         timer: &Timer,
         claim: &RunClaim,
@@ -267,26 +329,6 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         }
 
         let ctx = FireContext::from_claim(timer, claim, kind.clone());
-
-        // IK2: project the fire into the per-timer folder tree (view only —
-        // failures surface but never break the fire path).
-        let tree = self
-            .config
-            .data_dir
-            .as_ref()
-            .map(|d| crate::tree::TimersTree::new(d));
-        if let (Some(tree), Some(data_dir)) = (tree.as_ref(), self.config.data_dir.as_ref()) {
-            match crate::events::EventLog::open_under_configured(data_dir) {
-                Ok(mut log) => {
-                    if let Err(e) = crate::tree::project_run_started(
-                        tree, &self.store, timer, claim, &ctx.kind, &mut log,
-                    ) {
-                        eprintln!("bellman: timer tree fire projection failed: {e}");
-                    }
-                }
-                Err(e) => eprintln!("bellman: timer tree fire projection (log open) failed: {e}"),
-            }
-        }
 
         let action_res = self.action.on_fire(&ctx);
 
@@ -300,6 +342,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                     ack_grace: self.config.ack_grace,
                     max_current_bytes: self.config.log_rotation_max_bytes,
                     budget_bytes: self.config.log_retention_budget_bytes,
+                    quarantine_budget_bytes: self.config.quarantine_budget_bytes,
                 };
                 let now = self.clock.wall_now();
                 if let Err(e) =
@@ -338,8 +381,8 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             // failure is honest in the claim ledger and the wake_failed event
             // (R5 `failed` is reserved for app reports, IK3). timer.json
             // still picks up the advanced next_fire.
-            if let Some(tree) = tree.as_ref() {
-                refresh_timer_json(tree, &self.store, timer.id);
+            if let Some(data_dir) = self.config.data_dir.clone() {
+                refresh_timer_json(&crate::tree::TimersTree::new(&data_dir), &self.store, timer.id);
             }
             return Err(SchedulerError::Action(e));
         }
@@ -348,8 +391,8 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         // mark_fired/requeue above. status.json intentionally stays at the
         // firing snapshot: the R5 `completed` state is an app report (IK3),
         // and the claim ledger's `Completed` only means wake_delivered.
-        if let Some(tree) = tree.as_ref() {
-            refresh_timer_json(tree, &self.store, timer.id);
+        if let Some(data_dir) = self.config.data_dir.clone() {
+            refresh_timer_json(&crate::tree::TimersTree::new(&data_dir), &self.store, timer.id);
         }
 
         Ok(Some(DeliveredFire {

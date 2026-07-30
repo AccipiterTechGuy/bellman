@@ -100,6 +100,12 @@ impl From<serde_json::Error> for EventLogError {
     }
 }
 
+impl From<crate::store::StoreError> for EventLogError {
+    fn from(e: crate::store::StoreError) -> Self {
+        Self::Io(e.to_string())
+    }
+}
+
 pub type EventLogResult<T> = Result<T, EventLogError>;
 
 /// What retention removed in one pass (the caller logs this — never silent).
@@ -246,6 +252,41 @@ impl EventLog {
     #[allow(clippy::needless_pass_by_value)]
     pub fn emit(&mut self, record: EventRecord) -> EventLogResult<()> {
         self.append(&record)
+    }
+
+    /// R11 append for the elected publisher: write one pre-serialized line
+    /// and **fdatasync** — a line counts as durable only once synced, never
+    /// merely flushed. No size-trigger rotation here; rotation is the
+    /// publisher's journaled path (`crate::events::EventPublisher`).
+    pub fn append_line_synced(&mut self, line: &str) -> EventLogResult<()> {
+        self.ensure_fresh_handle()?;
+        self.ensure_open()?;
+        let file = self
+            .file
+            .as_mut()
+            .ok_or_else(|| EventLogError::Io("event log file not open".into()))?;
+        file.write_all(line.as_bytes())?;
+        file.sync_data()?;
+        Ok(())
+    }
+
+    /// Byte length of the live current file (publisher size checks).
+    pub fn current_len(&self) -> u64 {
+        fs::metadata(self.current_path()).map_or(0, |m| m.len())
+    }
+
+    /// Sync and drop the append handle (the publisher does this before
+    /// renaming the current file during rotation).
+    pub(crate) fn close_handle(&mut self) -> EventLogResult<()> {
+        if let Some(file) = self.file.take() {
+            file.sync_all()?;
+        }
+        Ok(())
+    }
+
+    /// Re-create/open the append handle after rotation.
+    pub(crate) fn reopen(&mut self) -> EventLogResult<()> {
+        self.ensure_open()
     }
 
     fn append_direct(&mut self, record: &EventRecord) -> EventLogResult<()> {
@@ -486,7 +527,7 @@ fn list_archives(archive_dir: &Path) -> EventLogResult<Vec<(PathBuf, SystemTime,
 }
 
 /// `events-….jsonl` → `events-….jsonl.gz`.
-fn gz_path_for(plain: &Path) -> PathBuf {
+pub(crate) fn gz_path_for(plain: &Path) -> PathBuf {
     let mut name = plain
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -496,7 +537,7 @@ fn gz_path_for(plain: &Path) -> PathBuf {
 }
 
 /// Stream-compress `src` to `dst` (gzip), fsyncing the result.
-fn gzip_file(src: &Path, dst: &Path) -> EventLogResult<()> {
+pub(crate) fn gzip_file(src: &Path, dst: &Path) -> EventLogResult<()> {
     let input = File::open(src)?;
     let output = File::create(dst)?;
     let mut encoder = flate2::write::GzEncoder::new(BufWriter::new(output), flate2::Compression::default());
@@ -510,7 +551,7 @@ fn gzip_file(src: &Path, dst: &Path) -> EventLogResult<()> {
 }
 
 /// Build `archive_dir/events-YYYY-Www.jsonl`, adding `.N` before `.jsonl` on clash.
-fn unique_archive_path(archive_dir: &Path, now: chrono::DateTime<Utc>) -> EventLogResult<PathBuf> {
+pub(crate) fn unique_archive_path(archive_dir: &Path, now: chrono::DateTime<Utc>) -> EventLogResult<PathBuf> {
     let iso = now.iso_week();
     let base = format!("events-{}-W{:02}", iso.year(), iso.week());
     let candidate = archive_dir.join(format!("{base}.jsonl"));

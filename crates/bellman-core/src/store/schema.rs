@@ -4,7 +4,7 @@ use super::error::{StoreError, StoreResult};
 use rusqlite::Connection;
 
 /// Current on-disk schema version (also stored in `PRAGMA user_version` and `meta`).
-pub const SCHEMA_VERSION: i32 = 5;
+pub const SCHEMA_VERSION: i32 = 7;
 
 /// Apply pending migrations. Safe to call on every open.
 pub fn migrate(conn: &Connection) -> StoreResult<()> {
@@ -16,6 +16,13 @@ pub fn migrate(conn: &Connection) -> StoreResult<()> {
         return Err(StoreError::Sqlite(format!(
             "database schema version {current} is newer than supported {SCHEMA_VERSION}"
         )));
+    }
+
+    // Already current: no writes at all. Every open used to commit here,
+    // and that pointless writer traffic can collide with the IMMEDIATE
+    // fire transaction.
+    if current == SCHEMA_VERSION {
+        return Ok(());
     }
 
     if current < 1 {
@@ -32,6 +39,12 @@ pub fn migrate(conn: &Connection) -> StoreResult<()> {
     }
     if current < 5 {
         migrate_v5(conn)?;
+    }
+    if current < 6 {
+        migrate_v6(conn)?;
+    }
+    if current < 7 {
+        migrate_v7(conn)?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
@@ -203,6 +216,90 @@ fn migrate_v5(conn: &Connection) -> StoreResult<()> {
         )
         .map_err(|e| StoreError::Sqlite(format!("migrate v5 add wake_machine: {e}")))?;
     }
+    Ok(())
+}
+
+/// IK3: the app-lifecycle state of integration-owned runs (the reply channel).
+///
+/// One row per owned run, inserted by the fire transaction with the owner
+/// snapshotted onto it. `state` is an R5 wire string; `pickup_deadline` /
+/// `watchdog_deadline` are persisted wall-clock deadlines used only to rebuild
+/// the live countdowns after a restart (the active countdowns run on
+/// Bellman's monotonic clock). All app-reported fields accumulate here so
+/// `status.json` can be re-projected from the database alone.
+fn migrate_v6(conn: &Connection) -> StoreResult<()> {
+    conn.execute_batch(
+        r"
+        CREATE TABLE IF NOT EXISTS run_states (
+            run_id             TEXT PRIMARY KEY NOT NULL,
+            timer_id           TEXT NOT NULL,
+            app_name           TEXT NOT NULL,
+            state              TEXT NOT NULL,
+            fired_at           TEXT NOT NULL,
+            pickup_deadline    TEXT,
+            acknowledged_at    TEXT,
+            expected_secs      INTEGER,
+            error_detection    INTEGER,
+            heartbeat_at       TEXT,
+            progress           TEXT,
+            completed_at       TEXT,
+            failed_at          TEXT,
+            reason             TEXT,
+            failure_kind       TEXT,
+            result_json        TEXT,
+            result_truncated   INTEGER NOT NULL DEFAULT 0,
+            watchdog_deadline  TEXT,
+            no_ack_at          TEXT,
+            reply_digest       TEXT,
+            acknowledged_logged INTEGER NOT NULL DEFAULT 0,
+            running_logged      INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_run_states_timer
+            ON run_states (timer_id);
+        ",
+    )
+    .map_err(|e| StoreError::Sqlite(format!("migrate v6: {e}")))?;
+    Ok(())
+}
+
+/// R11: the event-log outbox and the rotation journal.
+///
+/// Every event producer enqueues into `event_outbox` — SQLite serialises
+/// across processes, which is the whole reason it is the funnel. One
+/// publisher, elected by an OS file lock, appends + fdatasyncs each line and
+/// only then deletes the row. Delivery is at-least-once: a crash between
+/// sync and row deletion re-appends, and every reader dedupes by
+/// `event_id`. Published rows are deleted so the outbox empties; retention
+/// of the log itself lives in the archive pruner.
+///
+/// `rotation_journal` makes rotation crash-safe: the journal names every
+/// artifact of an in-flight rotation; a recovering publisher rolls the
+/// interrupted phase forward before appending or rotating again.
+fn migrate_v7(conn: &Connection) -> StoreResult<()> {
+    conn.execute_batch(
+        r"
+        CREATE TABLE IF NOT EXISTS event_outbox (
+            event_id     TEXT PRIMARY KEY NOT NULL,
+            payload      TEXT NOT NULL,
+            enqueued_at  TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_event_outbox_enqueued
+            ON event_outbox (enqueued_at);
+
+        CREATE TABLE IF NOT EXISTS rotation_journal (
+            id           INTEGER PRIMARY KEY CHECK (id = 1),
+            source       TEXT NOT NULL,
+            rotating     TEXT NOT NULL,
+            gz_tmp       TEXT NOT NULL,
+            final_path   TEXT NOT NULL,
+            phase        TEXT NOT NULL,
+            started_at   TEXT NOT NULL
+        );
+        ",
+    )
+    .map_err(|e| StoreError::Sqlite(format!("migrate v7: {e}")))?;
     Ok(())
 }
 

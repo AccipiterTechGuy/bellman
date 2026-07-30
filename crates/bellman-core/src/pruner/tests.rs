@@ -1,7 +1,7 @@
 //! Prune correctness on fixture logs + year recalibration idempotency.
 
 use super::*;
-use crate::events::{read_events, RunState, EventLog, EventLogConfig, EventRecord};
+use crate::events::{read_events, EventLog, EventLogConfig, EventPublisher, EventRecord, RunState};
 use crate::occurrence::{Occurrence, OccurrenceKind};
 use crate::store::{ClaimStatus, NewTimer, OpenOptions, Store};
 use chrono::{Duration as ChronoDuration, NaiveDate, NaiveTime, TimeZone, Utc};
@@ -46,12 +46,16 @@ fn prune_rotates_jsonl_and_respects_retention_edges() {
     })
     .unwrap();
 
-    let mut log = EventLog::open(
+    let mut publisher = EventPublisher::with_config(
         EventLogConfig::new(data.join("logs")).with_retention(Duration::from_secs(1)),
     )
     .unwrap();
-    log.emit(EventRecord::new(RunState::Fired).with_message("keep-me"))
+    // Seed one event through the outbox so the current file is non-empty and
+    // the prune rotation has work to do.
+    store
+        .enqueue_event(&EventRecord::new(RunState::Fired).with_message("keep-me"))
         .unwrap();
+    publisher.publish_cycle(&store);
 
     // Plant an archive file with an old mtime so retention deletes it.
     let archive_dir = data.join("logs/archive");
@@ -72,7 +76,7 @@ fn prune_rotates_jsonl_and_respects_retention_edges() {
         ..PruneConfig::default()
     };
     let now = Utc::now();
-    let report = run_prune(&mut store, &mut log, &cfg, now, true, None).unwrap();
+    let report = run_prune(&mut store, &mut publisher, &cfg, now, true, None).unwrap();
     assert!(report.archived.is_some(), "non-empty current should rotate");
     assert!(
         report.archives_removed >= 1,
@@ -164,7 +168,8 @@ fn prune_deletes_terminal_oneshots_and_writes_tombstones() {
         .unwrap();
     let daily_id = daily.id;
 
-    let mut log = EventLog::open(EventLogConfig::new(data.join("logs"))).unwrap();
+    let mut publisher =
+        EventPublisher::with_config(EventLogConfig::new(data.join("logs"))).unwrap();
     // IK2: give all three timers folders; the pruned one-shot must lose its
     // folder, the survivors keep theirs.
     let tree = crate::tree::TimersTree::new(data);
@@ -178,7 +183,7 @@ fn prune_deletes_terminal_oneshots_and_writes_tombstones() {
         ack_grace: Duration::from_secs(0),
         ..PruneConfig::default()
     };
-    let report = run_prune(&mut store, &mut log, &cfg, Utc::now(), true, Some(&tree)).unwrap();
+    let report = run_prune(&mut store, &mut publisher, &cfg, Utc::now(), true, Some(&tree)).unwrap();
     assert_eq!(report.timers_pruned, 1);
     assert!(report.pruned_timer_ids.contains(&fired_id));
     assert!(store.get_timer(fired_id).unwrap().is_none());
@@ -188,7 +193,9 @@ fn prune_deletes_terminal_oneshots_and_writes_tombstones() {
     assert!(tree.folder_for(pending_id).is_some());
     assert!(tree.folder_for(daily_id).is_some());
 
-    let (recs, _) = read_events(log.current_path()).unwrap();
+    // Tombstones sit in the outbox; drain through the publisher to read them.
+    publisher.publish_cycle(&store);
+    let (recs, _) = read_events(publisher.current_path()).unwrap();
     let tombs: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Pruned).collect();
     assert_eq!(tombs.len(), 1);
     assert_eq!(tombs[0].timer_id, Some(fired_id));
@@ -236,14 +243,15 @@ fn prune_preserves_oneshot_with_pending_claim() {
         ClaimStatus::Claimed
     );
 
-    let mut log = EventLog::open(EventLogConfig::new(data.join("logs"))).unwrap();
+    let mut publisher =
+        EventPublisher::with_config(EventLogConfig::new(data.join("logs"))).unwrap();
     let cfg = PruneConfig {
         retention: Duration::from_secs(30 * 24 * 3600),
         interval: Duration::from_secs(1),
         ack_grace: Duration::from_secs(0),
         ..PruneConfig::default()
     };
-    let report = run_prune(&mut store, &mut log, &cfg, Utc::now(), true, None).unwrap();
+    let report = run_prune(&mut store, &mut publisher, &cfg, Utc::now(), true, None).unwrap();
     assert_eq!(report.timers_pruned, 0, "pending claim must block prune");
     assert!(store.get_timer(t.id).unwrap().is_some());
 }
@@ -258,14 +266,15 @@ fn prune_not_due_skips_when_recent() {
     })
     .unwrap();
     store.set_last_prune(Utc::now()).unwrap();
-    let mut log = EventLog::open(EventLogConfig::new(data.join("logs"))).unwrap();
+    let mut publisher =
+        EventPublisher::with_config(EventLogConfig::new(data.join("logs"))).unwrap();
     let cfg = PruneConfig {
         retention: Duration::from_secs(30 * 24 * 3600),
         interval: Duration::from_secs(7 * 24 * 3600),
         ack_grace: Duration::from_secs(0),
         ..PruneConfig::default()
     };
-    let report = run_prune(&mut store, &mut log, &cfg, Utc::now(), false, None).unwrap();
+    let report = run_prune(&mut store, &mut publisher, &cfg, Utc::now(), false, None).unwrap();
     assert!(report.skipped_not_due);
 }
 
@@ -312,18 +321,20 @@ fn prune_sweeps_orphan_timer_folders_and_logs() {
     store.delete_timer(orphan.id).unwrap();
     assert!(orphan_folder.exists());
 
-    let mut log = EventLog::open(EventLogConfig::new(data.join("logs"))).unwrap();
+    let mut publisher =
+        EventPublisher::with_config(EventLogConfig::new(data.join("logs"))).unwrap();
     let cfg = PruneConfig {
         interval: Duration::from_secs(1),
         ..PruneConfig::default()
     };
-    let report = run_prune(&mut store, &mut log, &cfg, Utc::now(), true, Some(&tree)).unwrap();
+    let report = run_prune(&mut store, &mut publisher, &cfg, Utc::now(), true, Some(&tree)).unwrap();
     assert_eq!(report.orphan_folders_removed, 1);
     assert!(!orphan_folder.exists(), "orphan folder must be swept");
     assert!(tree.folder_for(live.id).is_some(), "live folder stays");
 
-    // Logged, never silent.
-    let (recs, _) = read_events(log.current_path()).unwrap();
+    // Logged, never silent — drain the outbox through the publisher to read.
+    publisher.publish_cycle(&store);
+    let (recs, _) = read_events(publisher.current_path()).unwrap();
     let orphan_notes: Vec<_> = recs
         .iter()
         .filter(|r| r.kind == RunState::Pruned && r.message.as_deref() == Some("orphan_timer_folder"))
@@ -353,14 +364,15 @@ fn year_recalibrate_is_idempotent_within_year() {
         ))
         .unwrap();
 
-    let mut log = EventLog::open(EventLogConfig::new(data.join("logs"))).unwrap();
+    let mut publisher =
+        EventPublisher::with_config(EventLogConfig::new(data.join("logs"))).unwrap();
     let now = Utc.with_ymd_and_hms(2026, 7, 28, 12, 0, 0).unwrap();
     assert!(needs_year_recalibration(&store, now).unwrap());
-    let r1 = run_year_recalibration(&mut store, Some(&mut log), now).unwrap();
+    let r1 = run_year_recalibration(&mut store, true, now).unwrap();
     assert!(!r1.skipped_idempotent);
     assert_eq!(r1.timers_checked, 1);
 
-    let r2 = run_year_recalibration(&mut store, Some(&mut log), now).unwrap();
+    let r2 = run_year_recalibration(&mut store, true, now).unwrap();
     assert!(r2.skipped_idempotent);
 
     // Next year forces a fresh pass.
@@ -368,7 +380,8 @@ fn year_recalibrate_is_idempotent_within_year() {
     assert!(needs_year_recalibration(&store, next_year).unwrap());
     assert_eq!(year_start(next_year).date_naive(), NaiveDate::from_ymd_opt(2027, 1, 1).unwrap());
 
-    let (recs, _) = read_events(log.current_path()).unwrap();
+    publisher.publish_cycle(&store);
+    let (recs, _) = read_events(publisher.current_path()).unwrap();
     assert_eq!(
         recs.iter()
             .filter(|r| r.kind == RunState::YearRecalibrate)
@@ -424,6 +437,15 @@ fn startup_year_recalibration_honors_configured_log_cap() {
 
     startup_maintenance(&mut store, data, &cfg, Utc::now()).unwrap();
 
+    // The recalibration event waits in the outbox; the elected publisher —
+    // carrying the CONFIGURED cap, not the 64 MiB default — appends it and
+    // rotates when the append would cross the cap.
+    let mut publisher = EventPublisher::with_config(
+        EventLogConfig::new(data.join("logs")).with_max_current_bytes(cap),
+    )
+    .unwrap();
+    publisher.publish_cycle(&store);
+
     // The recalibration append crossed the configured cap and rotated.
     let archive = data.join("logs/archive");
     let archives: Vec<_> = std::fs::read_dir(&archive)
@@ -458,4 +480,48 @@ fn startup_catchup_when_last_prune_stale() {
     let notes = startup_maintenance(&mut store, data, &cfg, Utc::now()).unwrap();
     assert!(notes.iter().any(|n| n.contains("prune catch-up")));
     assert!(store.get_timer(system_prune_id()).unwrap().is_some());
+}
+
+#[test]
+fn prune_with_lease_elsewhere_reports_skipped_and_never_stamps_last_prune() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path();
+    let mut store = Store::open_with(data.join("timers.db"), OpenOptions {
+        refuse_network_fs: false,
+        ..OpenOptions::default()
+    })
+    .unwrap();
+
+    // The "live watcher" publisher holds the lease across the whole test.
+    let mut watcher_publisher =
+        EventPublisher::with_config(EventLogConfig::new(data.join("logs"))).unwrap();
+    assert!(watcher_publisher.ensure_leadership().unwrap());
+
+    // Seed one event so rotation would have work to do.
+    store
+        .enqueue_event(&EventRecord::new(RunState::Fired).with_message("needs-rotation"))
+        .unwrap();
+
+    // The scheduled prune's own publisher cannot lead.
+    let mut prune_publisher =
+        EventPublisher::with_config(EventLogConfig::new(data.join("logs"))).unwrap();
+    let cfg = PruneConfig {
+        interval: Duration::from_secs(0),
+        ..PruneConfig::default()
+    };
+    let report = run_prune(&mut store, &mut prune_publisher, &cfg, Utc::now(), true, None).unwrap();
+    assert!(report.skipped_not_leader, "follower prune reports the skip");
+    assert!(report.archived.is_none(), "nothing was rotated");
+    assert!(
+        store.meta().unwrap().last_prune.is_none(),
+        "last_prune must NOT be stamped when maintenance was not performed"
+    );
+
+    // The watcher releases at the end of its cycle; the next scheduled
+    // prune wins the lease and really rotates.
+    watcher_publisher.publish_cycle(&store);
+    let report = run_prune(&mut store, &mut prune_publisher, &cfg, Utc::now(), true, None).unwrap();
+    assert!(!report.skipped_not_leader);
+    assert!(report.archived.is_some(), "rotation happened once the lease was free");
+    assert!(store.meta().unwrap().last_prune.is_some());
 }

@@ -7,7 +7,7 @@
 //! a no-op when `last_recalibration >= year_start(now)`.
 
 use super::{PruneError, PruneResult};
-use crate::events::{RunState, EventLog, EventRecord};
+use crate::events::{EventRecord, RunState};
 use crate::store::{Store, TimerPatch, TimerUpdate};
 use chrono::{DateTime, Datelike, TimeZone, Utc};
 
@@ -38,13 +38,13 @@ pub fn needs_year_recalibration(store: &Store, now: DateTime<Utc>) -> PruneResul
     })
 }
 
-/// Recompute + verify all timers; emit `year_recalibrate`; stamp meta.
+/// Recompute + verify all timers; enqueue `year_recalibrate`; stamp meta.
 ///
 /// When not needed (already recalibrated this year), returns
 /// `skipped_idempotent = true` without writing.
 pub fn run_year_recalibration(
     store: &mut Store,
-    event_log: Option<&mut EventLog>,
+    enqueue: bool,
     now: DateTime<Utc>,
 ) -> PruneResult<YearRecalibrateReport> {
     let ys = year_start(now);
@@ -77,7 +77,7 @@ pub fn run_year_recalibration(
 
     store.set_last_recalibration(now)?;
 
-    if let Some(log) = event_log {
+    if enqueue {
         let rec = EventRecord::new(RunState::YearRecalibrate)
             .with_logged_at(now)
             .with_message(format!("year={year}"))
@@ -88,7 +88,8 @@ pub fn run_year_recalibration(
                 "timers_checked": checked,
                 "timers_updated": updated,
             }));
-        log.append(&rec)
+        store
+            .enqueue_event(&rec)
             .map_err(|e| PruneError::EventLog(e.to_string()))?;
     }
 

@@ -27,11 +27,27 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         // P5: ensure system.prune, catch-up prune, Jan-1 recalibrate.
         self.run_startup_maintenance()?;
 
+        // IK3 (R10): read replies BEFORE anything can fire. An app can
+        // answer while Bellman is stopped; superseding that run before its
+        // reply was read would silently record the outcome unknown.
+        self.run_reply_startup_scan();
+
         let mut fires = self.recover_pending_claims()?;
         fires.extend(self.misfire_pass()?);
         self.rebuild_horizon()?;
         self.booted = true;
         Ok(fires)
+    }
+
+    /// Scan every `reply-*.json`, fold in valid replies for still-current
+    /// runs, then rebuild stale `status.json` / create-only stubs (R10
+    /// startup order). No-op when `config.data_dir` is unset (unit tests).
+    fn run_reply_startup_scan(&mut self) {
+        let Some(engine) = self.config.reply_engine() else {
+            return;
+        };
+        let now = self.clock.wall_now();
+        crate::reply::startup_scan(&engine, &self.store, now);
     }
 
     /// Ensure `system.prune`, catch-up prune if due, Jan-1 pass if needed.
@@ -47,6 +63,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             ack_grace: self.config.ack_grace,
             max_current_bytes: self.config.log_rotation_max_bytes,
             budget_bytes: self.config.log_retention_budget_bytes,
+            quarantine_budget_bytes: self.config.quarantine_budget_bytes,
         };
         let now = self.clock.wall_now();
         match crate::pruner::startup_maintenance(&mut self.store, &data_dir, &prune_cfg, now) {
@@ -89,6 +106,13 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 }
                 Ok(ControlMsg::SetPauseAll(paused)) => {
                     self.pause_all = paused;
+                }
+                Ok(ControlMsg::ArmDeadline {
+                    run_id,
+                    kind,
+                    wall_at,
+                }) => {
+                    self.push_deadline(run_id, kind, wall_at);
                 }
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }
@@ -265,6 +289,13 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             ControlMsg::SetPauseAll(paused) => {
                 self.pause_all = paused;
             }
+            ControlMsg::ArmDeadline {
+                run_id,
+                kind,
+                wall_at,
+            } => {
+                self.push_deadline(run_id, kind, wall_at);
+            }
         }
         // Drain any further queued control messages without sleeping.
         loop {
@@ -278,6 +309,13 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 }
                 Ok(ControlMsg::SetPauseAll(paused)) => {
                     self.pause_all = paused;
+                }
+                Ok(ControlMsg::ArmDeadline {
+                    run_id,
+                    kind,
+                    wall_at,
+                }) => {
+                    self.push_deadline(run_id, kind, wall_at);
                 }
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }

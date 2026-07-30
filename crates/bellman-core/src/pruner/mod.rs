@@ -20,7 +20,7 @@ pub use year::{
     needs_year_recalibration, run_year_recalibration, year_start, YearRecalibrateReport,
 };
 
-use crate::events::{RunState, EventLog, EventLogConfig, EventRecord};
+use crate::events::{EventPublisher, RunState, EventRecord};
 use crate::occurrence::{Occurrence, OccurrenceKind};
 use crate::store::{
     Action, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy, Store, StoreError, StoreResult,
@@ -56,6 +56,8 @@ pub struct PruneConfig {
     pub max_current_bytes: u64,
     /// Retained-log budget: current + final archives stay within this.
     pub budget_bytes: u64,
+    /// Aggregate ceiling for the reply quarantine (`timers/bad/`).
+    pub quarantine_budget_bytes: u64,
 }
 
 impl Default for PruneConfig {
@@ -66,6 +68,7 @@ impl Default for PruneConfig {
             ack_grace: DEFAULT_ACK_GRACE,
             max_current_bytes: crate::events::DEFAULT_MAX_CURRENT_BYTES,
             budget_bytes: crate::events::DEFAULT_BUDGET_BYTES,
+            quarantine_budget_bytes: crate::app_config::DEFAULT_QUARANTINE_BUDGET_BYTES,
         }
     }
 }
@@ -85,6 +88,10 @@ pub struct PruneReport {
     pub orphan_folders_removed: usize,
     /// True when this pass was a no-op because prune was not yet due.
     pub skipped_not_due: bool,
+    /// True when the publisher lease was held elsewhere, so rotation and
+    /// retention did NOT happen and `last_prune` was deliberately NOT
+    /// stamped — the next pass must retry.
+    pub skipped_not_leader: bool,
 }
 
 /// Errors from prune / ensure-timer helpers.
@@ -216,7 +223,7 @@ pub fn prune_is_due(last_prune: Option<DateTime<Utc>>, now: DateTime<Utc>, inter
 /// When `force` is false, returns early with `skipped_not_due` if not due.
 pub fn run_prune(
     store: &mut Store,
-    event_log: &mut EventLog,
+    publisher: &mut EventPublisher,
     config: &PruneConfig,
     now: DateTime<Utc>,
     force: bool,
@@ -230,9 +237,19 @@ pub fn run_prune(
         });
     }
 
-    let (archived, retain) = event_log
-        .rotate_and_retain()
+    // Rotation goes through the elected publisher (R11) — never a side
+    // path. When the lease is held elsewhere (the live watcher leads this
+    // second), NOTHING was rotated: report it honestly and do NOT stamp
+    // last_prune — the next pass must retry.
+    let (leader, archived, retain) = publisher
+        .rotate_and_retain(store)
         .map_err(|e| PruneError::EventLog(e.to_string()))?;
+    if !leader {
+        return Ok(PruneReport {
+            skipped_not_leader: true,
+            ..PruneReport::default()
+        });
+    }
     // Log every archive prune — never silent.
     if retain.removed_count() > 0 {
         let note = EventRecord::new(RunState::Pruned)
@@ -244,8 +261,8 @@ pub fn run_prune(
                 "budget_pruned": retain.budget.len(),
                 "bytes_removed": retain.bytes_removed,
             }));
-        event_log
-            .append(&note)
+        store
+            .enqueue_event(&note)
             .map_err(|e| PruneError::EventLog(e.to_string()))?;
     }
 
@@ -256,6 +273,7 @@ pub fn run_prune(
         pruned_timer_ids: Vec::new(),
         orphan_folders_removed: 0,
         skipped_not_due: false,
+        skipped_not_leader: false,
     };
 
     let candidates = store.list_timers()?;
@@ -287,8 +305,8 @@ pub fn run_prune(
                     "reason": "terminal_oneshot",
                     "ack_grace_secs": config.ack_grace.as_secs(),
                 }));
-            event_log
-                .append(&tomb)
+            store
+                .enqueue_event(&tomb)
                 .map_err(|e| PruneError::EventLog(e.to_string()))?;
         }
     }
@@ -311,8 +329,8 @@ pub fn run_prune(
                             "reason": "orphan_folder",
                             "folder": folder.display().to_string(),
                         }));
-                    event_log
-                        .append(&note)
+                    store
+                        .enqueue_event(&note)
                         .map_err(|e| PruneError::EventLog(e.to_string()))?;
                 }
             }
@@ -321,23 +339,52 @@ pub fn run_prune(
         if let Err(e) = crate::tree::reconcile_folders(tree, store) {
             eprintln!("bellman: timer folder reconcile failed: {e}");
         }
+        // Reply quarantine retention: 30-day window + aggregate ceiling,
+        // oldest payload/sidecar pairs first. Shares the quarantine lock
+        // with artifact creation (the pruner holds no timer shard here).
+        let bad = crate::reply::quarantine::quarantine_dir(tree.root());
+        if let Ok(_lock) = crate::reply::gate::acquire_quarantine(
+            tree.root().parent().unwrap_or(tree.root()),
+        ) {
+            match crate::reply::quarantine::prune(
+                &bad,
+                config.retention,
+                config.quarantine_budget_bytes,
+                now,
+            ) {
+                Ok(0) => {}
+                Ok(n) => {
+                    let note = EventRecord::new(RunState::Pruned)
+                        .with_logged_at(now)
+                        .with_message("reply_quarantine_retention")
+                        .with_detail(serde_json::json!({
+                            "reason": "quarantine_retention",
+                            "artifacts_removed": n,
+                        }));
+                    if let Err(e) = store.enqueue_event(&note) {
+                        eprintln!("bellman: quarantine prune log failed: {e}");
+                    }
+                }
+                Err(e) => eprintln!("bellman: reply quarantine prune failed: {e}"),
+            }
+        }
     }
 
     store.set_last_prune(now)?;
     Ok(report)
 }
 
-/// Event-log config for prune/startup writers: ALL retention and rotation
-/// knobs come from the [`PruneConfig`] (itself built from `config.json`), so
-/// no production writer silently falls back to the 64 MiB / 1 GiB defaults.
-fn event_log_config(data_dir: &Path, config: &PruneConfig) -> EventLogConfig {
-    EventLogConfig::new(data_dir.join("logs"))
+/// Publisher config for prune/startup: ALL retention and rotation knobs
+/// come from the [`PruneConfig`] (itself built from `config.json`), so no
+/// production writer silently falls back to the 64 MiB / 1 GiB defaults.
+fn publisher_config(data_dir: &Path, config: &PruneConfig) -> crate::events::EventLogConfig {
+    crate::events::EventLogConfig::new(data_dir.join("logs"))
         .with_retention(config.retention)
         .with_max_current_bytes(config.max_current_bytes)
         .with_budget_bytes(config.budget_bytes)
 }
 
-/// Open an event log under `data_dir` with the given retention and run prune.
+/// Open the publisher under `data_dir` with the given config and run prune.
 pub fn run_prune_under(
     store: &mut Store,
     data_dir: &Path,
@@ -345,10 +392,10 @@ pub fn run_prune_under(
     now: DateTime<Utc>,
     force: bool,
 ) -> PruneResult<PruneReport> {
-    let mut log = EventLog::open(event_log_config(data_dir, config))
+    let mut publisher = EventPublisher::with_config(publisher_config(data_dir, config))
         .map_err(|e| PruneError::EventLog(e.to_string()))?;
     let tree = crate::tree::TimersTree::new(data_dir);
-    run_prune(store, &mut log, config, now, force, Some(&tree))
+    run_prune(store, &mut publisher, config, now, force, Some(&tree))
 }
 
 /// Terminal-state one-shot eligible for deletion?
@@ -446,9 +493,7 @@ pub fn startup_maintenance(
     }
 
     if needs_year_recalibration(store, now)? {
-        let mut log = EventLog::open(event_log_config(data_dir, prune_config))
-            .map_err(|e| PruneError::EventLog(e.to_string()))?;
-        let yr = run_year_recalibration(store, Some(&mut log), now)?;
+        let yr = run_year_recalibration(store, true, now)?;
         notes.push(format!(
             "year_recalibrate: checked={} updated={}",
             yr.timers_checked, yr.timers_updated
