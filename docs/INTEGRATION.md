@@ -110,10 +110,13 @@ Each entry in `events` is one un-acked run:
 }
 ```
 
-`status` uses the one run-state vocabulary shared with the event log: `fired`
-means Bellman delivered the fire and the run is still open; `completed` means
-the run closed. Ack entries by sending any request for that timer with
-`payload.ack_through` set to the highest `event_sequence` seen.
+`status` uses the one run-state vocabulary shared with the event log
+(`RunState`): `fired` means the run is open, `wake_delivered` / `wake_failed`
+report how Bellman's wake action ended. The app-reported states
+(`acknowledged`, `running`, `completed`, `failed`) arrive with the reply
+channel — Bellman never writes them itself. Ack entries by sending any
+request for that timer with `payload.ack_through` set to the highest
+`event_sequence` seen.
 
 ---
 
@@ -189,12 +192,15 @@ line, `bellman-event/1`):
 {"schema":"bellman-event/1","logged_at":"2026-07-28T08:00:01Z","kind":"fired","event_id":"…","timer_id":"…","run_id":"…","timer_name":"morning-wake","scheduled_for":"2026-07-28T08:00:00Z"}
 ```
 
-Top-level `kind` is always the **event kind**: `registered`, `fired`,
+Top-level `kind` is always the **event kind**, from the one R5 run-state
+vocabulary shared with the slot run-event feed: `registered`, `fired`,
 `fired_late`, `skipped_misfire`, `coalesced`, `wake_delivered`, `wake_failed`,
-`no_ack`, `pruned`, `year_recalibrate`. Timestamps end `_at` (`logged_at`);
-`scheduled_for` is the one exception — it is an intent, not an occurrence.
-Weekly rotation renames the current file to
-`logs/archive/events-<ISO-week>.jsonl`; archives older than 30 days are deleted.
+`no_ack`, `pruned`, `year_recalibrate` are written by Bellman;
+`acknowledged`, `running`, `completed`, `failed` are reserved for app reports
+(reply channel). Timestamps end `_at` (`logged_at`); `scheduled_for` is the
+one exception — it is an intent, not an occurrence. Weekly rotation renames
+the current file to `logs/archive/events-<ISO-week>.jsonl`; archives older
+than 30 days are deleted.
 
 ## Fire notification (write-output-slot action)
 
