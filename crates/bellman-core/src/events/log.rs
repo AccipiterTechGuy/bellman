@@ -123,16 +123,43 @@ impl RetainReport {
 /// archives and age/budget retention.
 ///
 /// - **Append**: one self-contained line; flush after write; no per-line fsync.
+///   Several processes can hold `EventLog` handles on the same file, so every
+///   append first verifies its handle still points at the live current file
+///   (same OS file identity) and reopens when another process rotated it
+///   away — appends never land in a renamed-away inode.
 /// - **Rotate**: sync + rename current → plain staging archive, gzip the
 ///   staging file to `events-<ISO-week>[.N].jsonl.gz`, then remove the staging
-///   file. A crash leaves the plain staging archive in place — readers read
-///   both forms, so rotation never opens a hole in history.
+///   file. A stale writer that still managed to append to the staging inode
+///   mid-pass triggers a re-compression so those late lines are kept. A crash
+///   leaves the plain staging archive in place — readers read both forms, so
+///   rotation never opens a hole in history.
 /// - **Retain**: delete archives older than `retention`, then oldest archives
 ///   until current + archives fit `budget_bytes`. Current is never deleted.
 pub struct EventLog {
     config: EventLogConfig,
     /// Open append handle for the current file (lazy).
     file: Option<File>,
+}
+
+/// OS file identity used to detect that the path our handle points at was
+/// rotated away by another process.
+#[cfg(unix)]
+fn file_id(meta: &fs::Metadata) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    Some((meta.dev(), meta.ino()))
+}
+
+/// Windows equivalent of [`file_id`] (volume serial + file index).
+#[cfg(windows)]
+fn file_id(meta: &fs::Metadata) -> Option<(u64, u64)> {
+    use std::os::windows::fs::MetadataExt;
+    Some((meta.volume_serial_number()?, meta.file_index()?))
+}
+
+/// Platforms without a file-id API skip the stale-handle check.
+#[cfg(not(any(unix, windows)))]
+fn file_id(_meta: &fs::Metadata) -> Option<(u64, u64)> {
+    None
 }
 
 impl EventLog {
@@ -175,12 +202,11 @@ impl EventLog {
     pub fn append(&mut self, record: &EventRecord) -> EventLogResult<()> {
         let mut line = serde_json::to_string(record)?;
         line.push('\n');
-        self.ensure_open()?;
-        let current_len = self
-            .file
-            .as_ref()
-            .and_then(|f| f.metadata().ok())
-            .map_or(0, |m| m.len());
+        // Re-anchor on the live file first: another process may have rotated
+        // since our handle was opened. The size check reads the PATH's
+        // metadata (never the possibly-stale handle's).
+        self.ensure_fresh_handle()?;
+        let current_len = fs::metadata(self.current_path()).map_or(0, |m| m.len());
         if current_len > 0 && current_len + line.len() as u64 > self.config.max_current_bytes {
             let (archived, report) = self.rotate_and_retain()?;
             let rotation_note = EventRecord::new(super::record::RunState::Pruned)
@@ -253,7 +279,12 @@ impl EventLog {
             let _ = dir.sync_all();
         }
 
-        // Compress staging → temp gzip → rename to final, then drop staging.
+        // Compress staging → temp gzip → rename to final. A writer holding a
+        // stale handle can still append to the staging inode while we work
+        // (its next append re-anchors, but a write already in flight lands
+        // here): re-compress until the staging file stops growing so those
+        // late lines are folded into the archive instead of being deleted
+        // with it. Bounded — well-behaved writers re-anchor immediately.
         let final_path = gz_path_for(&staging);
         let tmp_gz = archive_dir.join(format!(
             ".{}.tmp",
@@ -262,8 +293,15 @@ impl EventLog {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "archive.jsonl.gz".into())
         ));
-        gzip_file(&staging, &tmp_gz)?;
-        fs::rename(&tmp_gz, &final_path)?;
+        for _pass in 0..5 {
+            let before = fs::metadata(&staging).map_or(0, |m| m.len());
+            gzip_file(&staging, &tmp_gz)?;
+            fs::rename(&tmp_gz, &final_path)?;
+            let after = fs::metadata(&staging).map_or(0, |m| m.len());
+            if after <= before {
+                break;
+            }
+        }
         fs::remove_file(&staging)?;
         if let Ok(dir) = File::open(&archive_dir) {
             let _ = dir.sync_all();
@@ -271,6 +309,33 @@ impl EventLog {
 
         self.ensure_open()?;
         Ok(Some(final_path))
+    }
+
+    /// Re-anchor the append handle on the live current file. After another
+    /// process rotated, our handle points at the renamed-away staging inode
+    /// and appends through it would vanish when the staging file is removed.
+    /// Compare OS file identities; reopen when they differ.
+    fn ensure_fresh_handle(&mut self) -> EventLogResult<()> {
+        self.ensure_open()?;
+        let Some(handle) = self.file.as_ref() else {
+            return Ok(());
+        };
+        let handle_id = handle.metadata().ok().and_then(|m| file_id(&m));
+        let path_id = fs::metadata(self.current_path())
+            .ok()
+            .and_then(|m| file_id(&m));
+        let stale = match (handle_id, path_id) {
+            (Some(h), Some(p)) => h != p,
+            // Path missing (mid-rotation elsewhere) or no id support: treat a
+            // missing path as stale so we recreate the live file.
+            (_, None) => fs::metadata(self.current_path()).is_err(),
+            (None, Some(_)) => false,
+        };
+        if stale {
+            self.file = None;
+            self.ensure_open()?;
+        }
+        Ok(())
     }
 
     /// Retention pass: age out old archives, then enforce the byte budget.

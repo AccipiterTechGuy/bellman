@@ -314,6 +314,49 @@ fn budget_prunes_oldest_archives_but_never_current() {
 }
 
 #[test]
+fn stale_handle_reanchors_and_never_loses_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let logs = dir.path().join("logs");
+    let cfg = EventLogConfig::new(&logs).with_max_current_bytes(4096);
+    let mut a = EventLog::open(cfg.clone()).unwrap();
+    let mut b = EventLog::open(cfg).unwrap();
+
+    // A fills current past the cap and rotates.
+    for i in 0..4 {
+        a.emit(EventRecord::new(RunState::Fired).with_message(format!("a-{i}-{}", "x".repeat(120))))
+            .unwrap();
+    }
+    let archived = a.rotate().unwrap().expect("rotation produced an archive");
+
+    // B's handle still points at the renamed-away inode. Its next append must
+    // re-anchor on the live file — the event must not vanish.
+    let lost_id = Uuid::new_v4();
+    b.emit(
+        EventRecord::new(RunState::WakeDelivered)
+            .with_run(lost_id)
+            .with_message("b-after-rotate"),
+    )
+    .unwrap();
+
+    let in_current = read_events(a.current_path()).unwrap().0;
+    assert!(
+        in_current.iter().any(|r| r.run_id == Some(lost_id)),
+        "stale writer's event must land in the live current file"
+    );
+    // And nothing from A's rotation was lost either.
+    let in_archive = read_events(&archived).unwrap().0;
+    assert_eq!(in_archive.len(), 4);
+
+    // A stale writer whose handle reports a large file must NOT rotate the
+    // fresh (small) live file: the size check reads the path, not the handle.
+    let archives_before = fs::read_dir(a.archive_dir()).unwrap().count();
+    b.emit(EventRecord::new(RunState::Fired).with_message("small"))
+        .unwrap();
+    let archives_after = fs::read_dir(a.archive_dir()).unwrap().count();
+    assert_eq!(archives_before, archives_after, "no bogus rotation from a stale size view");
+}
+
+#[test]
 fn reader_reads_plain_and_gz_archives() {
     let dir = tempfile::tempdir().unwrap();
     let plain = dir.path().join("events-2026-W30.jsonl");
