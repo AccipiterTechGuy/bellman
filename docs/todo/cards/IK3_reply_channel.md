@@ -30,11 +30,11 @@ change is gone.
 
 `reply.json` is the entire app-facing surface.
 
-### Bellman pre-creates the stub
+### Bellman pre-creates the stub, pre-filled
 
-At fire, Bellman writes **both** `status.json` and an empty `reply.json` stub. Matches the
-existing convention of pre-generated free slot stubs, and it means the folder shows an app
-exactly what to fill in.
+At fire, Bellman writes **both** `status.json` and a `reply.json` stub. The stub already
+carries every field the app should not have to know — matching the existing convention of
+pre-generated free slot stubs.
 
 **T0 — Bellman fires. `reply.json`:**
 
@@ -42,16 +42,32 @@ exactly what to fill in.
 {
   "schema": "bellman-reply/1",
   "run_id": "9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08",
+  "app_name": "lightbulb",
   "state": null,
-  "app_name": null,
-  "hint": "set state to acknowledged | running | completed | failed, and app_name to your app"
+  "hint": "set state to acknowledged | running | completed | failed"
 }
 ```
 
-`state: null` is how Bellman tells "stub, untouched" from "the app answered". Bellman writes
-this once and **never writes the file again** — from T0 onward the app is its only writer.
+`app_name` is pre-filled from the timer's owner (`created_by.app_name`), so the app never
+supplies it. When a timer was created by a human rather than an app there is no owner: leave
+it `null` and let the first responder fill it in.
 
-**T1 — the app acknowledges.** Overwrites the whole file:
+`state: null` is how Bellman tells "stub, untouched" from "the app answered". **Bellman writes
+this file once and never again** — from T0 the app is its only writer.
+
+### The app edits; it does not reconstruct
+
+The app reads the stub, sets what changed, writes it back atomically. It never composes a
+file from scratch and never has to carry `schema`, `run_id` or `app_name` in its own code.
+
+| stays as Bellman wrote it | the app sets |
+|---|---|
+| `schema` `run_id` `app_name` | `state` (required) |
+| | `acknowledged_at` `expected_secs` `error_detection` |
+| | `heartbeat_at` `progress` |
+| | `completed_at` `result` · `failed_at` `reason` |
+
+**T1 — acknowledged:**
 
 ```json
 {
@@ -68,10 +84,10 @@ this once and **never writes the file again** — from T0 onward the app is its 
 
 ```json
 {
-  "schema": "bellman-reply/1",
-  "run_id": "9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08",
-  "app_name": "lightbulb",
+  "…": "header unchanged",
   "state": "running",
+  "acknowledged_at": "2026-07-30T05:00:00Z",
+  "expected_secs": 15,
   "heartbeat_at": "2026-07-30T05:00:07Z",
   "progress": "bulb on, 7s elapsed"
 }
@@ -81,27 +97,26 @@ this once and **never writes the file again** — from T0 onward the app is its 
 
 ```json
 {
-  "schema": "bellman-reply/1",
-  "run_id": "9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08",
-  "app_name": "lightbulb",
+  "…": "header unchanged",
   "state": "completed",
+  "acknowledged_at": "2026-07-30T05:00:00Z",
+  "expected_secs": 15,
   "completed_at": "2026-07-30T05:00:15Z",
   "result": { "on_duration_secs": 15.02 }
 }
 ```
 
-### Each write is a COMPLETE statement, not a diff
+Read-modify-write is safe here **only** because the app is the sole writer after T0. This is
+the same property that made the split necessary in the first place — do not later "optimise"
+it by letting Bellman touch this file again.
 
-Note that T3 does not repeat `acknowledged_at` or `expected_secs`. It does not have to —
-**Bellman accumulates; the app does not.** Every earlier field is already folded into
-`status.json` and appended to the event log.
+### Robustness rules
 
-This is the property that keeps the client trivial: an app never reads `reply.json` back,
-never merges, never carries state between writes. It states where it is right now, in four
-required fields (`schema`, `run_id`, `app_name`, `state`) plus whatever that state carries.
-
-Consequence for the implementation: **do not treat a missing field as a retraction.**
-`expected_secs` absent at T3 does not mean the app withdrew its estimate.
+- **Only `state` is required from the app.** Everything else is optional and depends on the
+  state being reported.
+- **Never treat a missing field as a retraction.** If an app writes a minimal file rather than
+  editing the stub, `status.json` retains what was folded in earlier. Both styles must work.
+- The app must **not** be required to read `status.json`. Its whole interaction is one file.
 
 Bellman watches it, validates, logs the transition, and folds the result into `status.json`.
 
@@ -199,7 +214,10 @@ keep that safe:
 - An app that never replies stays `running` **indefinitely** — no auto-complete, no auto-fail.
 - With `error_detection` on: the deadline marks `failed`/`timed_out`; a heartbeat before it
   prevents that; a late `completed` revises the state and the log retains both.
-- The stub exists at T0 with `state: null`, and Bellman does not act on it.
+- The stub exists at T0 with `state: null` and `app_name` pre-filled from the timer's owner;
+  Bellman does not act on it.
+- An app that edits the stub and an app that writes a minimal file both work.
+- A reply whose `app_name` differs from the pre-filled owner is rejected.
 - A reply omitting a field set earlier (e.g. `expected_secs` at T3) does **not** retract it —
   `status.json` retains the accumulated view.
 - Duplicate reply is a no-op. Unknown `run_id`, wrong `app_name`, oversize, or a reserved

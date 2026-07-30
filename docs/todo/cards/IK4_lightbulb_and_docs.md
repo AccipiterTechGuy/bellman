@@ -24,16 +24,17 @@ more than roughly this, something in IK3 is wrong and should be fixed rather tha
 here:
 
 ```python
-run = json.load(open(f"{d}/status.json"))["run_id"]
+r = json.load(open(f"{d}/reply.json"))     # schema, run_id, app_name already filled in
 do_the_work()
+r["state"] = "completed"
+r["completed_at"] = now_utc()
 tmp = f"{d}/.reply.{uuid.uuid4()}"
-json.dump({"schema": "bellman-reply/1", "run_id": run,
-           "app_name": "lightbulb", "state": "completed"}, open(tmp, "w"))
-os.replace(tmp, f"{d}/reply.json")
+json.dump(r, open(tmp, "w")); os.replace(tmp, f"{d}/reply.json")
 ```
 
-One read, one atomic write. No merge logic, no ownership rules, no schema of ours to
-implement.
+One read, one atomic write, one file. The app never opens `status.json`, never composes a
+document from scratch, and never carries `run_id` or `app_name` in its own code — Bellman
+pre-filled them.
 
 ## Documentation
 
