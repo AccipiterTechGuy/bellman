@@ -150,11 +150,14 @@ rather than in principle:
   crash after it and startup rebuilds the file. There is no window where the folder claims
   something the database never recorded.
 - **Startup reads replies before the scheduler fires anything.** An app can answer while
-  Bellman is stopped. If the scheduler runs first, the next fire overwrites that reply and
-  it is lost **silently** — the worst kind of loss, because nothing anywhere records that it
-  happened. So: scan every `reply.json`, fold in what is valid and still current, flush
-  pending log lines, rebuild stale or missing files from the database, and only then start
-  delivery.
+  Bellman is stopped. If the scheduler runs first, that run is superseded before its reply
+  was ever read, and the outcome is recorded unknown **silently** — the worst kind of loss,
+  because nothing anywhere says a reply existed. So, in order: scan every `reply-*.json`,
+  fold in what is valid and still current, flush pending log lines, rebuild `status.json`
+  from the database, recreate **missing** stubs create-only (`O_EXCL`) — and only then start
+  delivery. **Never rebuild or overwrite an existing reply path**: startup obeys the same
+  never-write-over-a-live-reply-file law as the watcher, because an app can be writing at
+  this exact moment; a lost `O_EXCL` race to a real reply is the correct outcome.
 
 **R11 — one writer owns the event log, and "one" means across PROCESSES.**
 
@@ -179,16 +182,19 @@ The shape that fixes it:
 
 A line is durable when it is **synced, not flushed**: enqueue, append, flush, **fdatasync
 (`sync_data`)**, then mark published, and retry after a failed write or a restart. A flush
-moves bytes into the OS cache and survives a process crash only; a machine crash after
-flush-but-before-sync loses the line while the outbox row is already cleared. Events are
-low-rate, so the sync cost is irrelevant — and if it ever is not, batch the sync, never skip
-it. If a platform cannot sync, the guarantee is explicitly downgraded to process-crash-only
-and documented as such, not silently assumed.
+moves bytes into the OS cache and survives a process crash only — marking published at flush
+would let a machine crash lose the line with the outbox row already cleared, which is why
+the mark comes after the sync. Events are low-rate, so the sync cost is irrelevant — and if
+it ever is not, batch the sync, never skip it. If a platform cannot sync, the guarantee is
+explicitly downgraded to process-crash-only and documented as such, not silently assumed.
 
-**Delivery is at-least-once, and the file is honest about it.** A crash between flush and
-mark-published means the retry appends the same event **again** — `event_id` identifies the
-duplicate, it does not prevent it; nothing about an id makes a blind append idempotent. Two
-duties follow:
+**Delivery is at-least-once, and the file is honest about it.** The duplicate window is a
+crash **after a successful sync but before mark-published**: the line is durably on disk,
+the outbox row still says pending, so the retry appends the same event **again**. (A crash
+between flush and sync is the opposite case — the line may be *gone*, and the retry is a
+first append, not a duplicate; a test expecting a duplicate there tests the wrong window.)
+`event_id` identifies the duplicate, it does not prevent it; nothing about an id makes a
+blind append idempotent. Two duties follow:
 
 - **The publisher checks before retrying**: on startup, scan the current file's tail for the
   pending `event_id`s and skip the ones already physically present.
