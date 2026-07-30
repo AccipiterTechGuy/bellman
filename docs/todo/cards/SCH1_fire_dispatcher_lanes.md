@@ -39,11 +39,15 @@ timer heap  ──due──▶  claim in SQLite  ──▶  bounded fire queue  
      └──────────────── advance next_fire immediately, do not wait ─────────────────────────┘
 ```
 
-**On the scheduler thread, only short work:** mint `run_id`, persist the claim, enqueue the
-job, compute `next_fire`, move on. It never waits for an action.
+**On the scheduler thread, only short work:** mint `run_id`, persist the claim, **publish the
+fire** — the fresh `status.json`, the per-run reply stub, the slot fire notification, all
+small local writes — enqueue the job, compute `next_fire`, move on. It never waits for an
+action. Publication lives *here* precisely so it can never queue behind a slow action (see
+the publication rule below).
 
-**On the workers:** everything that can block — process launch, output capture, retries,
-slot/file writes.
+**On the workers: action execution only** — process launch, output capture, retries, and any
+output the *action itself* owns (e.g. a `write_slot` action's payload). Workers never publish
+firing records; if a worker is writing `status.json`, this card has been implemented wrong.
 
 ### Rules
 
