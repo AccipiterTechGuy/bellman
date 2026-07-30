@@ -101,6 +101,11 @@ When enabled:
   - **One direction only.** An app's own report always beats Bellman's inference — Bellman
     *deduced* silence, the app *knows*. Bellman must never flip an app's `completed` back to
     failed. Bellman's guesses are overridable; the app's claims are not.
+
+    The app may also revise **itself**: `failed` then `completed` on the still-open run is
+    accepted, exactly like revising a watchdog verdict. One rule covers both — the app's
+    latest terminal report wins, whatever it replaces. (Moving back to a *non-terminal*
+    state is different and is refused; it reopens a closed run. See IK3.)
   - **Only while the run is still current.** A reply for a run the folder has already moved
     past — the timer fired again — is rejected as `superseded`, not applied. Revision reaches
     back through time, never across runs.

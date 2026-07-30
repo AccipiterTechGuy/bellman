@@ -224,18 +224,32 @@ fired ─→ acknowledged ─→ running ─→ completed
 Shorter paths are all valid — `fired → completed` is a normal app that did its work between
 two watcher ticks. What is **not** valid:
 
-- **A terminal report never moves backwards.** Once the app has said `completed` or `failed`,
-  a later `running` or `acknowledged` for that same run is rejected as `reply_rejected`.
-- **A terminal report never becomes the other terminal report.** `failed` → `completed` from
-  the same app is also refused. *Decision, overturnable:* an app changing its own verdict is
-  far more likely to be a buggy writer or a stale process than a genuine correction, and the
-  cost of getting it wrong is a run whose recorded outcome contradicts the log. An app that
-  really needs to revise should fail loudly and let a human read both lines.
+- **A terminal report never moves backwards to a non-terminal one.** Once the app has said
+  `completed` or `failed`, a later `running` or `acknowledged` for that run is rejected as
+  `reply_rejected`. That is not a revised verdict — it reopens a closed run and restarts a
+  watchdog, which is a bug in the writer every time.
 - **Bellman never invents an app transition.** It records what the app wrote, plus its own
   `fired` / `no_ack` / watchdog `failed`. Nothing in between is inferred.
 
-This does **not** conflict with the revision rule below: revision overrides *Bellman's
-inference*, which Bellman deduced. It never overrides the app's own claim.
+**The app may change its own verdict.** `failed` → `completed` on the current run is
+**accepted**, and so is the reverse. Two reasons this is not the stale-writer hazard it looks
+like:
+
+- A stale process cannot reach here. Its `run_id` belongs to a previous firing and validation
+  rejects it as `superseded` before any of this applies. What remains is the same app, on the
+  run that is still open, correcting itself — far more likely a real correction than a bug.
+- Nothing is lost either way. The log is append-only, so "failed 05:15, completed 05:22"
+  survives as two lines whichever one the state ends on. Refusing the second would leave
+  `status.json` reading `failed` for a run that succeeded, which is exactly the lie R7 exists
+  to prevent.
+
+So there is **one rule, not two**: for the run that is currently open, the app's latest
+terminal report wins. It does not matter whether the state it replaces was the app's own
+report or Bellman's watchdog inference — no `failure_kind` check, no special case.
+
+The revision rule below is the same rule seen from the other side, and its one hard limit
+still holds: **Bellman never overrides the app.** A watchdog cannot flip an app's `completed`
+back to `failed`.
 
 **Nothing ever auto-completes.** A run stays open until the app closes it, and **ages** — a
 history reading "running for 3 days" is the truth, and obviously wrong to a human, without
@@ -409,10 +423,14 @@ hand-edited `run_id` is never trusted.
   line exists rather than that nothing crashed.
 - **Kill Bellman between the commit and the file write** — on restart `status.json` matches
   the database, and the run is neither duplicated nor lost.
-- Terminal is terminal: after `completed`, a later `running` is `reply_rejected`; after
-  `failed`, a later `completed` **from the same app** is also rejected — while a watchdog
-  `failed` followed by the app's `completed` still revises. Both directions asserted, because
-  they look identical from one step away.
+- **The app's latest terminal report wins, from either source.** A watchdog `failed` followed
+  by the app's `completed` revises; the app's **own** `failed` followed by its `completed`
+  also revises. Both asserted, and asserted to take the same code path — a `failure_kind`
+  check here would be the bug.
+- The one direction that does not: Bellman's watchdog never flips an app's `completed` to
+  `failed`.
+- A terminal report followed by `running` or `acknowledged` **is** rejected — that reopens a
+  closed run, which is a different thing from changing a verdict.
 - **A mid-write file is not quarantined.** Write half a JSON document, then the rest: the
   reply is accepted. Write invalid bytes and leave them: `reply_rejected` after the debounce.
 - **Watchdog arithmetic ignores the app's clock.** An app that stamps its heartbeat an hour in
