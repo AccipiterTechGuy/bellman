@@ -126,15 +126,27 @@ Two cases that follow:
 - **Orphan folders.** A crash between the database delete and the folder delete leaves a tree
   with no timer. The pruner already does orphan sweeps for slots — extend it here.
 
-## `runs/` retention — OPEN
+## `runs/` retention — decided
 
-Needs a decision before build. The hazard is not disk, it is browsability: Bellman supports
-interval timers at second resolution, so a per-minute timer produces **43,200 files in 30
-days**. A folder like that is useless to the human this tree exists for.
+Three limits, each protecting something different. All configurable.
 
-Recommended default: **keep the last 50 runs per timer, and nothing older than 30 days,
-whichever bites first.** Thirty days matches the event-log archive policy already in place;
-the count cap is what keeps the folder readable. Both configurable.
+| limit | default | protects |
+|---|---|---|
+| **Total tree size** | **1 GB** | disk. A hard ceiling — size always wins |
+| **Age** | **30 days** | staleness. Matches the event-log archive policy already in place |
+| **Runs per timer** | **50** | browsability |
+
+Order of operations when pruning: sweep by age first, then by per-timer count, then — if the
+tree is still over the ceiling — delete oldest-first across all timers until it is under.
+
+**Why the count cap is not redundant.** A run file is ~600 bytes, so a per-minute interval
+timer produces 43,200 runs ≈ **26 MB in 30 days** — 2.6% of the 1 GB ceiling. Roughly forty
+such timers would be needed before size ever triggers, and by then each folder holds tens of
+thousands of files. The size cap protects the disk; only the count cap protects the property
+this tree exists for, which is opening a folder and being able to read it.
+
+Nothing is lost to pruning: `events.current.jsonl` still records every fire. Log what was
+pruned — never silently.
 
 ## `timer.json` is readable, not authoritative
 
