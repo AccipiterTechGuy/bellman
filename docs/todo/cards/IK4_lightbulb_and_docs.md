@@ -47,6 +47,9 @@ A **"connect your own application"** section in `docs/INTEGRATION.md`:
 - `error_detection` + `expected_secs`, and that a heartbeat extends the deadline
 - what happens to a malformed reply
 - that a late reply revises the state
+- the size caps (R12), and the big-output convention: store the payload in a file the app
+  owns, reply with `result: { summary, path, sha256 }` — Bellman displays the path as text
+  and never opens it
 
 Match the existing copy-paste style — short clients a reader lifts whole. Update the four
 existing clients (Python, bash, PowerShell, Node) to cover the reply direction.

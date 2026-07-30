@@ -167,7 +167,7 @@ added there and consumed here:
 |---|---|---|
 | `acknowledged` | the app first answers | `app_name`, `expected_secs`, `error_detection` |
 | `running` | the app first enters `running` — **once**, on the state change | — |
-| `completed` | the app reports success | `duration_ms`, `result` |
+| `completed` | the app reports success | `duration_ms`, `result` (capped at 2 KB per R12 — the full 32 KB view lives in `status.json` until the next fire) |
 | `failed` | the app reports failure, or a watchdog expires | `failure_kind`, `reason` |
 | `superseded` | the timer fires again over an open run | the abandoned `run_id` |
 | `reply_rejected` | validation refuses a reply | `reason` |
@@ -407,7 +407,10 @@ Everything else:
 
 - `app_name` must match the first acker; a second app cannot take over a run.
 - `state` must be one an app may write — never `fired`, never `no_ack`, never `cancelled`.
-- Bounded payload and bounded free text; oversize ⇒ quarantine, unread.
+- Size caps per **R12**, with its numbers: 64 KB whole file (over ⇒ quarantine, unread),
+  32 KB `result` in `status.json`, 2 KB `result` on the log event, 1 KB free text — over
+  those ⇒ truncate with `result_truncated: true`, never reject. Only the whole-file cap
+  rejects; a chatty app is truncated, not silenced.
 - **R9: a reply is data, never a command.** Bellman parses, validates, logs. It must never
   launch, execute, schedule or modify anything because an app wrote it. Worst case for a
   hostile reply is one bad log line.

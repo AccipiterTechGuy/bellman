@@ -55,7 +55,8 @@ request/response **channel**. Two trees, two jobs.
   nothing accumulates — a "50 runs per timer" or size cap here would be pruning history that
   this tree, by design, does not keep. Retention belongs to the **event-log archives**
   (`rotate_and_retain` already exists): **1 GB** total hard ceiling · **30 days**, both
-  configurable. Log every prune; never silent.
+  configurable. Log every prune; never silent. Archives are gzip-compressed on rotation
+  (R12) — `events.current.jsonl` stays plain, and `log_query` + the GUI read both forms.
 - **State the window honestly.** History is findable for the retention window, not forever.
   Anywhere the README or docs describe history, say "30-day history (configurable)".
 

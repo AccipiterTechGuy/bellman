@@ -148,6 +148,42 @@ A line is durable when it is flushed, not when it is created: hold it in SQLite,
 flush, then mark it published, and retry after a failed write or a restart. `event_id` is
 already in the shape and is what makes the retry safe — republishing cannot duplicate.
 
+**The outbox must also empty.** A published row is deleted, not just marked; terminal run
+rows are pruned on the same retention schedule as the archives; the WAL is checkpointed
+periodically. Without this, the durability mechanism becomes its own unbounded growth — the
+database quietly accumulates one row per event forever while the log it protects is capped.
+
+**R12 — everything an app can send is size-capped, with numbers.**
+
+"Bounded" without a number is not a rule anyone can implement or test. House style already
+exists: `DEFAULT_OUTPUT_CAP_BYTES = 64 KB` (launch output), `DEFAULT_MAX_READ_BYTES = 256 KB`
+(slot reads). The caps:
+
+| thing | cap | over the cap |
+|---|---|---|
+| `reply.json`, whole file | **64 KB** | quarantined unread (existing rule) |
+| `result` as stored in `status.json` | **32 KB** | truncated, `result_truncated: true` |
+| `result` as carried on the log event | **2 KB** | truncated, `result_truncated: true` |
+| `reason` / `progress` free text | **1 KB** | truncated |
+| one JSONL event line, total | **4 KB** | must not happen if the above hold — assert it |
+
+The asymmetry between 32 KB and 2 KB is deliberate: `status.json` is the current run and is
+overwritten next fire, so it can afford detail; the log is append-only and keeps everything
+for the retention window, so every byte is multiplied by history. The log line keeps the
+head of the result plus the truncation flag — enough to grep, not enough to bloat.
+
+**A large output is the app's to store, not Bellman's.** The documented convention for big
+results: write the payload somewhere the app owns and reply with a summary —
+`result: { "summary": "…", "path": "/app/owned/file", "sha256": "…" }`. Under R9 the path is
+**data**: displayed as text, never opened, followed or executed by Bellman.
+
+**Archives are compressed.** `events.current.jsonl` stays plain text — grep-ability of the
+live log is a feature. Rotated archives are compressed on rotation; JSONL compresses hard
+because every line repeats the same field names, so the 1 GB ceiling holds several times the
+history. Use gzip via `flate2`, which is already in the dependency tree — do not add a
+compression crate for this. `log_query` and the Run-history GUI must read both plain and
+compressed archives.
+
 ## The shapes
 
 Every JSON Bellman writes or reads, in full. Times are UTC; the example timer fires daily at
