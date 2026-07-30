@@ -313,10 +313,142 @@ pub struct RunClaim {
     pub event_sequence: u64,
 }
 
+/// Who reported a `failed` run state (IK3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureKind {
+    /// The app said it failed.
+    Reported,
+    /// The app opted into `error_detection` and went quiet past its own
+    /// declared deadline (provisional — a late app reply may revise it).
+    TimedOut,
+}
+
+impl FailureKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Reported => "reported",
+            Self::TimedOut => "timed_out",
+        }
+    }
+
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "reported" => Some(Self::Reported),
+            "timed_out" => Some(Self::TimedOut),
+            _ => None,
+        }
+    }
+}
+
+/// The app-lifecycle state of one integration-owned run (IK3 `run_states`).
+///
+/// Created by the fire transaction with the integration owner snapshotted
+/// onto the row — validation and status projection use this snapshot, never
+/// the mutable timer configuration. App-reported fields ACCUMULATE here (a
+/// later reply that omits a field never retracts it), which is what lets
+/// `status.json` be re-projected from the database alone after a crash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunStateRow {
+    pub run_id: Uuid,
+    pub timer_id: TimerId,
+    /// Integration owner snapshotted at fire time.
+    pub app_name: String,
+    /// R5 wire state (`fired` / `acknowledged` / `running` / `completed` /
+    /// `failed` / `no_ack` / `cancelled` / `superseded`).
+    pub state: String,
+    /// Bellman wall-clock at the fire commit (duration fallback anchor).
+    pub fired_at: DateTime<Utc>,
+    /// Persisted wall-clock pickup deadline (restart recovery only); `None`
+    /// once pickup is satisfied or consumed by `no_ack`.
+    pub pickup_deadline: Option<DateTime<Utc>>,
+    pub acknowledged_at: Option<DateTime<Utc>>,
+    pub expected_secs: Option<u64>,
+    /// Accumulated `error_detection` (`None` = never mentioned).
+    pub error_detection: Option<bool>,
+    pub heartbeat_at: Option<DateTime<Utc>>,
+    pub progress: Option<String>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub failed_at: Option<DateTime<Utc>>,
+    pub reason: Option<String>,
+    pub failure_kind: Option<FailureKind>,
+    /// App result, capped at 32 KB as stored (`result_truncated` flags it).
+    pub result_json: Option<serde_json::Value>,
+    pub result_truncated: bool,
+    /// Persisted wall-clock watchdog deadline (restart recovery only).
+    pub watchdog_deadline: Option<DateTime<Utc>>,
+    pub no_ack_at: Option<DateTime<Utc>>,
+    /// Digest of the last accepted reply — an exact duplicate is a no-op.
+    pub reply_digest: Option<String>,
+    /// Transition lines already in the event log (log records transitions
+    /// only; repeated writes inside a state append nothing).
+    pub acknowledged_logged: bool,
+    pub running_logged: bool,
+}
+
+impl RunStateRow {
+    /// Fresh row at fire time, before any pickup signal.
+    pub fn fired(
+        run_id: Uuid,
+        timer_id: TimerId,
+        app_name: &str,
+        fire_state: &str,
+        fired_at: DateTime<Utc>,
+        pickup_deadline: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            run_id,
+            timer_id,
+            app_name: app_name.to_string(),
+            state: fire_state.to_string(),
+            fired_at,
+            pickup_deadline: Some(pickup_deadline),
+            acknowledged_at: None,
+            expected_secs: None,
+            error_detection: None,
+            heartbeat_at: None,
+            progress: None,
+            completed_at: None,
+            failed_at: None,
+            reason: None,
+            failure_kind: None,
+            result_json: None,
+            result_truncated: false,
+            watchdog_deadline: None,
+            no_ack_at: None,
+            reply_digest: None,
+            acknowledged_logged: false,
+            running_logged: false,
+        }
+    }
+
+    /// The R5 state of this row.
+    pub fn run_state(&self) -> Option<crate::events::RunState> {
+        crate::events::RunState::from_wire(&self.state)
+    }
+
+    /// Terminal for the app lifecycle (see [`crate::events::RunState::is_terminal`]).
+    pub fn is_terminal(&self) -> bool {
+        self.run_state().map(|s| s.is_terminal()).unwrap_or(false)
+    }
+
+    /// An app-authored closing verdict (`completed`, or `failed` the app
+    /// reported itself) — as opposed to Bellman's provisional `no_ack` /
+    /// watchdog `timed_out`, which a valid reply may still revise.
+    pub fn is_app_authored_terminal(&self) -> bool {
+        match self.run_state() {
+            Some(crate::events::RunState::Completed) => true,
+            Some(crate::events::RunState::Failed) => {
+                self.failure_kind == Some(FailureKind::Reported)
+            }
+            _ => false,
+        }
+    }
+}
+
 /// Meta bookkeeping row (single-row table).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Meta {
-    pub schema_version: i32,
+pub struct Meta {    pub schema_version: i32,
     pub last_prune: Option<DateTime<Utc>>,
     pub last_recalibration: Option<DateTime<Utc>>,
     pub tzdata_version: Option<String>,

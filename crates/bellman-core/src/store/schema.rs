@@ -4,7 +4,7 @@ use super::error::{StoreError, StoreResult};
 use rusqlite::Connection;
 
 /// Current on-disk schema version (also stored in `PRAGMA user_version` and `meta`).
-pub const SCHEMA_VERSION: i32 = 5;
+pub const SCHEMA_VERSION: i32 = 6;
 
 /// Apply pending migrations. Safe to call on every open.
 pub fn migrate(conn: &Connection) -> StoreResult<()> {
@@ -32,6 +32,9 @@ pub fn migrate(conn: &Connection) -> StoreResult<()> {
     }
     if current < 5 {
         migrate_v5(conn)?;
+    }
+    if current < 6 {
+        migrate_v6(conn)?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
@@ -203,6 +206,50 @@ fn migrate_v5(conn: &Connection) -> StoreResult<()> {
         )
         .map_err(|e| StoreError::Sqlite(format!("migrate v5 add wake_machine: {e}")))?;
     }
+    Ok(())
+}
+
+/// IK3: the app-lifecycle state of integration-owned runs (the reply channel).
+///
+/// One row per owned run, inserted by the fire transaction with the owner
+/// snapshotted onto it. `state` is an R5 wire string; `pickup_deadline` /
+/// `watchdog_deadline` are persisted wall-clock deadlines used only to rebuild
+/// the live countdowns after a restart (the active countdowns run on
+/// Bellman's monotonic clock). All app-reported fields accumulate here so
+/// `status.json` can be re-projected from the database alone.
+fn migrate_v6(conn: &Connection) -> StoreResult<()> {
+    conn.execute_batch(
+        r"
+        CREATE TABLE IF NOT EXISTS run_states (
+            run_id             TEXT PRIMARY KEY NOT NULL,
+            timer_id           TEXT NOT NULL,
+            app_name           TEXT NOT NULL,
+            state              TEXT NOT NULL,
+            fired_at           TEXT NOT NULL,
+            pickup_deadline    TEXT,
+            acknowledged_at    TEXT,
+            expected_secs      INTEGER,
+            error_detection    INTEGER,
+            heartbeat_at       TEXT,
+            progress           TEXT,
+            completed_at       TEXT,
+            failed_at          TEXT,
+            reason             TEXT,
+            failure_kind       TEXT,
+            result_json        TEXT,
+            result_truncated   INTEGER NOT NULL DEFAULT 0,
+            watchdog_deadline  TEXT,
+            no_ack_at          TEXT,
+            reply_digest       TEXT,
+            acknowledged_logged INTEGER NOT NULL DEFAULT 0,
+            running_logged      INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_run_states_timer
+            ON run_states (timer_id);
+        ",
+    )
+    .map_err(|e| StoreError::Sqlite(format!("migrate v6: {e}")))?;
     Ok(())
 }
 

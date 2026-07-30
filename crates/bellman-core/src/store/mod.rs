@@ -17,8 +17,8 @@ mod schema;
 
 pub use error::{StoreError, StoreResult};
 pub use models::{
-    Action, ClaimStatus, Meta, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy, RunClaim,
-    SlotRequestRecord, Timer, TimerId, TimerPatch, TimerUpdate,
+    Action, ClaimStatus, FailureKind, Meta, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy,
+    RunClaim, RunStateRow, SlotRequestRecord, Timer, TimerId, TimerPatch, TimerUpdate,
 };
 
 use crate::occurrence::Occurrence;
@@ -689,6 +689,130 @@ impl Store {
         }
         Ok(out)
     }
+
+    // ── Run states (IK3 reply channel) ──────────────────────────────────
+
+    /// Insert the fire-time row for an owned run (owner snapshotted).
+    pub fn insert_run_state(&self, row: &RunStateRow) -> StoreResult<()> {
+        self.conn.execute(
+            "INSERT INTO run_states (
+                run_id, timer_id, app_name, state, fired_at, pickup_deadline,
+                acknowledged_at, expected_secs, error_detection, heartbeat_at,
+                progress, completed_at, failed_at, reason, failure_kind,
+                result_json, result_truncated, watchdog_deadline, no_ack_at,
+                reply_digest, acknowledged_logged, running_logged
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, NULL, NULL,
+                       NULL, NULL, NULL, NULL, NULL,
+                       NULL, 0, NULL, NULL, NULL, 0, 0)",
+            params![
+                row.run_id.to_string(),
+                row.timer_id.to_string(),
+                row.app_name.as_str(),
+                row.state.as_str(),
+                fmt_dt(row.fired_at),
+                row.pickup_deadline.map(fmt_dt),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Fetch the app-lifecycle row for a run, if the run is integration-owned.
+    pub fn get_run_state(&self, run_id: Uuid) -> StoreResult<Option<RunStateRow>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {RUN_STATE_COLS} FROM run_states rs WHERE rs.run_id = ?1"
+        ))?;
+        let row = stmt
+            .query_row(params![run_id.to_string()], row_to_run_state)
+            .optional()?;
+        Ok(row)
+    }
+
+    /// App-lifecycle row for the timer's CURRENT run (latest by event
+    /// sequence), if that run is integration-owned.
+    pub fn current_run_state(&self, timer_id: TimerId) -> StoreResult<Option<RunStateRow>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {RUN_STATE_COLS} FROM run_states rs
+             JOIN runs r ON r.run_id = rs.run_id
+             WHERE rs.timer_id = ?1
+             ORDER BY r.event_sequence DESC, r.scheduled_for DESC, r.run_id DESC
+             LIMIT 1"
+        ))?;
+        let row = stmt
+            .query_row(params![timer_id.to_string()], row_to_run_state)
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Overwrite every mutable column of a run-state row (the accumulated
+    /// reply view, deadlines, transition flags).
+    pub fn update_run_state(&self, row: &RunStateRow) -> StoreResult<()> {
+        self.conn.execute(
+            "UPDATE run_states SET
+                state = ?2, pickup_deadline = ?3, acknowledged_at = ?4,
+                expected_secs = ?5, error_detection = ?6, heartbeat_at = ?7,
+                progress = ?8, completed_at = ?9, failed_at = ?10, reason = ?11,
+                failure_kind = ?12, result_json = ?13, result_truncated = ?14,
+                watchdog_deadline = ?15, no_ack_at = ?16, reply_digest = ?17,
+                acknowledged_logged = ?18, running_logged = ?19
+             WHERE run_id = ?1",
+            params![
+                row.run_id.to_string(),
+                row.state.as_str(),
+                row.pickup_deadline.map(fmt_dt),
+                row.acknowledged_at.map(fmt_dt),
+                row.expected_secs.map(|s| s as i64),
+                row.error_detection,
+                row.heartbeat_at.map(fmt_dt),
+                row.progress.as_deref(),
+                row.completed_at.map(fmt_dt),
+                row.failed_at.map(fmt_dt),
+                row.reason.as_deref(),
+                row.failure_kind.map(|k| k.as_str()),
+                row.result_json
+                    .as_ref()
+                    .map(serde_json::Value::to_string),
+                row.result_truncated,
+                row.watchdog_deadline.map(fmt_dt),
+                row.no_ack_at.map(fmt_dt),
+                row.reply_digest.as_deref(),
+                row.acknowledged_logged,
+                row.running_logged,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Owned runs whose pickup deadline has lapsed (`<= now`) and is still
+    /// pending — candidates for `no_ack` or a cursor-based pickup.
+    pub fn expired_pickups(&self, now: DateTime<Utc>) -> StoreResult<Vec<RunStateRow>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {RUN_STATE_COLS} FROM run_states rs
+             WHERE rs.pickup_deadline IS NOT NULL AND rs.pickup_deadline <= ?1
+             ORDER BY rs.pickup_deadline ASC, rs.run_id ASC"
+        ))?;
+        let rows = stmt.query_map(params![fmt_dt(now)], row_to_run_state)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// Runs whose opt-in watchdog deadline has lapsed (`<= now`) while the
+    /// run is still non-terminal.
+    pub fn expired_watchdogs(&self, now: DateTime<Utc>) -> StoreResult<Vec<RunStateRow>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {RUN_STATE_COLS} FROM run_states rs
+             WHERE rs.watchdog_deadline IS NOT NULL AND rs.watchdog_deadline <= ?1
+             ORDER BY rs.watchdog_deadline ASC, rs.run_id ASC"
+        ))?;
+        let rows = stmt.query_map(params![fmt_dt(now)], row_to_run_state)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
 }
 
 impl Drop for Store {
@@ -1220,6 +1344,48 @@ fn parse_opt_dt(s: Option<String>) -> StoreResult<Option<DateTime<Utc>>> {
         None => Ok(None),
         Some(s) => parse_dt(&s).map(Some),
     }
+}
+
+/// Column list for `run_states` reads (kept in one place for the joins).
+const RUN_STATE_COLS: &str = "rs.run_id, rs.timer_id, rs.app_name, rs.state, rs.fired_at,
+     rs.pickup_deadline, rs.acknowledged_at, rs.expected_secs, rs.error_detection,
+     rs.heartbeat_at, rs.progress, rs.completed_at, rs.failed_at, rs.reason,
+     rs.failure_kind, rs.result_json, rs.result_truncated, rs.watchdog_deadline,
+     rs.no_ack_at, rs.reply_digest, rs.acknowledged_logged, rs.running_logged";
+
+fn row_to_run_state(r: &rusqlite::Row<'_>) -> rusqlite::Result<RunStateRow> {
+    let conv = |i: usize, msg: String| {
+        rusqlite::Error::FromSqlConversionFailure(i, rusqlite::types::Type::Text, msg.into())
+    };
+    let run_id_s: String = r.get(0)?;
+    let timer_id_s: String = r.get(1)?;
+    let fired_s: String = r.get(4)?;
+    let result_s: Option<String> = r.get(15)?;
+    let failure_s: Option<String> = r.get(14)?;
+    Ok(RunStateRow {
+        run_id: Uuid::parse_str(&run_id_s).map_err(|e| conv(0, e.to_string()))?,
+        timer_id: Uuid::parse_str(&timer_id_s).map_err(|e| conv(1, e.to_string()))?,
+        app_name: r.get(2)?,
+        state: r.get(3)?,
+        fired_at: parse_dt(&fired_s).map_err(|e| conv(4, e.to_string()))?,
+        pickup_deadline: parse_opt_dt(r.get(5)?).map_err(|e| conv(5, e.to_string()))?,
+        acknowledged_at: parse_opt_dt(r.get(6)?).map_err(|e| conv(6, e.to_string()))?,
+        expected_secs: r.get::<_, Option<i64>>(7)?.map(|s| s.max(0) as u64),
+        error_detection: r.get(8)?,
+        heartbeat_at: parse_opt_dt(r.get(9)?).map_err(|e| conv(9, e.to_string()))?,
+        progress: r.get(10)?,
+        completed_at: parse_opt_dt(r.get(11)?).map_err(|e| conv(11, e.to_string()))?,
+        failed_at: parse_opt_dt(r.get(12)?).map_err(|e| conv(12, e.to_string()))?,
+        reason: r.get(13)?,
+        failure_kind: failure_s.and_then(|s| FailureKind::from_wire(&s)),
+        result_json: result_s.and_then(|s| serde_json::from_str(&s).ok()),
+        result_truncated: r.get(16)?,
+        watchdog_deadline: parse_opt_dt(r.get(17)?).map_err(|e| conv(17, e.to_string()))?,
+        no_ack_at: parse_opt_dt(r.get(18)?).map_err(|e| conv(18, e.to_string()))?,
+        reply_digest: r.get(19)?,
+        acknowledged_logged: r.get(20)?,
+        running_logged: r.get(21)?,
+    })
 }
 
 // Occurrence does not expose valid_from/valid_until/max_runs getters yet —
