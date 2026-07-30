@@ -42,6 +42,7 @@ everything about one timer. Both present on every message where they apply.
 | `completed` | **the app** | yes |
 | `failed` | **the app** | yes |
 | `no_ack` | Bellman — nobody picked it up | yes |
+| `timed_out` | Bellman — only if the app set `error_detection` | yes (late replies still accepted) |
 | `skipped_misfire`, `coalesced`, `pruned`, `wake_*`, `year_recalibrate` | Bellman | as today |
 
 **R6 — readers stay tolerant.** Unknown fields ignored, never `deny_unknown_fields`
@@ -59,10 +60,33 @@ An unfinished run is not `failed` — `failed` means the app *said* it failed. I
 `running` and **ages**, so the history reads "running for 3 days", which is the truth and is
 obviously wrong to a human without Bellman pretending to know why.
 
-**R8 — the app's estimate is advisory only.** An app may declare `expected_secs` when it
-acknowledges. Bellman displays it — "running, overdue: 47m elapsed, expected 10m" — and
-**never acts on it**. It never kills, never marks failed, never closes a run. It is computed
-at read time, so it costs no timer and no wakeup.
+**R8 — the estimate is advisory unless the app OPTS IN to a watchdog.**
+
+By default `expected_secs` is display-only: "running, overdue — 47m elapsed, expected 10m".
+Bellman never acts on it. Guessing another program's duration is not Bellman's business.
+
+But an app may set **`error_detection: true`** in its reply, and that changes the contract:
+the app is **consenting** to be watched against a deadline **it declared itself**. That is
+not Bellman guessing — it is the app asking. Default is `false`; silence means advisory.
+
+When enabled:
+
+- **Deadline = `expected_secs × factor`**, configurable, default forgiving (≈2×). Failing at
+  exactly the stated second means every app pads its estimate and the field becomes fiction.
+- **A heartbeat restarts the countdown.** An app reporting progress is alive and must not be
+  timed out. This is what makes heartbeats worth sending.
+- **The outcome is `timed_out`, not `failed`.** We do not know the work failed — the
+  reporting went quiet. Three distinct not-success endings keep the log honest:
+  `failed` (the app said so) · `timed_out` (its own deadline passed in silence) ·
+  `no_ack` (nobody ever picked it up).
+- **Marking is not killing.** Bellman flags the run; it does not terminate the process. If
+  Bellman launched it, killing may be a separate opt-in later — a different decision that
+  must not ride along silently with this one.
+- **A late reply is accepted.** `completed` arriving after `timed_out` is taken and logged as
+  late. Same rule as a late ack: better a late truth than a permanent lie.
+
+Cheap to implement precisely because Bellman is a scheduler — a watchdog deadline is one
+entry in the heap it already runs.
 
 **R9 — a reply is data, never a command.** Bellman parses, validates and logs it. It must
 never launch, execute, schedule or modify anything because an app said so. Worst case for a
