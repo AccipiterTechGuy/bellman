@@ -1,9 +1,21 @@
-//! JSONL appender, weekly rotation, archive retention.
+//! JSONL appender, weekly + size-triggered rotation, gzip archives, retention.
+//!
+//! Rotation (IK2 / R12): `events.current.jsonl` stays plain text — grep-ability
+//! of the live log is a feature. It rotates at the ISO-week boundary (the
+//! weekly prune) **or before an append would take it past
+//! `max_current_bytes`** (default 64 MiB), whichever comes first. Rotated
+//! archives are gzip-compressed (`events-<YYYY>-W<ww>[.N].jsonl.gz`); readers
+//! transparently read both plain (legacy) and compressed archives.
+//!
+//! Retention: archives older than `retention` are removed first, then oldest
+//! archives until `current + archives` fits `budget_bytes` (default 1 GiB).
+//! The live current file is never deleted. Every removal is returned to the
+//! caller so it can be logged — never silent.
 
 use super::record::EventRecord;
 use chrono::{Datelike, Utc};
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -13,6 +25,12 @@ pub const CURRENT_FILE_NAME: &str = "events.current.jsonl";
 /// Default archive retention (product: last 30 days of fired events).
 pub const DEFAULT_RETENTION_DAYS: u64 = 30;
 
+/// Default size cap for the live current file — rotate before crossing it.
+pub const DEFAULT_MAX_CURRENT_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Default retained-log budget: current + final archives stay within 1 GiB.
+pub const DEFAULT_BUDGET_BYTES: u64 = 1024 * 1024 * 1024;
+
 /// Configuration for [`EventLog`].
 #[derive(Debug, Clone)]
 pub struct EventLogConfig {
@@ -20,6 +38,10 @@ pub struct EventLogConfig {
     pub logs_dir: PathBuf,
     /// Archive retention window.
     pub retention: Duration,
+    /// Rotate before an append would take the current file past this size.
+    pub max_current_bytes: u64,
+    /// Retained-log budget for current + final archives.
+    pub budget_bytes: u64,
 }
 
 impl EventLogConfig {
@@ -28,11 +50,23 @@ impl EventLogConfig {
         Self {
             logs_dir: logs_dir.into(),
             retention: Duration::from_secs(DEFAULT_RETENTION_DAYS * 24 * 60 * 60),
+            max_current_bytes: DEFAULT_MAX_CURRENT_BYTES,
+            budget_bytes: DEFAULT_BUDGET_BYTES,
         }
     }
 
     pub fn with_retention(mut self, retention: Duration) -> Self {
         self.retention = retention;
+        self
+    }
+
+    pub fn with_max_current_bytes(mut self, bytes: u64) -> Self {
+        self.max_current_bytes = bytes;
+        self
+    }
+
+    pub fn with_budget_bytes(mut self, bytes: u64) -> Self {
+        self.budget_bytes = bytes;
         self
     }
 }
@@ -68,12 +102,33 @@ impl From<serde_json::Error> for EventLogError {
 
 pub type EventLogResult<T> = Result<T, EventLogError>;
 
-/// Append-only JSONL event log with weekly rotation and archive retention.
+/// What retention removed in one pass (the caller logs this — never silent).
+#[derive(Debug, Clone, Default)]
+pub struct RetainReport {
+    /// Archives removed because their mtime aged past the retention window.
+    pub aged: Vec<PathBuf>,
+    /// Oldest-first archives removed to fit the retained-log budget.
+    pub budget: Vec<PathBuf>,
+    /// Total bytes freed across both passes.
+    pub bytes_removed: u64,
+}
+
+impl RetainReport {
+    pub fn removed_count(&self) -> usize {
+        self.aged.len() + self.budget.len()
+    }
+}
+
+/// Append-only JSONL event log with weekly + size-triggered rotation, gzip
+/// archives and age/budget retention.
 ///
 /// - **Append**: one self-contained line; flush after write; no per-line fsync.
-/// - **Rotate**: atomic rename of current → `archive/events-<ISO-week>.jsonl`,
-///   then open a fresh current file (sync of the old file happens before rename).
-/// - **Retain**: delete archive files whose mtime is older than `retention`.
+/// - **Rotate**: sync + rename current → plain staging archive, gzip the
+///   staging file to `events-<ISO-week>[.N].jsonl.gz`, then remove the staging
+///   file. A crash leaves the plain staging archive in place — readers read
+///   both forms, so rotation never opens a hole in history.
+/// - **Retain**: delete archives older than `retention`, then oldest archives
+///   until current + archives fit `budget_bytes`. Current is never deleted.
 pub struct EventLog {
     config: EventLogConfig,
     /// Open append handle for the current file (lazy).
@@ -111,7 +166,45 @@ impl EventLog {
     }
 
     /// Append one event as a single JSON line and flush (no fsync).
+    ///
+    /// Size trigger: when the line would take the current file past
+    /// `max_current_bytes`, the log rotates (and retains) **before** writing
+    /// the line, so the live file never crosses the threshold except for a
+    /// single oversized line. The rotation is recorded as a `pruned` event on
+    /// the fresh current file — never silent.
     pub fn append(&mut self, record: &EventRecord) -> EventLogResult<()> {
+        let mut line = serde_json::to_string(record)?;
+        line.push('\n');
+        self.ensure_open()?;
+        let current_len = self
+            .file
+            .as_ref()
+            .and_then(|f| f.metadata().ok())
+            .map_or(0, |m| m.len());
+        if current_len > 0 && current_len + line.len() as u64 > self.config.max_current_bytes {
+            let (archived, report) = self.rotate_and_retain()?;
+            let rotation_note = EventRecord::new(super::record::RunState::Pruned)
+                .with_message("log_rotation")
+                .with_detail(serde_json::json!({
+                    "reason": "size_threshold",
+                    "max_current_bytes": self.config.max_current_bytes,
+                    "archived": archived.as_ref().map(|p| p.display().to_string()),
+                    "archives_removed": report.removed_count(),
+                    "bytes_removed": report.bytes_removed,
+                }));
+            // Append directly: current is fresh and empty, no recursion risk.
+            self.append_direct(&rotation_note)?;
+        }
+        self.append_direct(record)
+    }
+
+    /// Builder-style append (moves the record so call sites can chain builders).
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn emit(&mut self, record: EventRecord) -> EventLogResult<()> {
+        self.append(&record)
+    }
+
+    fn append_direct(&mut self, record: &EventRecord) -> EventLogResult<()> {
         let mut line = serde_json::to_string(record)?;
         line.push('\n');
         self.ensure_open()?;
@@ -124,20 +217,11 @@ impl EventLog {
         Ok(())
     }
 
-    /// Builder-style append (moves the record so call sites can chain builders).
-    #[allow(clippy::needless_pass_by_value)]
-    pub fn emit(&mut self, record: EventRecord) -> EventLogResult<()> {
-        self.append(&record)
-    }
-
-    /// Weekly rotation: sync + atomic rename current → dated archive, open fresh.
+    /// Rotation: sync + rename current → plain staging archive, gzip it to
+    /// `events-<YYYY>-W<ww>[.N].jsonl.gz`, remove the staging file, open fresh.
     ///
-    /// Archive name: `events-<YYYY>-W<WW>.jsonl` (ISO week, zero-padded).
-    /// If that archive name already exists (re-rotate same week), a numeric
-    /// suffix is added: `events-2026-W31.2.jsonl`.
-    ///
-    /// Returns the archive path, or `None` when the current file was empty /
-    /// missing (still ensures a fresh empty current file exists).
+    /// Returns the compressed archive path, or `None` when the current file
+    /// was empty / missing (still ensures a fresh empty current file exists).
     pub fn rotate(&mut self) -> EventLogResult<Option<PathBuf>> {
         // Drop the open handle so rename is uncontested.
         if let Some(file) = self.file.take() {
@@ -159,54 +243,116 @@ impl EventLog {
 
         let archive_dir = self.archive_dir();
         fs::create_dir_all(&archive_dir)?;
-        let archive_path = unique_archive_path(&archive_dir, Utc::now())?;
+        let staging = unique_archive_path(&archive_dir, Utc::now())?;
 
-        // Atomic same-filesystem rename.
-        fs::rename(&current, &archive_path)?;
+        // Atomic same-filesystem rename to the plain staging name. Readers
+        // include plain archives, so a crash from here on loses nothing.
+        fs::rename(&current, &staging)?;
         // Best-effort fsync of the directory for durability of the rename.
         if let Ok(dir) = File::open(&archive_dir) {
             let _ = dir.sync_all();
         }
 
+        // Compress staging → temp gzip → rename to final, then drop staging.
+        let final_path = gz_path_for(&staging);
+        let tmp_gz = archive_dir.join(format!(
+            ".{}.tmp",
+            final_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "archive.jsonl.gz".into())
+        ));
+        gzip_file(&staging, &tmp_gz)?;
+        fs::rename(&tmp_gz, &final_path)?;
+        fs::remove_file(&staging)?;
+        if let Ok(dir) = File::open(&archive_dir) {
+            let _ = dir.sync_all();
+        }
+
         self.ensure_open()?;
-        Ok(Some(archive_path))
+        Ok(Some(final_path))
     }
 
-    /// Delete archive files whose mtime is older than the configured retention.
+    /// Retention pass: age out old archives, then enforce the byte budget.
     ///
-    /// Returns the number of files removed.
-    pub fn retain(&self) -> EventLogResult<usize> {
+    /// Returns the report of everything removed (the caller logs it).
+    pub fn retain(&self) -> EventLogResult<RetainReport> {
+        let mut report = RetainReport::default();
         let archive_dir = self.archive_dir();
         if !archive_dir.exists() {
-            return Ok(0);
+            return Ok(report);
         }
+
+        self.clean_strays(&archive_dir)?;
+
+        // 1. Age: archives (plain or compressed) older than retention.
         let cutoff = SystemTime::now()
             .checked_sub(self.config.retention)
             .unwrap_or(SystemTime::UNIX_EPOCH);
-        let mut removed = 0usize;
         for entry in fs::read_dir(&archive_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if !name.starts_with("events-") || !name.ends_with(".jsonl") {
+            if !is_archive_file(&path) {
                 continue;
             }
             let meta = entry.metadata()?;
             let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
             if mtime < cutoff {
+                report.bytes_removed += meta.len();
                 fs::remove_file(&path)?;
-                removed += 1;
+                report.aged.push(path);
             }
         }
-        Ok(removed)
+
+        // 2. Budget: current + archives must fit; oldest archives go first.
+        //    The live current file is never deleted.
+        let mut archives = list_archives(&archive_dir)?;
+        // Oldest first: mtime, then name for stability.
+        archives.sort_by(|a, b| {
+            let ma = a.1;
+            let mb = b.1;
+            ma.cmp(&mb).then_with(|| a.0.cmp(&b.0))
+        });
+        let mut total: u64 = archives.iter().map(|(_, _, len)| *len).sum();
+        total += fs::metadata(self.current_path()).map_or(0, |m| m.len());
+        for (path, _, len) in archives {
+            if total <= self.config.budget_bytes {
+                break;
+            }
+            fs::remove_file(&path)?;
+            total = total.saturating_sub(len);
+            report.bytes_removed += len;
+            report.budget.push(path);
+        }
+
+        Ok(report)
+    }
+
+    /// Remove interrupted-rotation strays: partial gzip temps, and a plain
+    /// staging archive whose compressed twin already exists (crash between
+    /// the final rename and the staging cleanup).
+    fn clean_strays(&self, archive_dir: &Path) -> EventLogResult<()> {
+        for entry in fs::read_dir(archive_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') && name.ends_with(".tmp") {
+                let _ = fs::remove_file(&path);
+                continue;
+            }
+            if name.starts_with("events-") && name.ends_with(".jsonl") {
+                let gz = gz_path_for(&path);
+                if gz.exists() {
+                    let _ = fs::remove_file(&path);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Rotate then retain — the weekly prune step for the JSONL side.
-    pub fn rotate_and_retain(&mut self) -> EventLogResult<(Option<PathBuf>, usize)> {
+    pub fn rotate_and_retain(&mut self) -> EventLogResult<(Option<PathBuf>, RetainReport)> {
         let archived = self.rotate()?;
         let removed = self.retain()?;
         Ok((archived, removed))
@@ -228,17 +374,69 @@ impl EventLog {
     }
 }
 
+/// True for `events-*.jsonl` / `events-*.jsonl.gz` archive files (never the
+/// live current file, never temps).
+fn is_archive_file(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| {
+                n.starts_with("events-") && (n.ends_with(".jsonl") || n.ends_with(".jsonl.gz"))
+            })
+}
+
+/// Archive files with (path, mtime, len).
+fn list_archives(archive_dir: &Path) -> EventLogResult<Vec<(PathBuf, SystemTime, u64)>> {
+    let mut out = Vec::new();
+    for entry in fs::read_dir(archive_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !is_archive_file(&path) {
+            continue;
+        }
+        let meta = entry.metadata()?;
+        let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        out.push((path, mtime, meta.len()));
+    }
+    Ok(out)
+}
+
+/// `events-….jsonl` → `events-….jsonl.gz`.
+fn gz_path_for(plain: &Path) -> PathBuf {
+    let mut name = plain
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    name.push_str(".gz");
+    plain.with_file_name(name)
+}
+
+/// Stream-compress `src` to `dst` (gzip), fsyncing the result.
+fn gzip_file(src: &Path, dst: &Path) -> EventLogResult<()> {
+    let input = File::open(src)?;
+    let output = File::create(dst)?;
+    let mut encoder = flate2::write::GzEncoder::new(BufWriter::new(output), flate2::Compression::default());
+    io::copy(&mut BufReader::new(input), &mut encoder)?;
+    let writer = encoder.finish()?;
+    let file = writer
+        .into_inner()
+        .map_err(|e| EventLogError::Io(e.to_string()))?;
+    file.sync_all()?;
+    Ok(())
+}
+
 /// Build `archive_dir/events-YYYY-Www.jsonl`, adding `.N` before `.jsonl` on clash.
 fn unique_archive_path(archive_dir: &Path, now: chrono::DateTime<Utc>) -> EventLogResult<PathBuf> {
     let iso = now.iso_week();
     let base = format!("events-{}-W{:02}", iso.year(), iso.week());
     let candidate = archive_dir.join(format!("{base}.jsonl"));
-    if !candidate.exists() {
+    if !candidate.exists() && !gz_path_for(&candidate).exists() {
         return Ok(candidate);
     }
     for n in 2u32..10_000 {
         let candidate = archive_dir.join(format!("{base}.{n}.jsonl"));
-        if !candidate.exists() {
+        if !candidate.exists() && !gz_path_for(&candidate).exists() {
             return Ok(candidate);
         }
     }

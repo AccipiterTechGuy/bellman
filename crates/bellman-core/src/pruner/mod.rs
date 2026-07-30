@@ -52,6 +52,10 @@ pub struct PruneConfig {
     pub interval: Duration,
     /// Grace after a terminal fire/skip before the one-shot may be deleted.
     pub ack_grace: Duration,
+    /// Rotate the live log before an append would cross this size.
+    pub max_current_bytes: u64,
+    /// Retained-log budget: current + final archives stay within this.
+    pub budget_bytes: u64,
 }
 
 impl Default for PruneConfig {
@@ -60,6 +64,8 @@ impl Default for PruneConfig {
             retention: Duration::from_secs(30 * 24 * 60 * 60),
             interval: DEFAULT_PRUNE_INTERVAL,
             ack_grace: DEFAULT_ACK_GRACE,
+            max_current_bytes: crate::events::DEFAULT_MAX_CURRENT_BYTES,
+            budget_bytes: crate::events::DEFAULT_BUDGET_BYTES,
         }
     }
 }
@@ -69,12 +75,14 @@ impl Default for PruneConfig {
 pub struct PruneReport {
     /// Archive path created by rotation (if current was non-empty).
     pub archived: Option<std::path::PathBuf>,
-    /// Number of archive files removed by retention.
+    /// Number of archive files removed by retention (age + budget).
     pub archives_removed: usize,
     /// One-shot timers deleted.
     pub timers_pruned: usize,
     /// Ids of deleted timers (order of deletion).
     pub pruned_timer_ids: Vec<TimerId>,
+    /// Orphan timer folders removed by the tree sweep.
+    pub orphan_folders_removed: usize,
     /// True when this pass was a no-op because prune was not yet due.
     pub skipped_not_due: bool,
 }
@@ -197,7 +205,13 @@ pub fn prune_is_due(last_prune: Option<DateTime<Utc>>, now: DateTime<Utc>, inter
 }
 
 /// Run the full prune pass: JSONL rotate+retain, terminal one-shot deletion,
-/// tombstones, stamp `last_prune`.
+/// tombstones, timer-folder orphan sweep + reconciliation, stamp `last_prune`.
+///
+/// `tree` (when given) is the per-timer folder view root: pruned one-shots
+/// lose their folder, orphans (folders with no database timer — a crash
+/// between the database delete and the folder delete) are swept, and every
+/// live timer's folder/`timer.json` is reconciled. Every removal is logged
+/// as a `pruned` event — never silent.
 ///
 /// When `force` is false, returns early with `skipped_not_due` if not due.
 pub fn run_prune(
@@ -206,6 +220,7 @@ pub fn run_prune(
     config: &PruneConfig,
     now: DateTime<Utc>,
     force: bool,
+    tree: Option<&crate::tree::TimersTree>,
 ) -> PruneResult<PruneReport> {
     let meta = store.meta()?;
     if !force && !prune_is_due(meta.last_prune, now, config.interval) {
@@ -215,19 +230,31 @@ pub fn run_prune(
         });
     }
 
-    // Align event-log retention with the prune config for this pass.
-    // EventLogConfig is owned by EventLog — rotate_and_retain uses the open log's
-    // retention; callers should open with the right retention. We still call
-    // rotate_and_retain here.
-    let (archived, archives_removed) = event_log
+    let (archived, retain) = event_log
         .rotate_and_retain()
         .map_err(|e| PruneError::EventLog(e.to_string()))?;
+    // Log every archive prune — never silent.
+    if retain.removed_count() > 0 {
+        let note = EventRecord::new(RunState::Pruned)
+            .with_logged_at(now)
+            .with_message("log_retention")
+            .with_detail(serde_json::json!({
+                "reason": "log_retention",
+                "aged_out": retain.aged.len(),
+                "budget_pruned": retain.budget.len(),
+                "bytes_removed": retain.bytes_removed,
+            }));
+        event_log
+            .append(&note)
+            .map_err(|e| PruneError::EventLog(e.to_string()))?;
+    }
 
     let mut report = PruneReport {
         archived,
-        archives_removed,
+        archives_removed: retain.removed_count(),
         timers_pruned: 0,
         pruned_timer_ids: Vec::new(),
+        orphan_folders_removed: 0,
         skipped_not_due: false,
     };
 
@@ -245,6 +272,13 @@ pub fn run_prune(
             let _ = store.clear_timer_owner(id);
             report.timers_pruned = report.timers_pruned.saturating_add(1);
             report.pruned_timer_ids.push(id);
+            // Terminal one-shots have no open claim, so no `cancelled` event
+            // is owed here; just drop the folder view.
+            if let Some(tree) = tree {
+                if let Err(e) = tree.remove_for(id) {
+                    eprintln!("bellman: timer folder remove failed for {id}: {e}");
+                }
+            }
             let tomb = EventRecord::new(RunState::Pruned)
                 .with_logged_at(now)
                 .with_timer(id, name)
@@ -256,6 +290,36 @@ pub fn run_prune(
             event_log
                 .append(&tomb)
                 .map_err(|e| PruneError::EventLog(e.to_string()))?;
+        }
+    }
+
+    // Folder tree maintenance: sweep orphans, then reconcile the view.
+    if let Some(tree) = tree {
+        let live_ids: std::collections::HashSet<TimerId> = store
+            .list_timers()?
+            .iter()
+            .map(|t| t.id)
+            .collect();
+        match tree.sweep_orphans(&live_ids) {
+            Ok(removed) => {
+                report.orphan_folders_removed = removed.len();
+                for folder in removed {
+                    let note = EventRecord::new(RunState::Pruned)
+                        .with_logged_at(now)
+                        .with_message("orphan_timer_folder")
+                        .with_detail(serde_json::json!({
+                            "reason": "orphan_folder",
+                            "folder": folder.display().to_string(),
+                        }));
+                    event_log
+                        .append(&note)
+                        .map_err(|e| PruneError::EventLog(e.to_string()))?;
+                }
+            }
+            Err(e) => eprintln!("bellman: timer folder orphan sweep failed: {e}"),
+        }
+        if let Err(e) = crate::tree::reconcile_folders(tree, store) {
+            eprintln!("bellman: timer folder reconcile failed: {e}");
         }
     }
 
@@ -272,10 +336,14 @@ pub fn run_prune_under(
     force: bool,
 ) -> PruneResult<PruneReport> {
     let mut log = EventLog::open(
-        EventLogConfig::new(data_dir.join("logs")).with_retention(config.retention),
+        EventLogConfig::new(data_dir.join("logs"))
+            .with_retention(config.retention)
+            .with_max_current_bytes(config.max_current_bytes)
+            .with_budget_bytes(config.budget_bytes),
     )
     .map_err(|e| PruneError::EventLog(e.to_string()))?;
-    run_prune(store, &mut log, config, now, force)
+    let tree = crate::tree::TimersTree::new(data_dir);
+    run_prune(store, &mut log, config, now, force, Some(&tree))
 }
 
 /// Terminal-state one-shot eligible for deletion?
