@@ -38,7 +38,7 @@ bellman slot-submit request.json --slots ~/.bellman/slots --db ~/.bellman/timers
   "schema": "bellman-slot/1",
   "slot_id": "0001",
   "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "ts": "2026-07-27T12:00:00Z",
+  "logged_at": "2026-07-27T12:00:00Z",
   "operation": "add",
   "payload": {
     "app_name": "my-app",
@@ -56,7 +56,7 @@ bellman slot-submit request.json --slots ~/.bellman/slots --db ~/.bellman/timers
 | `schema` | yes | must be `bellman-slot/1` (or major 1) |
 | `slot_id` | filled by Bellman / free stub | reserved id; must match the filename |
 | `request_id` | yes | UUID string; idempotency key |
-| `ts` | optional | producer timestamp |
+| `logged_at` | optional | producer timestamp |
 | `operation` | yes | `add` \| `modify` \| `delete` |
 | `payload.app_name` | yes | ownership identity |
 | `payload.timer_name` | add | display name |
@@ -88,13 +88,35 @@ bellman slot-submit request.json --slots ~/.bellman/slots --db ~/.bellman/timers
   "request_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "ok",
   "timer_id": "…",
-  "next_fire": "2026-07-28T08:00:00Z",
+  "next_fire_at": "2026-07-28T08:00:00Z",
   "events": []
 }
 ```
 
 On error: `"status": "error"` plus `"error": "…"`. Garbage input is quarantined
 into `bad/` with a `.err.json` sidecar (not a normal response).
+
+Each entry in `events` is one un-acked run:
+
+```json
+{
+  "event_sequence": 3,
+  "run_id": "…",
+  "timer_id": "…",
+  "scheduled_for": "2026-07-28T08:00:00Z",
+  "status": "fired",
+  "claimed_at": "2026-07-28T08:00:01Z",
+  "completed_at": null
+}
+```
+
+`status` uses the one run-state vocabulary shared with the event log
+(`RunState`): `fired` means the run is open, `wake_delivered` / `wake_failed`
+report how Bellman's wake action ended. The app-reported states
+(`acknowledged`, `running`, `completed`, `failed`) arrive with the reply
+channel — Bellman never writes them itself. Ack entries by sending any
+request for that timer with `payload.ack_through` set to the highest
+`event_sequence` seen.
 
 ---
 
@@ -164,10 +186,34 @@ execFileSync("bellman", args, {stdio:"inherit"});
 ## Event log
 
 Lifecycle events append to `logs/events.current.jsonl` (one JSON object per
-line). Kinds: `registered`, `fired`, `fired_late`, `skipped_misfire`,
-`coalesced`, `wake_delivered`, `wake_failed`, `no_ack`, `pruned`,
-`year_recalibrate`. Weekly rotation renames the current file to
-`logs/archive/events-<ISO-week>.jsonl`; archives older than 30 days are deleted.
+line, `bellman-event/1`):
+
+```json
+{"schema":"bellman-event/1","logged_at":"2026-07-28T08:00:01Z","kind":"fired","event_id":"…","timer_id":"…","run_id":"…","timer_name":"morning-wake","scheduled_for":"2026-07-28T08:00:00Z"}
+```
+
+Top-level `kind` is always the **event kind**, from the one R5 run-state
+vocabulary shared with the slot run-event feed: `registered`, `fired`,
+`fired_late`, `skipped_misfire`, `coalesced`, `wake_delivered`, `wake_failed`,
+`no_ack`, `pruned`, `year_recalibrate` are written by Bellman;
+`acknowledged`, `running`, `completed`, `failed` are reserved for app reports
+(reply channel). Timestamps end `_at` (`logged_at`); `scheduled_for` is the
+one exception — it is an intent, not an occurrence. Weekly rotation renames
+the current file to `logs/archive/events-<ISO-week>.jsonl`; archives older
+than 30 days are deleted.
+
+## Fire notification (write-output-slot action)
+
+A timer whose action is **write output slot** publishes one JSON per firing
+into the configured output directory (`bellman-fire/1`):
+
+```json
+{"schema":"bellman-fire/1","kind":"fired","timer_id":"…","timer_name":"morning-wake","run_id":"…","scheduled_for":"2026-07-28T08:00:00Z","fired_at":"2026-07-28T08:00:01Z","occurrence_kind":"on_time"}
+```
+
+`kind` is the event kind (`fired` / `fired_late` / `coalesced`) — the same
+vocabulary as the event log. `occurrence_kind` describes the occurrence:
+`on_time` | `late` | `coalesced` | `catch_up_<n>`.
 
 Wake actions: **launch** (arg array, no shell, `BELLMAN_RUN_ID` env, timeout
 kill, output cap), **write-output-slot**, **desktop notification** (stub until

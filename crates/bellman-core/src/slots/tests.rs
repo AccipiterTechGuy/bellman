@@ -104,7 +104,7 @@ fn add_modify_delete_round_trip() {
         schema: SCHEMA_V1.to_string(),
         slot_id: String::new(),
         request_id: Some(Uuid::new_v4().to_string()),
-        ts: Some(Utc::now()),
+        logged_at: Some(Utc::now()),
         operation: Some(SlotOperation::Modify),
         payload: Some(serde_json::json!({
             "app_name": "app-a",
@@ -125,7 +125,7 @@ fn add_modify_delete_round_trip() {
         schema: SCHEMA_V1.to_string(),
         slot_id: String::new(),
         request_id: Some(Uuid::new_v4().to_string()),
-        ts: Some(Utc::now()),
+        logged_at: Some(Utc::now()),
         operation: Some(SlotOperation::Delete),
         payload: Some(serde_json::json!({
             "app_name": "app-b",
@@ -150,7 +150,7 @@ fn add_modify_delete_round_trip() {
         schema: SCHEMA_V1.to_string(),
         slot_id: String::new(),
         request_id: Some(Uuid::new_v4().to_string()),
-        ts: Some(Utc::now()),
+        logged_at: Some(Utc::now()),
         operation: Some(SlotOperation::Delete),
         payload: Some(serde_json::json!({
             "app_name": "app-a",
@@ -478,7 +478,7 @@ fn unknown_fields_are_tolerated() {
         "schema": SCHEMA_V1,
         "slot_id": stub.slot_id,
         "request_id": rid,
-        "ts": Utc::now(),
+        "logged_at": Utc::now(),
         "operation": "add",
         "future_field": 123,
         "payload": {
@@ -516,7 +516,7 @@ fn output_includes_run_events_from_runs_table() {
         schema: SCHEMA_V1.to_string(),
         slot_id: String::new(),
         request_id: Some(Uuid::new_v4().to_string()),
-        ts: Some(Utc::now()),
+        logged_at: Some(Utc::now()),
         operation: Some(SlotOperation::Modify),
         payload: Some(serde_json::json!({
             "app_name": "app-a",
@@ -585,7 +585,7 @@ fn concurrent_duplicate_request_id_single_side_effect() {
             schema: SCHEMA_V1.to_string(),
             slot_id: stub.slot_id,
             request_id: Some(rid.clone()),
-            ts: Some(Utc::now()),
+            logged_at: Some(Utc::now()),
             operation: Some(SlotOperation::Add),
             payload: Some(serde_json::json!({
                 "app_name": "app-dup",
@@ -690,7 +690,7 @@ fn unacked_events_drain_via_ack_through() {
         schema: SCHEMA_V1.to_string(),
         slot_id: String::new(),
         request_id: Some(Uuid::new_v4().to_string()),
-        ts: Some(Utc::now()),
+        logged_at: Some(Utc::now()),
         operation: Some(SlotOperation::Modify),
         payload: Some(serde_json::json!({
             "app_name": "app-a",
@@ -714,7 +714,7 @@ fn unacked_events_drain_via_ack_through() {
         schema: SCHEMA_V1.to_string(),
         slot_id: String::new(),
         request_id: Some(Uuid::new_v4().to_string()),
-        ts: Some(Utc::now()),
+        logged_at: Some(Utc::now()),
         operation: Some(SlotOperation::Modify),
         payload: Some(serde_json::json!({
             "app_name": "app-a",
@@ -818,7 +818,7 @@ fn slot_id_path_traversal_quarantined_no_escape_write() {
         schema: SCHEMA_V1.to_string(),
         slot_id: "slot-x/../../../escaped".into(),
         request_id: Some(rid.clone()),
-        ts: Some(Utc::now()),
+        logged_at: Some(Utc::now()),
         operation: Some(SlotOperation::Add),
         payload: Some(serde_json::json!({
             "app_name": "evil",
@@ -907,7 +907,7 @@ fn cross_slot_id_forge_cannot_overwrite_foreign_done() {
         schema: SCHEMA_V1.to_string(),
         slot_id: victim_id.clone(), // forge foreign slot
         request_id: Some(rid_b),
-        ts: Some(Utc::now()),
+        logged_at: Some(Utc::now()),
         operation: Some(SlotOperation::Add),
         payload: Some(serde_json::json!({
             "app_name": "forger",

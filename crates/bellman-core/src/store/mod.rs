@@ -290,14 +290,25 @@ impl Store {
         }
     }
 
-    /// Mark a previously claimed run as completed.
+    /// Mark a previously claimed run as completed (wake action delivered).
     pub fn complete_run(&mut self, run_id: Uuid) -> StoreResult<RunClaim> {
+        self.finish_run(run_id, ClaimStatus::Completed)
+    }
+
+    /// Mark a previously claimed run as wake-failed (action failed after
+    /// retries). Terminal for recovery like [`Store::complete_run`], but the
+    /// failure is recorded instead of being rewritten as success.
+    pub fn fail_run(&mut self, run_id: Uuid) -> StoreResult<RunClaim> {
+        self.finish_run(run_id, ClaimStatus::WakeFailed)
+    }
+
+    fn finish_run(&mut self, run_id: Uuid, status: ClaimStatus) -> StoreResult<RunClaim> {
         let completed_at = Utc::now();
         let n = self.conn.execute(
             "UPDATE runs SET status = ?1, completed_at = ?2
              WHERE run_id = ?3 AND status = ?4",
             params![
-                ClaimStatus::Completed.as_str(),
+                status.as_str(),
                 fmt_dt(completed_at),
                 run_id.to_string(),
                 ClaimStatus::Claimed.as_str(),

@@ -3,7 +3,7 @@
 use crate::output;
 use crate::parse;
 use crate::resolve::{resolve_timer, ResolveError};
-use bellman_core::events::{EventKind, EventLog, EventLogConfig, EventRecord};
+use bellman_core::events::{RunState, EventLog, EventLogConfig, EventRecord};
 use bellman_core::slots::{
     SlotConfig, SlotRequest, SlotService, SlotStatus, SCHEMA_V1,
 };
@@ -103,7 +103,7 @@ pub enum CommandPayload {
         slot_id: String,
         status: String,
         timer_id: Option<Uuid>,
-        next_fire: Option<DateTime<Utc>>,
+        next_fire_at: Option<DateTime<Utc>>,
         error: Option<String>,
         processed: usize,
         response: Value,
@@ -164,7 +164,7 @@ impl CommandPayload {
                 slot_id,
                 status,
                 timer_id,
-                next_fire,
+                next_fire_at,
                 error,
                 processed,
                 response,
@@ -174,7 +174,7 @@ impl CommandPayload {
                 "slot_id": slot_id,
                 "status": status,
                 "timer_id": timer_id,
-                "next_fire": next_fire.map(|t| t.to_rfc3339()),
+                "next_fire_at": next_fire_at.map(|t| t.to_rfc3339()),
                 "error": error,
                 "processed": processed,
                 "response": response,
@@ -240,7 +240,7 @@ impl CommandPayload {
                 slot_id,
                 status,
                 timer_id,
-                next_fire,
+                next_fire_at,
                 error,
                 processed,
                 ..
@@ -251,8 +251,8 @@ impl CommandPayload {
                 if let Some(id) = timer_id {
                     s.push_str(&format!(" timer_id={id}"));
                 }
-                if let Some(nf) = next_fire {
-                    s.push_str(&format!(" next_fire={}", nf.to_rfc3339()));
+                if let Some(nf) = next_fire_at {
+                    s.push_str(&format!(" next_fire_at={}", nf.to_rfc3339()));
                 }
                 if let Some(e) = error {
                     s.push_str(&format!(" error={e}"));
@@ -321,7 +321,7 @@ pub fn add(db: &Path, args: AddArgs) -> Result<CommandPayload, CliError> {
     let logs_dir = resolve_logs_dir(db);
     if let Ok(mut log) = EventLog::open(EventLogConfig::new(&logs_dir)) {
         let _ = log.emit(
-            EventRecord::new(EventKind::Registered)
+            EventRecord::new(RunState::Registered)
                 .with_timer(timer.id, timer.name.clone())
                 .with_message("cli add"),
         );
@@ -517,7 +517,18 @@ pub fn run_now(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> 
         ..Default::default()
     };
 
-    let outcome = bellman_core::run_now(&mut store, db, timer.id, &opts).map_err(|e| {
+    let outcome = bellman_core::run_now(&mut store, db, timer.id, &opts);
+
+    // Overlay the full SlotResponse so consumers that parse done/ as
+    // bellman-slot/1 still see events + next_fire_at. Done on success AND
+    // failure: a failed wake must surface as `wake_failed` in the feed, not
+    // as silence.
+    if let (Some(root), Some(rec)) = (slots_root.as_ref(), slot_rec.as_ref()) {
+        let t = outcome.as_ref().map_or(&timer, |o| &o.timer);
+        let _ = bellman_core::publish_fire_slot_response(&store, root, t, rec);
+    }
+
+    let outcome = outcome.map_err(|e| {
         use bellman_core::RunNowError::*;
         let code = match e {
             NotFound { .. } => "not_found",
@@ -527,12 +538,6 @@ pub fn run_now(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> 
         };
         CliError::new(CMD, code, e.to_string())
     })?;
-
-    // Overlay the full SlotResponse so consumers that parse done/ as
-    // bellman-slot/1 still see events + next_fire.
-    if let (Some(root), Some(rec)) = (slots_root.as_ref(), slot_rec.as_ref()) {
-        let _ = bellman_core::publish_fire_slot_response(&store, root, &outcome.timer, rec);
-    }
 
     Ok(CommandPayload::RunNow {
         command: CMD,
@@ -607,8 +612,8 @@ pub fn slot_submit(
     {
         request.request_id = Some(Uuid::new_v4().to_string());
     }
-    if request.ts.is_none() {
-        request.ts = Some(Utc::now());
+    if request.logged_at.is_none() {
+        request.logged_at = Some(Utc::now());
     }
 
     let service = SlotService::open(slots_dir, SlotConfig::default()).map_err(|e| {
@@ -652,7 +657,7 @@ pub fn slot_submit(
     let status = response.status.as_str().to_string();
     let slot_id = response.slot_id.clone();
     let timer_id = response.timer_id;
-    let next_fire = response.next_fire;
+    let next_fire_at = response.next_fire_at;
     let error = response.error.clone();
 
     // Log registration when a timer was created/updated successfully.
@@ -667,7 +672,7 @@ pub fn slot_submit(
                     .map(|t| t.name)
                     .unwrap_or_default();
                 let _ = log.emit(
-                    EventRecord::new(EventKind::Registered)
+                    EventRecord::new(RunState::Registered)
                         .with_timer(tid, name)
                         .with_message(format!("slot-submit {request_id}")),
                 );
@@ -681,7 +686,7 @@ pub fn slot_submit(
         slot_id,
         status,
         timer_id,
-        next_fire,
+        next_fire_at,
         error,
         processed,
         response: response_val,

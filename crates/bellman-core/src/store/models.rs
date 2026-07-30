@@ -244,13 +244,22 @@ pub struct TimerUpdate {
 }
 
 /// Status of a row in the at-least-once claim ledger.
+///
+/// Internal delivery bookkeeping — NOT the R5 run-state vocabulary. Project
+/// onto R5 at the wire boundary (`SlotRunEvent::from_claim`): `claimed` is an
+/// open `fired` run; `completed` means Bellman's wake action was delivered
+/// (`wake_delivered`); `wake_failed` means the action failed after retries.
+/// The R5 states `completed` / `failed` are reserved for app reports (IK3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimStatus {
     /// Claimed, work not yet finished (visible after crash recovery).
     Claimed,
-    /// Work finished successfully.
+    /// Wake action delivered successfully.
     Completed,
+    /// Wake action failed after retries (terminal for recovery, like
+    /// [`ClaimStatus::Completed`], but not a success).
+    WakeFailed,
 }
 
 impl ClaimStatus {
@@ -258,6 +267,7 @@ impl ClaimStatus {
         match self {
             Self::Claimed => "claimed",
             Self::Completed => "completed",
+            Self::WakeFailed => "wake_failed",
         }
     }
 }
@@ -269,6 +279,7 @@ impl std::str::FromStr for ClaimStatus {
         match s {
             "claimed" => Ok(Self::Claimed),
             "completed" => Ok(Self::Completed),
+            "wake_failed" => Ok(Self::WakeFailed),
             other => Err(format!("unknown claim status '{other}'")),
         }
     }

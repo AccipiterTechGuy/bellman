@@ -81,7 +81,7 @@ pub fn slot_record_for_timer(store: &Store, timer_id: Uuid) -> Result<Option<Slo
 /// Steps (mirrored from the scheduler's `deliver_one`):
 /// 1. `claim_run(timer_id, now)` on the claim ledger
 /// 2. `ActionRunner::on_fire` (launch / notify / write-slot)
-/// 3. `complete_run`
+/// 3. `complete_run` / `fail_run` (honest wake outcome)
 /// 4. advance `last_fired` + `record_run` so `next_fire` moves past this slot
 pub fn run_now(
     store: &mut Store,
@@ -127,10 +127,17 @@ pub fn run_now(
         .clone()
         .unwrap_or_else(|| "action completed".into());
 
-    // Always complete so recovery does not loop (mirrors scheduler).
-    store
-        .complete_run(claim.run_id)
-        .map_err(RunNowError::Store)?;
+    // Close the claim even when the action fails so recovery does not loop
+    // (mirrors scheduler) — recording delivered vs wake-failed honestly.
+    if action_res.is_ok() {
+        store
+            .complete_run(claim.run_id)
+            .map_err(RunNowError::Store)?;
+    } else {
+        store
+            .fail_run(claim.run_id)
+            .map_err(RunNowError::Store)?;
+    }
 
     if let Err(e) = action_res {
         return Err(RunNowError::Action(e));
@@ -210,18 +217,7 @@ pub fn publish_fire_slot_response(
     let runs = store
         .unacked_runs_for_timer(timer.id, 64)
         .map_err(|e| e.to_string())?;
-    let events: Vec<SlotRunEvent> = runs
-        .into_iter()
-        .map(|run| SlotRunEvent {
-            event_sequence: run.event_sequence,
-            run_id: run.run_id,
-            timer_id: run.timer_id,
-            scheduled_for: run.scheduled_for,
-            status: run.status.as_str().to_string(),
-            claimed_at: run.claimed_at,
-            completed_at: run.completed_at,
-        })
-        .collect();
+    let events: Vec<SlotRunEvent> = runs.iter().map(SlotRunEvent::from_claim).collect();
 
     let response = SlotResponse {
         schema: SCHEMA_V1.to_string(),
@@ -229,7 +225,7 @@ pub fn publish_fire_slot_response(
         request_id: rec.request_id.clone(),
         status: SlotStatus::Ok,
         timer_id: Some(timer.id),
-        next_fire: timer.next_fire_utc,
+        next_fire_at: timer.next_fire_utc,
         error: None,
         events,
     };

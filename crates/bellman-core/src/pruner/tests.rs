@@ -1,7 +1,7 @@
 //! Prune correctness on fixture logs + year recalibration idempotency.
 
 use super::*;
-use crate::events::{read_events, EventKind, EventLog, EventLogConfig, EventRecord};
+use crate::events::{read_events, RunState, EventLog, EventLogConfig, EventRecord};
 use crate::occurrence::{Occurrence, OccurrenceKind};
 use crate::store::{ClaimStatus, NewTimer, OpenOptions, Store};
 use chrono::{Duration as ChronoDuration, NaiveDate, NaiveTime, TimeZone, Utc};
@@ -50,7 +50,7 @@ fn prune_rotates_jsonl_and_respects_retention_edges() {
         EventLogConfig::new(data.join("logs")).with_retention(Duration::from_secs(1)),
     )
     .unwrap();
-    log.emit(EventRecord::new(EventKind::Fired).with_message("keep-me"))
+    log.emit(EventRecord::new(RunState::Fired).with_message("keep-me"))
         .unwrap();
 
     // Plant an archive file with an old mtime so retention deletes it.
@@ -177,7 +177,7 @@ fn prune_deletes_terminal_oneshots_and_writes_tombstones() {
     assert!(store.get_timer(daily_id).unwrap().is_some());
 
     let (recs, _) = read_events(log.current_path()).unwrap();
-    let tombs: Vec<_> = recs.iter().filter(|r| r.kind == EventKind::Pruned).collect();
+    let tombs: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Pruned).collect();
     assert_eq!(tombs.len(), 1);
     assert_eq!(tombs[0].timer_id, Some(fired_id));
 }
@@ -295,7 +295,7 @@ fn year_recalibrate_is_idempotent_within_year() {
     let (recs, _) = read_events(log.current_path()).unwrap();
     assert_eq!(
         recs.iter()
-            .filter(|r| r.kind == EventKind::YearRecalibrate)
+            .filter(|r| r.kind == RunState::YearRecalibrate)
             .count(),
         1,
         "second pass must not emit another event"

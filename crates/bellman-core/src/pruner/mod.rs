@@ -20,7 +20,7 @@ pub use year::{
     needs_year_recalibration, run_year_recalibration, year_start, YearRecalibrateReport,
 };
 
-use crate::events::{EventKind, EventLog, EventLogConfig, EventRecord};
+use crate::events::{RunState, EventLog, EventLogConfig, EventRecord};
 use crate::occurrence::{Occurrence, OccurrenceKind};
 use crate::store::{
     Action, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy, Store, StoreError, StoreResult,
@@ -245,8 +245,8 @@ pub fn run_prune(
             let _ = store.clear_timer_owner(id);
             report.timers_pruned = report.timers_pruned.saturating_add(1);
             report.pruned_timer_ids.push(id);
-            let tomb = EventRecord::new(EventKind::Pruned)
-                .with_ts(now)
+            let tomb = EventRecord::new(RunState::Pruned)
+                .with_logged_at(now)
                 .with_timer(id, name)
                 .with_message("elapsed_oneshot")
                 .with_detail(serde_json::json!({

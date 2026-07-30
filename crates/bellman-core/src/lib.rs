@@ -28,7 +28,7 @@ pub use app_config::{
     DEFAULT_MAX_CONCURRENT_ACTIONS, DEFAULT_MIN_FREE_SLOTS, DEFAULT_RETENTION_DAYS,
 };
 pub use events::{
-    read_events, EventKind, EventLog, EventLogConfig, EventLogError, EventRecord, ReadStats,
+    read_events, RunState, EventLog, EventLogConfig, EventLogError, EventRecord, ReadStats,
     CURRENT_FILE_NAME,
 };
 pub use occurrence::{

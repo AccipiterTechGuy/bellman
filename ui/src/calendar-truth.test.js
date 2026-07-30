@@ -61,7 +61,7 @@ describe('buildClientTruthEntries', () => {
         timer_name: 'audit-duplicate',
         run_id: runId,
         scheduled_for: sched,
-        ts: sched,
+        logged_at: sched,
       },
       {
         kind: 'wake_failed',
@@ -69,7 +69,7 @@ describe('buildClientTruthEntries', () => {
         timer_name: 'audit-duplicate',
         run_id: runId,
         scheduled_for: sched,
-        ts: sched,
+        logged_at: sched,
       },
     ];
     const entries = buildClientTruthEntries({
@@ -95,7 +95,7 @@ describe('buildClientTruthEntries', () => {
         timer_name: 'Old Name',
         run_id: 'r1',
         scheduled_for: new Date(2026, 6, 28, 9, 0, 0).toISOString(),
-        ts: new Date(2026, 6, 28, 9, 0, 0).toISOString(),
+        logged_at: new Date(2026, 6, 28, 9, 0, 0).toISOString(),
       },
       {
         kind: 'wake_failed',
@@ -103,7 +103,7 @@ describe('buildClientTruthEntries', () => {
         timer_name: 'Old Name',
         run_id: 'r2',
         scheduled_for: new Date(2026, 6, 27, 9, 0, 0).toISOString(),
-        ts: new Date(2026, 6, 27, 9, 0, 1).toISOString(),
+        logged_at: new Date(2026, 6, 27, 9, 0, 1).toISOString(),
       },
     ];
     const timers = [dailyTimer(tid, 'New Name')];
@@ -131,7 +131,7 @@ describe('buildClientTruthEntries', () => {
         timer_name: 'daily',
         run_id: 'r1',
         scheduled_for: new Date(2026, 6, 25, 8, 0, 0).toISOString(),
-        ts: new Date(2026, 6, 25, 8, 0, 0).toISOString(),
+        logged_at: new Date(2026, 6, 25, 8, 0, 0).toISOString(),
       },
     ];
     const entries = buildClientTruthEntries({
@@ -161,7 +161,7 @@ describe('buildClientTruthEntries', () => {
         timer_name: 'late-one',
         run_id: 'r1',
         scheduled_for: sched.toISOString(),
-        ts: new Date(2026, 6, 29, 8, 20, 0).toISOString(),
+        logged_at: new Date(2026, 6, 29, 8, 20, 0).toISOString(),
       },
     ];
     const entries = buildClientTruthEntries({
@@ -188,7 +188,7 @@ describe('buildClientTruthEntries', () => {
         timer_name: 'split',
         run_id: 'r1',
         scheduled_for: morning.toISOString(),
-        ts: morning.toISOString(),
+        logged_at: morning.toISOString(),
       },
     ];
     const entries = buildClientTruthEntries({
@@ -217,7 +217,7 @@ describe('buildClientTruthEntries', () => {
         timer_name: 'edited',
         run_id: 'r1',
         scheduled_for: morning.toISOString(),
-        ts: morning.toISOString(),
+        logged_at: morning.toISOString(),
       },
     ];
     const entries = buildClientTruthEntries({
@@ -243,7 +243,7 @@ describe('buildClientTruthEntries', () => {
         timer_name: 'gone-timer',
         run_id: 'r1',
         scheduled_for: new Date(2026, 6, 22, 7, 30, 0).toISOString(),
-        ts: new Date(2026, 6, 22, 7, 30, 0).toISOString(),
+        logged_at: new Date(2026, 6, 22, 7, 30, 0).toISOString(),
       },
     ];
     const entries = buildClientTruthEntries({
@@ -280,7 +280,7 @@ describe('buildClientTruthEntries', () => {
         timer_name: 'browse',
         run_id: 'r1',
         scheduled_for: new Date(2026, 6, 28, 11, 0, 0).toISOString(),
-        ts: new Date(2026, 6, 28, 11, 0, 0).toISOString(),
+        logged_at: new Date(2026, 6, 28, 11, 0, 0).toISOString(),
       },
     ];
     const cur = buildClientTruthEntries({
@@ -326,7 +326,7 @@ describe('buildClientTruthEntries', () => {
         timer_name: 'month-browse',
         run_id: 'rm1',
         scheduled_for: new Date(2026, 6, 10, 11, 0, 0).toISOString(),
-        ts: new Date(2026, 6, 10, 11, 0, 0).toISOString(),
+        logged_at: new Date(2026, 6, 10, 11, 0, 0).toISOString(),
       },
     ];
     // Current month: recorded past day + upcoming after now.
@@ -429,7 +429,7 @@ describe('buildClientTruthEntries', () => {
         // no timer_name
         run_id: 'r1',
         scheduled_for: new Date(2026, 6, 22, 8, 0, 0).toISOString(),
-        ts: new Date(2026, 6, 22, 8, 0, 0).toISOString(),
+        logged_at: new Date(2026, 6, 22, 8, 0, 0).toISOString(),
       },
     ];
     const entries = buildClientTruthEntries({

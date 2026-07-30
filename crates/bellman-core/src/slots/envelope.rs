@@ -53,7 +53,7 @@ pub struct SlotRequest {
     pub request_id: Option<String>,
     /// Producer timestamp (optional; ignored by processing).
     #[serde(default)]
-    pub ts: Option<DateTime<Utc>>,
+    pub logged_at: Option<DateTime<Utc>>,
     /// `add` | `modify` | `delete`. `None` ⇒ empty free stub.
     #[serde(default)]
     pub operation: Option<SlotOperation>,
@@ -73,7 +73,7 @@ impl SlotRequest {
             schema: SCHEMA_V1.to_string(),
             slot_id: slot_id.into(),
             request_id: None,
-            ts: None,
+            logged_at: None,
             operation: None,
             payload: Some(serde_json::json!({
                 "app_name": null,
@@ -191,10 +191,38 @@ pub struct SlotRunEvent {
     pub run_id: Uuid,
     pub timer_id: Uuid,
     pub scheduled_for: DateTime<Utc>,
-    pub status: String,
+    /// Run state from the one R5 vocabulary ([`crate::events::RunState`]) —
+    /// the same strings the event log uses in `kind`.
+    pub status: crate::events::RunState,
     pub claimed_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
+}
+
+impl SlotRunEvent {
+    /// Project a runs-ledger row onto the wire shape.
+    ///
+    /// The ledger's internal `ClaimStatus` is delivery bookkeeping; the wire
+    /// speaks R5: an open claimed run is `fired`, a delivered wake action is
+    /// `wake_delivered`, a failed one is `wake_failed`. The R5 states
+    /// `completed` / `failed` are reserved for app reports (IK3) and are
+    /// never invented from scheduler bookkeeping.
+    pub fn from_claim(run: &crate::store::RunClaim) -> Self {
+        let status = match run.status {
+            crate::store::ClaimStatus::Claimed => crate::events::RunState::Fired,
+            crate::store::ClaimStatus::Completed => crate::events::RunState::WakeDelivered,
+            crate::store::ClaimStatus::WakeFailed => crate::events::RunState::WakeFailed,
+        };
+        Self {
+            event_sequence: run.event_sequence,
+            run_id: run.run_id,
+            timer_id: run.timer_id,
+            scheduled_for: run.scheduled_for,
+            status,
+            claimed_at: run.claimed_at,
+            completed_at: run.completed_at,
+        }
+    }
 }
 
 /// Output envelope written by Bellman into `done/`.
@@ -207,7 +235,7 @@ pub struct SlotResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timer_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_fire: Option<DateTime<Utc>>,
+    pub next_fire_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Un-acknowledged run events with monotonic sequence (bounded).
@@ -220,7 +248,7 @@ impl SlotResponse {
         slot_id: impl Into<String>,
         request_id: impl Into<String>,
         timer_id: Option<Uuid>,
-        next_fire: Option<DateTime<Utc>>,
+        next_fire_at: Option<DateTime<Utc>>,
         events: Vec<SlotRunEvent>,
     ) -> Self {
         Self {
@@ -229,7 +257,7 @@ impl SlotResponse {
             request_id: request_id.into(),
             status: SlotStatus::Ok,
             timer_id,
-            next_fire,
+            next_fire_at,
             error: None,
             events,
         }
@@ -246,7 +274,7 @@ impl SlotResponse {
             request_id: request_id.into(),
             status: SlotStatus::Error,
             timer_id: None,
-            next_fire: None,
+            next_fire_at: None,
             error: Some(error.into()),
             events: Vec::new(),
         }
@@ -259,7 +287,7 @@ pub struct SlotErrSidecar {
     pub schema: String,
     pub slot_id: Option<String>,
     pub reason: String,
-    pub ts: DateTime<Utc>,
+    pub logged_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_name: Option<String>,
 }
@@ -274,7 +302,7 @@ impl SlotErrSidecar {
             schema: SCHEMA_V1.to_string(),
             slot_id,
             reason: reason.into(),
-            ts: Utc::now(),
+            logged_at: Utc::now(),
             source_name,
         }
     }

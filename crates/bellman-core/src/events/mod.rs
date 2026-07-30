@@ -13,7 +13,7 @@ mod record;
 
 pub use log::{EventLog, EventLogConfig, EventLogError, EventLogResult, CURRENT_FILE_NAME};
 pub use reader::{read_events, read_events_from, ReadStats};
-pub use record::{EventKind, EventRecord};
+pub use record::{EventRecord, RunState, EVENT_SCHEMA_V1};
 
 #[cfg(test)]
 mod tests;

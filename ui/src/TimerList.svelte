@@ -290,7 +290,7 @@
       {:else}
         {#each log.events.slice().reverse() as e (e.event_id)}
           <div class="log-line">
-            <span class="ts">{e.ts ? new Date(e.ts).toLocaleTimeString() : '—'}</span>
+            <span class="ts">{e.logged_at ? new Date(e.logged_at).toLocaleTimeString() : '—'}</span>
             <span class="kind {kindClass(e.kind)}">{e.kind}</span>
             <span class="msg">{e.message || (e.run_id ? `run_id=${String(e.run_id).slice(0,8)}…` : '')}</span>
           </div>
