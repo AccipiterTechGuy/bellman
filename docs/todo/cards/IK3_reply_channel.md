@@ -105,6 +105,35 @@ Consequence for the implementation: **do not treat a missing field as a retracti
 
 Bellman watches it, validates, logs the transition, and folds the result into `status.json`.
 
+## `status.json` is the MIRROR — this is the point of the card
+
+**`cat status.json` must always show the truth right now.** Not "what Bellman knows", not
+"what fired" — the current state of the run including everything the app has reported.
+
+This is the property most easily lost while satisfying every other line here. An
+implementation that keeps only Bellman's own fields in `status.json` and leaves the app's
+report in the event log would pass validation, pass the lifecycle tests, and still be wrong:
+the file would read `state: "fired"` forever, and a human opening the folder would learn
+nothing. The event log is the history; `status.json` is the **present**.
+
+### Which fields land in `status.json`, and from where
+
+| written directly by Bellman | folded in from `reply.json` |
+|---|---|
+| `schema` `run_id` `timer_id` `timer_name` | `app_name` `acknowledged_at` |
+| `occurrence_kind` `scheduled_for` `fired_at` | `expected_secs` `error_detection` |
+| `no_ack_at` | `heartbeat_at` `progress` |
+| `failure_kind: "timed_out"` (watchdog) | `completed_at` `result` |
+| | `failed_at` `reason` `failure_kind: "reported"` |
+
+`state` comes from whichever side last moved it: Bellman writes `fired` and `no_ack` (and
+`failed` on a watchdog expiry); the app's `acknowledged` / `running` / `completed` / `failed`
+are folded in as they arrive.
+
+**Bellman accumulates.** A field folded in at T1 stays in `status.json` even though the app's
+T3 write no longer mentions it. That is why the app can write a complete-but-minimal
+statement each time and never carry state.
+
 ## Lifecycle
 
 `fired` (Bellman) → `acknowledged` → `running` → `completed` | `failed` (all app) ·
@@ -160,7 +189,13 @@ keep that safe:
 ## Exit gate
 
 - Full chain observed: fired → acknowledged → running → completed, each transition in the log
-  under one `run_id`, `status.json` current throughout.
+  under one `run_id`.
+- **The mirror holds at every step**: after each app write, `cat status.json` shows that
+  state and every field reported so far — asserted at all four points, not only at the end.
+  A `status.json` still reading `fired` after the app acknowledged is a failure of this card
+  even if the event log is perfect.
+- Fields folded in earlier survive later writes that omit them (`expected_secs` from T1 is
+  still in `status.json` after T3).
 - An app that never replies stays `running` **indefinitely** — no auto-complete, no auto-fail.
 - With `error_detection` on: the deadline marks `failed`/`timed_out`; a heartbeat before it
   prevents that; a late `completed` revises the state and the log retains both.

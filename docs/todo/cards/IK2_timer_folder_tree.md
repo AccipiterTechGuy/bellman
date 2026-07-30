@@ -35,7 +35,9 @@ request/response **channel**. Two trees, two jobs.
 - `timer.json` is readable, **not authoritative**: Bellman writes, humans read, hand edits are
   ignored. It carries the `note` field saying so, because someone will edit the time and
   wonder why nothing happened.
-- `status.json` written by Bellman at fire (`state: "fired"`). IK3 adds the app's side.
+- `status.json` written by Bellman at fire (`state: "fired"`). IK3 adds the app's side and
+  folds it in. It is the **mirror**: `cat status.json` shows the truth right now, which is
+  the reason a human opens this folder at all.
 - `runs/<UTC-scheduled>.json` frozen at close, plus `closed_at` and `duration_ms`. The
   filename sorts chronologically in any file manager.
 - **Deletion:** deleting a timer deletes its folder including `runs/`. No tombstone. Close any
