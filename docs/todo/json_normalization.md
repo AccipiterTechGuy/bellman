@@ -104,6 +104,174 @@ entry in the heap it already runs.
 never launch, execute, schedule or modify anything because an app said so. Worst case for a
 hostile reply is one bad log line.
 
+## The shapes
+
+Every JSON Bellman writes or reads, in full. Times are UTC; the example timer fires daily at
+08:00 Europe/Helsinki = 05:00 UTC.
+
+### `timer.json` — `bellman-timer/1`
+
+```json
+{
+  "schema": "bellman-timer/1",
+  "timer_id": "3f1a8c2e-6b41-4d9e-8a17-0c2f5d7e9b33",
+  "name": "bulb-test",
+  "enabled": true,
+  "tz": "Europe/Helsinki",
+  "occurrence": { "kind": "daily", "time": "08:00:00" },
+  "action": {
+    "type": "launch",
+    "command": "/usr/local/bin/bulb",
+    "args": ["--on", "15"]
+  },
+  "created_at": "2026-07-28T19:12:04Z",
+  "created_by": { "source": "slot", "app_name": "lightbulb" },
+  "next_fire_at": "2026-07-31T05:00:00Z",
+  "last_run": {
+    "run_id": "9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08",
+    "state": "completed",
+    "completed_at": "2026-07-30T05:00:15Z"
+  },
+  "note": "Written by Bellman. The database is the source of truth — editing this file has no effect."
+}
+```
+
+`occurrence.kind` is nested and therefore unambiguous — R2 concerns the **top level** only.
+
+### `status.json` — `bellman-run/1`
+
+Written by Bellman only. The lower block is folded in from the app's `reply.json`.
+
+```json
+{
+  "schema": "bellman-run/1",
+  "state": "completed",
+
+  "run_id": "9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08",
+  "timer_id": "3f1a8c2e-6b41-4d9e-8a17-0c2f5d7e9b33",
+  "timer_name": "bulb-test",
+  "occurrence_kind": "daily",
+  "scheduled_for": "2026-07-30T05:00:00Z",
+  "fired_at": "2026-07-30T05:00:00Z",
+
+  "app_name": "lightbulb",
+  "acknowledged_at": "2026-07-30T05:00:00Z",
+  "expected_secs": 15,
+  "heartbeat_at": "2026-07-30T05:00:07Z",
+  "progress": "bulb on, 7s elapsed",
+  "completed_at": "2026-07-30T05:00:15Z",
+  "result": { "on_duration_secs": 15.02 }
+}
+```
+
+The other endings, same file:
+
+```json
+"state": "failed",  "failure_kind": "reported",  "failed_at": "…", "reason": "GPIO write refused"
+"state": "failed",  "failure_kind": "timed_out", "failed_at": "…"
+"state": "no_ack",  "no_ack_at": "…"
+```
+
+Mid-run it reads `"state": "running"` with no `completed_at`. If the app dies it stays exactly
+that way and ages — it never becomes `completed`, and it is not `failed` unless the app said
+so or a watchdog the app opted into expired.
+
+### `reply.json` — `bellman-reply/1`
+
+**The only file an integrating app writes.** Overwritten at each step; never read back.
+
+```json
+{
+  "schema": "bellman-reply/1",
+  "run_id": "9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08",
+  "app_name": "lightbulb",
+  "state": "completed",
+  "completed_at": "2026-07-30T05:00:15Z",
+  "result": { "on_duration_secs": 15.02 }
+}
+```
+
+With the opt-in watchdog, mid-run:
+
+```json
+{
+  "schema": "bellman-reply/1",
+  "run_id": "9f2c…",
+  "app_name": "backup-tool",
+  "state": "running",
+  "error_detection": true,
+  "expected_secs": 900,
+  "heartbeat_at": "2026-07-30T05:07:00Z"
+}
+```
+
+An app may write `acknowledged`, `running`, `completed`, `failed`. Never `fired`, never
+`no_ack` — those are Bellman's.
+
+### `runs/2026-07-30T05-00-00Z.json` — `bellman-run/1`, frozen
+
+`status.json` at close, plus two computed fields. Filename is the UTC scheduled time so the
+folder sorts chronologically in any file manager.
+
+```json
+{
+  "schema": "bellman-run/1",
+  "state": "completed",
+  "run_id": "9f2c…",
+  "timer_id": "3f1a…",
+  "timer_name": "bulb-test",
+  "occurrence_kind": "daily",
+  "scheduled_for": "2026-07-30T05:00:00Z",
+  "fired_at": "2026-07-30T05:00:00Z",
+  "app_name": "lightbulb",
+  "acknowledged_at": "2026-07-30T05:00:00Z",
+  "expected_secs": 15,
+  "completed_at": "2026-07-30T05:00:15Z",
+  "result": { "on_duration_secs": 15.02 },
+
+  "closed_at": "2026-07-30T05:00:15Z",
+  "duration_ms": 15020
+}
+```
+
+A late reply may rewrite this file — it must not be treated as immutable the moment it lands.
+
+### Event log line — `bellman-event/1`
+
+```json
+{
+  "schema": "bellman-event/1",
+  "logged_at": "2026-07-30T05:00:00Z",
+  "kind": "fired",
+  "event_id": "aa11b2c3-…",
+  "timer_id": "3f1a…",
+  "run_id": "9f2c…",
+  "timer_name": "bulb-test",
+  "scheduled_for": "2026-07-30T05:00:00Z"
+}
+```
+
+Changes from today: gains `schema`, and `ts` becomes `logged_at`.
+
+### Fire notification — `bellman-slot/1`
+
+```json
+{
+  "schema": "bellman-slot/1",
+  "kind": "fired",
+  "occurrence_kind": "daily",
+  "timer_id": "3f1a…",
+  "timer_name": "bulb-test",
+  "run_id": "9f2c…",
+  "scheduled_for": "2026-07-30T05:00:00Z",
+  "fired_at": "2026-07-30T05:00:00Z",
+  "status_path": "~/.bellman/timers/bulb-test-3f1a/status.json"
+}
+```
+
+Changes from today: top-level `kind` becomes the **event** (`fired`), the occurrence moves to
+`occurrence_kind`, and `status_path` is added so an app never has to guess where to reply.
+
 ## Migration
 
 Pre-1.0 and the README says formats can change, so this is a clean break with a version
