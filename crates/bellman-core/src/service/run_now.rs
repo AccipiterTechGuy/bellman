@@ -100,8 +100,19 @@ pub fn run_now(
         .map_err(RunNowError::Store)?;
 
     let logs_dir = resolve_logs_dir(db_path);
-    let event_log = EventLog::open(EventLogConfig::new(&logs_dir))
-        .map_err(|e| RunNowError::Other(format!("open event log: {e}")))?;
+    // Honor config.json rotation/retention knobs when present (view writers
+    // opened ad-hoc by the CLI otherwise run with product defaults).
+    let app_cfg = db_path
+        .parent()
+        .map(|d| crate::app_config::AppConfig::load(d).unwrap_or_default())
+        .unwrap_or_default();
+    let event_log = EventLog::open(
+        EventLogConfig::new(&logs_dir)
+            .with_retention(app_cfg.retention())
+            .with_max_current_bytes(app_cfg.log_rotation_max_bytes)
+            .with_budget_bytes(app_cfg.log_retention_budget_bytes),
+    )
+    .map_err(|e| RunNowError::Other(format!("open event log: {e}")))?;
 
     let mut runner = ActionRunner::new(ActionRunnerConfig {
         write_slot_dir: opts.write_slot_dir.clone(),
@@ -121,6 +132,20 @@ pub fn run_now(
         kind: FireKind::OnTime,
         claimed_at: claim.claimed_at,
     };
+
+    // IK2: project the fire into the per-timer folder tree (view only —
+    // failures surface but never break the run).
+    let tree = db_path.parent().map(crate::tree::TimersTree::new);
+    if let Some(tree) = &tree {
+        if let Some(log) = runner.event_log_mut() {
+            if let Err(e) =
+                crate::tree::project_run_started(tree, store, &timer, &claim, &ctx.kind, log)
+            {
+                eprintln!("bellman: timer tree fire projection failed: {e}");
+            }
+        }
+    }
+
     let action_res = runner.on_fire(&ctx);
     let message = runner
         .last_message
@@ -140,6 +165,9 @@ pub fn run_now(
     }
 
     if let Err(e) = action_res {
+        // IK2: status.json stays the firing snapshot — the delivery failure is
+        // honest in the claim ledger and the wake_failed event; R5 `failed`
+        // is reserved for app reports (IK3).
         return Err(RunNowError::Action(e));
     }
 
@@ -158,6 +186,16 @@ pub fn run_now(
             },
         })
         .map_err(RunNowError::Store)?;
+
+    // IK2: refresh timer.json with the advanced next_fire. status.json stays
+    // the firing snapshot: the R5 `completed` state is an app report (IK3),
+    // and the claim ledger's `Completed` only means wake_delivered.
+    if let Some(tree) = &tree {
+        let owner = store.get_timer_owner(timer.id).ok().flatten();
+        if let Err(e) = tree.sync_timer_json(&timer, owner.as_deref()) {
+            eprintln!("bellman: timer.json refresh failed: {e}");
+        }
+    }
 
     Ok(RunNowOutcome {
         timer,

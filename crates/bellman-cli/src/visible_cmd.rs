@@ -402,6 +402,16 @@ fn enable_bellman(
             },
         })
         .map_err(|e| CliError::new("task", "store_error", e.to_string()))?;
+    // IK2: keep the folder view in sync (enabled flag lives in timer.json).
+    if let Some(data_dir) = db.parent() {
+        if let Ok(Some(fresh)) = store.get_timer(timer_id) {
+            let tree = bellman_core::TimersTree::new(data_dir);
+            let owner = store.get_timer_owner(timer_id).ok().flatten();
+            if let Err(e) = tree.sync_timer_json(&fresh, owner.as_deref()) {
+                eprintln!("bellman: timer.json sync failed: {e}");
+            }
+        }
+    }
     Ok(WritePlan {
         task_id: Some(task.id.clone()),
         action: if enabled { "enable" } else { "disable" }.into(),
@@ -488,6 +498,13 @@ pub fn cmd_task_new(
             let timer = store
                 .create_timer(new)
                 .map_err(|e| CliError::new(CMD, "store_error", e.to_string()))?;
+            // IK2: project the per-timer folder for the imported timer.
+            if let Some(data_dir) = db.parent() {
+                let tree = bellman_core::TimersTree::new(data_dir);
+                if let Err(e) = tree.create_for_timer(&timer, None) {
+                    eprintln!("bellman: timer folder projection failed: {e}");
+                }
+            }
             // Re-scan to get DiscoveredTask shape
             let result = rescan(db);
             let task = result

@@ -17,10 +17,21 @@ pub struct ReadStats {
 }
 
 /// Read all parseable events from `path`. Unparseable non-empty lines increment
-/// `skipped` and are ignored — never abort on a torn tail.
+/// `skipped` and are ignored — never abort on a torn tail. Gzip-compressed
+/// archives (`*.jsonl.gz`, written by rotation) are decompressed transparently.
 pub fn read_events(path: impl AsRef<Path>) -> std::io::Result<(Vec<EventRecord>, ReadStats)> {
-    let file = File::open(path.as_ref())?;
-    Ok(read_events_from(BufReader::new(file)))
+    let path = path.as_ref();
+    let file = File::open(path)?;
+    let is_gz = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with(".gz"));
+    if is_gz {
+        let decoder = flate2::read::GzDecoder::new(file);
+        Ok(read_events_from(BufReader::new(decoder)))
+    } else {
+        Ok(read_events_from(BufReader::new(file)))
+    }
 }
 
 /// Read from any buffered reader (tests inject torn tails via `&[u8]`).

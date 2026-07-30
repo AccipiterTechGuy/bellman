@@ -16,6 +16,20 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+/// Open the JSONL event log honoring config.json rotation/retention knobs.
+fn open_event_log(db: &Path) -> Result<EventLog, bellman_core::events::EventLogError> {
+    let app_cfg = db
+        .parent()
+        .map(|d| bellman_core::AppConfig::load(d).unwrap_or_default())
+        .unwrap_or_default();
+    EventLog::open(
+        EventLogConfig::new(resolve_logs_dir(db))
+            .with_retention(app_cfg.retention())
+            .with_max_current_bytes(app_cfg.log_rotation_max_bytes)
+            .with_budget_bytes(app_cfg.log_retention_budget_bytes),
+    )
+}
+
 // ── Result types ────────────────────────────────────────────────────────
 
 #[derive(Debug)]
@@ -318,13 +332,21 @@ pub fn add(db: &Path, args: AddArgs) -> Result<CommandPayload, CliError> {
         .map_err(|e| e.with_command(CMD))?;
 
     // Lifecycle: every successful registration appends a `registered` line.
-    let logs_dir = resolve_logs_dir(db);
-    if let Ok(mut log) = EventLog::open(EventLogConfig::new(&logs_dir)) {
+    if let Ok(mut log) = open_event_log(db) {
         let _ = log.emit(
             EventRecord::new(RunState::Registered)
                 .with_timer(timer.id, timer.name.clone())
                 .with_message("cli add"),
         );
+    }
+
+    // IK2: project the per-timer folder (README + timer.json). View-only.
+    if let Some(data_dir) = db.parent() {
+        let tree = bellman_core::TimersTree::new(data_dir);
+        let owner = store.get_timer_owner(timer.id).ok().flatten();
+        if let Err(e) = tree.create_for_timer(&timer, owner.as_deref()) {
+            eprintln!("bellman: timer folder projection failed: {e}");
+        }
     }
 
     Ok(CommandPayload::Timer {
@@ -404,6 +426,15 @@ pub fn edit(db: &Path, name_or_id: &str, args: EditArgs) -> Result<CommandPayloa
         })
         .map_err(|e| e.with_command(CMD))?;
 
+    // IK2: rename/edit rewrites timer.json; the folder path never changes.
+    if let Some(data_dir) = db.parent() {
+        let tree = bellman_core::TimersTree::new(data_dir);
+        let owner = store.get_timer_owner(timer.id).ok().flatten();
+        if let Err(e) = tree.sync_timer_json(&timer, owner.as_deref()) {
+            eprintln!("bellman: timer.json sync failed: {e}");
+        }
+    }
+
     Ok(CommandPayload::Timer {
         command: CMD,
         timer,
@@ -417,6 +448,12 @@ pub fn rm(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> {
         e
     })?;
     let timer = resolve_timer(&store, name_or_id).map_err(|e| e.with_command(CMD))?;
+    // IK2: any unresolved run is logged `cancelled` BEFORE the folder goes.
+    if let Ok(mut log) = open_event_log(db) {
+        if let Err(e) = bellman_core::log_cancelled_for_open_runs(&store, &timer, &mut log) {
+            eprintln!("bellman: cancelled-run logging failed: {e}");
+        }
+    }
     let deleted = store
         .delete_timer(timer.id)
         .map_err(|e| e.with_command(CMD))?;
@@ -426,6 +463,13 @@ pub fn rm(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> {
             "not_found",
             format!("timer not found: {}", timer.id),
         ));
+    }
+    // IK2: deleting a timer deletes its folder (no tombstone).
+    if let Some(data_dir) = db.parent() {
+        let tree = bellman_core::TimersTree::new(data_dir);
+        if let Err(e) = tree.remove_for(timer.id) {
+            eprintln!("bellman: timer folder removal failed: {e}");
+        }
     }
     Ok(CommandPayload::Deleted {
         command: CMD,
@@ -486,6 +530,14 @@ fn set_enabled(
             },
         })
         .map_err(|e| e.with_command(command))?;
+    // IK2: enabled flag lives in timer.json too — resync the view.
+    if let Some(data_dir) = db.parent() {
+        let tree = bellman_core::TimersTree::new(data_dir);
+        let owner = store.get_timer_owner(timer.id).ok().flatten();
+        if let Err(e) = tree.sync_timer_json(&timer, owner.as_deref()) {
+            eprintln!("bellman: timer.json sync failed: {e}");
+        }
+    }
     Ok(CommandPayload::Timer { command, timer })
 }
 
@@ -616,9 +668,14 @@ pub fn slot_submit(
         request.logged_at = Some(Utc::now());
     }
 
-    let service = SlotService::open(slots_dir, SlotConfig::default()).map_err(|e| {
-        CliError::new(CMD, "store_error", format!("open slots: {e}"))
-    })?;
+    let service = SlotService::open(slots_dir, SlotConfig::default())
+        .map_err(|e| {
+            CliError::new(CMD, "store_error", format!("open slots: {e}"))
+        })?
+        // IK2: slot add/modify/delete also projects the per-timer folder tree.
+        .with_timers_tree(bellman_core::TimersTree::new(
+            db.parent().unwrap_or_else(|| std::path::Path::new(".")),
+        ));
 
     let request_id = request
         .request_id
@@ -663,8 +720,7 @@ pub fn slot_submit(
     // Log registration when a timer was created/updated successfully.
     if response.status == SlotStatus::Ok {
         if let Some(tid) = timer_id {
-            let logs_dir = resolve_logs_dir(db);
-            if let Ok(mut log) = EventLog::open(EventLogConfig::new(&logs_dir)) {
+            if let Ok(mut log) = open_event_log(db) {
                 let name = store
                     .get_timer(tid)
                     .ok()

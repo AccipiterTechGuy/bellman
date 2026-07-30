@@ -45,6 +45,8 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             retention: self.config.retention,
             interval: self.config.prune_interval,
             ack_grace: self.config.ack_grace,
+            max_current_bytes: self.config.log_rotation_max_bytes,
+            budget_bytes: self.config.log_retention_budget_bytes,
         };
         let now = self.clock.wall_now();
         match crate::pruner::startup_maintenance(&mut self.store, &data_dir, &prune_cfg, now) {

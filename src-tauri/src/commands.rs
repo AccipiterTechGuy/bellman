@@ -76,6 +76,14 @@ pub fn set_enabled(
             },
         })
         .map_err(|e| e.to_string())?;
+    // IK2: enabled flag lives in timer.json too — resync the view.
+    {
+        let tree = bellman_core::TimersTree::new(&state.data_dir);
+        let owner = store.get_timer_owner(id).ok().flatten();
+        if let Err(e) = tree.sync_timer_json(&updated, owner.as_deref()) {
+            log::warn!("bellman: timer.json sync failed: {e}");
+        }
+    }
     // Wake the scheduler so the next tick picks up the change.
     if let Some(h) = state.control_handle.lock().as_ref() {
         h.refill();
@@ -136,7 +144,8 @@ pub fn list_log_tail(
     limit: Option<usize>,
 ) -> Result<LogTailDto, String> {
     use std::path::Path;
-    let path = state.data_dir.join("logs").join("events.current.jsonl");
+    let logs_dir = state.data_dir.join("logs");
+    let path = logs_dir.join("events.current.jsonl");
     if !Path::new(&path).exists() {
         return Ok(LogTailDto {
             events: vec![],
@@ -148,8 +157,50 @@ pub fn list_log_tail(
         None | Some("") => None,
         Some(s) => Some(Uuid::from_str(s).map_err(|e| format!("invalid timer_id: {e}"))?),
     };
-    let (events, stats) =
+    let (mut events, stats) =
         bellman_core::read_log_tail(&path, tid, limit).map_err(|e| e.to_string())?;
+
+    // IK2: archives hold the retention window — when the live tail does not
+    // fill the requested limit, backfill from the newest rotated archives
+    // (plain and gzip both read transparently).
+    if let Some(n) = limit {
+        if events.len() < n {
+            let mut archive_paths: Vec<std::path::PathBuf> = std::fs::read_dir(logs_dir.join("archive"))
+                .map(|rd| {
+                    rd.filter_map(|e| e.ok())
+                        .map(|e| e.path())
+                        .filter(|p| {
+                            p.is_file()
+                                && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                                    n.starts_with("events-")
+                                        && (n.ends_with(".jsonl") || n.ends_with(".jsonl.gz"))
+                                })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            // Newest archive first.
+            archive_paths.sort();
+            archive_paths.reverse();
+            let mut older: Vec<bellman_core::events::EventRecord> = Vec::new();
+            for p in archive_paths {
+                if events.len() + older.len() >= n {
+                    break;
+                }
+                if let Ok((recs, _)) = bellman_core::events::read_events(&p) {
+                    older.extend(recs);
+                }
+            }
+            if let Some(id) = tid {
+                older.retain(|r| r.timer_id == Some(id));
+            }
+            // Archives are older than current — they go first.
+            older.append(&mut events);
+            let total = older.len();
+            events = older.into_iter().skip(total.saturating_sub(n)).collect();
+        }
+    }
+
     Ok(LogTailDto {
         total_records: stats.records,
         skipped: stats.skipped,
@@ -623,14 +674,28 @@ pub(crate) fn do_create_timer(state: &AppState, input: CreateTimerInput) -> Resu
         let mut store = state.store.lock();
         store.create_timer(new).map_err(|e| e.to_string())?
     };
-    
+
     // Lifecycle: emit Registered event (analogous to the CLI)
-    if let Ok(mut log) = bellman_core::EventLog::open_under(&state.data_dir) {
+    if let Ok(mut log) = bellman_core::EventLog::open_under_configured(&state.data_dir) {
         let _ = log.emit(
             bellman_core::events::EventRecord::new(bellman_core::events::RunState::Registered)
                 .with_timer(timer.id, timer.name.clone())
                 .with_message("gui create"),
         );
+    }
+
+    // IK2: project the per-timer folder (README + timer.json). View-only.
+    {
+        let tree = bellman_core::TimersTree::new(&state.data_dir);
+        let owner = state
+            .store
+            .lock()
+            .get_timer_owner(timer.id)
+            .ok()
+            .flatten();
+        if let Err(e) = tree.create_for_timer(&timer, owner.as_deref()) {
+            log::warn!("bellman: timer folder projection failed: {e}");
+        }
     }
 
     if let Some(h) = state.control_handle.lock().as_ref() {
@@ -661,6 +726,14 @@ pub fn update_timer(
             patch: core_patch,
         })
         .map_err(|e| e.to_string())?;
+    // IK2: rename/edit rewrites timer.json; the folder path never changes.
+    {
+        let tree = bellman_core::TimersTree::new(&state.data_dir);
+        let owner = store.get_timer_owner(id).ok().flatten();
+        if let Err(e) = tree.sync_timer_json(&updated, owner.as_deref()) {
+            log::warn!("bellman: timer.json sync failed: {e}");
+        }
+    }
     if let Some(h) = state.control_handle.lock().as_ref() {
         h.refill();
     }
@@ -674,7 +747,22 @@ pub fn update_timer(
 pub fn delete_timer(state: State<'_, AppState>, id: String) -> Result<bool, String> {
     let id = Uuid::from_str(&id).map_err(|e| format!("invalid id: {e}"))?;
     let mut store = state.store.lock();
+    // IK2: any unresolved run is logged `cancelled` BEFORE the folder goes.
+    let timer = store.get_timer(id).map_err(|e| e.to_string())?;
+    if let Some(timer) = &timer {
+        if let Ok(mut log) = bellman_core::EventLog::open_under_configured(&state.data_dir) {
+            if let Err(e) = bellman_core::log_cancelled_for_open_runs(&store, timer, &mut log) {
+                log::warn!("bellman: cancelled-run logging failed: {e}");
+            }
+        }
+    }
     let n = store.delete_timer(id).map_err(|e| e.to_string())?;
+    if n {
+        let tree = bellman_core::TimersTree::new(&state.data_dir);
+        if let Err(e) = tree.remove_for(id) {
+            log::warn!("bellman: timer folder removal failed: {e}");
+        }
+    }
     if let Some(h) = state.control_handle.lock().as_ref() {
         h.refill();
     }

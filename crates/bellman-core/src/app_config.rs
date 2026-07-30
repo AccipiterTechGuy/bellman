@@ -29,6 +29,10 @@ pub const DEFAULT_PRUNE_INTERVAL_SECS: u64 = 7 * 24 * 60 * 60;
 pub const DEFAULT_MISFIRE_GRACE_SECS: u64 = 3600;
 /// Default calendar misfire policy name (`coalesce` | `skip` | `catch_up`).
 pub const DEFAULT_MISFIRE_POLICY: &str = "coalesce";
+/// Rotate `events.current.jsonl` before an append crosses this (64 MiB).
+pub const DEFAULT_LOG_ROTATION_MAX_BYTES: u64 = 64 * 1024 * 1024;
+/// Retained-log budget for current + final archives (1 GiB).
+pub const DEFAULT_LOG_RETENTION_BUDGET_BYTES: u64 = 1024 * 1024 * 1024;
 
 /// Path of the user/engine config file under the data dir.
 pub fn config_path(data_dir: &Path) -> PathBuf {
@@ -85,6 +89,16 @@ pub struct AppConfig {
     /// Grace window (seconds) for coalesce / catch_up calendar defaults.
     #[serde(default = "default_misfire_grace_secs")]
     pub default_misfire_grace_secs: u64,
+
+    /// Rotate the live event log before an append would take it past this
+    /// many bytes. Product default: 64 MiB.
+    #[serde(default = "default_log_rotation_max_bytes")]
+    pub log_rotation_max_bytes: u64,
+    /// Retained-log budget: current + compressed archives stay within this
+    /// many bytes (oldest archives pruned first; the live file is never
+    /// deleted). Product default: 1 GiB.
+    #[serde(default = "default_log_retention_budget_bytes")]
+    pub log_retention_budget_bytes: u64,
 }
 
 fn default_horizon_secs() -> u64 {
@@ -114,6 +128,12 @@ fn default_misfire_policy() -> String {
 fn default_misfire_grace_secs() -> u64 {
     DEFAULT_MISFIRE_GRACE_SECS
 }
+fn default_log_rotation_max_bytes() -> u64 {
+    DEFAULT_LOG_ROTATION_MAX_BYTES
+}
+fn default_log_retention_budget_bytes() -> u64 {
+    DEFAULT_LOG_RETENTION_BUDGET_BYTES
+}
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -131,6 +151,8 @@ impl Default for AppConfig {
             prune_interval_secs: DEFAULT_PRUNE_INTERVAL_SECS,
             default_misfire_policy: DEFAULT_MISFIRE_POLICY.to_string(),
             default_misfire_grace_secs: DEFAULT_MISFIRE_GRACE_SECS,
+            log_rotation_max_bytes: DEFAULT_LOG_ROTATION_MAX_BYTES,
+            log_retention_budget_bytes: DEFAULT_LOG_RETENTION_BUDGET_BYTES,
         }
     }
 }
@@ -193,6 +215,14 @@ impl AppConfig {
         };
         if self.default_misfire_grace_secs == 0 {
             self.default_misfire_grace_secs = DEFAULT_MISFIRE_GRACE_SECS;
+        }
+        // Sane floors: a rotation cap must fit at least a few events, and the
+        // budget must fit at least one rotated extent.
+        if self.log_rotation_max_bytes < 1024 * 1024 {
+            self.log_rotation_max_bytes = 1024 * 1024;
+        }
+        if self.log_retention_budget_bytes < 4 * 1024 * 1024 {
+            self.log_retention_budget_bytes = 4 * 1024 * 1024;
         }
         self
     }

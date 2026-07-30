@@ -14,8 +14,10 @@ pub const EVENT_SCHEMA_V1: &str = "bellman-event/1";
 /// these states (R2).
 ///
 /// Bellman writes `registered`, `fired`, `fired_late`, `no_ack`,
-/// `skipped_misfire`, `coalesced`, `pruned`, `wake_*` and
-/// `year_recalibrate`. The app writes `acknowledged`, `running`, `completed`
+/// `skipped_misfire`, `coalesced`, `pruned`, `wake_*`, `year_recalibrate`,
+/// `cancelled` (timer deleted with an open run) and `superseded` (a new
+/// firing replaced an unresolved run). The app writes `acknowledged`,
+/// `running`, `completed`
 /// and `failed` via its replies — Bellman never emits those four itself; a
 /// finished wake action is `wake_delivered` / `wake_failed`, not `completed`.
 ///
@@ -53,6 +55,10 @@ pub enum RunState {
     Completed,
     /// App reported the run failed (reply channel, IK3).
     Failed,
+    /// Bellman — the timer was deleted while its run was open (R5).
+    Cancelled,
+    /// Bellman — a new firing replaced this still-unresolved run as current.
+    Superseded,
 }
 
 impl RunState {
@@ -73,6 +79,8 @@ impl RunState {
             Self::Running => "running",
             Self::Completed => "completed",
             Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Superseded => "superseded",
         }
     }
 }

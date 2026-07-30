@@ -49,13 +49,28 @@ impl Default for SlotConfig {
 pub struct SlotService {
     layout: SlotLayout,
     config: SlotConfig,
+    /// IK2: per-timer folder tree root (view). When set, add/modify/delete
+    /// requests project their folder/`timer.json` after the store transaction
+    /// commits — post-commit, never inside it.
+    timers_tree: Option<crate::tree::TimersTree>,
 }
 
 impl SlotService {
     /// Open (or create) the slots root and replenish free stubs to the floor.
     pub fn open(root: impl AsRef<Path>, config: SlotConfig) -> SlotResult<Self> {
         let layout = SlotLayout::open_with(root, config.min_free)?;
-        Ok(Self { layout, config })
+        Ok(Self {
+            layout,
+            config,
+            timers_tree: None,
+        })
+    }
+
+    /// Attach the per-timer folder tree so slot add/modify/delete also
+    /// project `<data_dir>/timers/<slug>-<id>/` (IK2).
+    pub fn with_timers_tree(mut self, tree: crate::tree::TimersTree) -> Self {
+        self.timers_tree = Some(tree);
+        self
     }
 
     pub fn layout(&self) -> &SlotLayout {
@@ -247,6 +262,18 @@ impl SlotService {
             .ok_or_else(|| SlotError::Invalid("missing operation".into()))?;
         let max_events = self.config.max_events;
 
+        // IK2: for delete, snapshot the timer row pre-commit so the open-run
+        // `cancelled` events can be logged before the folder goes.
+        let pre_delete_timer = if self.timers_tree.is_some() && operation == SlotOperation::Delete {
+            req.payload
+                .as_ref()
+                .and_then(|p| serde_json::from_value::<SlotPayload>(p.clone()).ok())
+                .and_then(|p| p.resolved_timer_id())
+                .and_then(|tid| store.get_timer(tid).ok().flatten())
+        } else {
+            None
+        };
+
         // Single Immediate transaction: check ledger / apply mutations / write
         // response. Concurrent consumers serialize; crash mid-apply rolls back
         // so a resubmit never double-mutates.
@@ -284,6 +311,53 @@ impl SlotService {
 
         let response: SlotResponse = serde_json::from_str(&rec.response_json)
             .map_err(|e| SlotError::Internal(format!("stored response corrupt: {e}")))?;
+
+        // IK2: project the folder tree post-commit (view only — never fails
+        // the request).
+        if let Some(tree) = &self.timers_tree {
+            if response.status == SlotStatus::Ok {
+                match operation {
+                    SlotOperation::Add | SlotOperation::Modify => {
+                        if let Some(tid) = response.timer_id {
+                            match store.get_timer(tid) {
+                                Ok(Some(timer)) => {
+                                    let owner = store.get_timer_owner(tid).ok().flatten();
+                                    if let Err(e) =
+                                        tree.sync_timer_json(&timer, owner.as_deref())
+                                    {
+                                        eprintln!("bellman: timer folder sync failed: {e}");
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(e) => eprintln!("bellman: timer folder sync lookup: {e}"),
+                            }
+                        }
+                    }
+                    SlotOperation::Delete => {
+                        if let (Some(timer), Some(data_dir)) = (
+                            pre_delete_timer.as_ref(),
+                            tree.root().parent().map(|p| p.to_path_buf()),
+                        ) {
+                            // Cancel open runs FIRST, then drop the folder.
+                            match crate::events::EventLog::open_under_configured(&data_dir) {
+                                Ok(mut log) => {
+                                    if let Err(e) = crate::tree::log_cancelled_for_open_runs(
+                                        store, timer, &mut log,
+                                    ) {
+                                        eprintln!("bellman: cancelled-run logging failed: {e}");
+                                    }
+                                }
+                                Err(e) => eprintln!("bellman: event log open failed: {e}"),
+                            }
+                            if let Err(e) = tree.remove_for(timer.id) {
+                                eprintln!("bellman: timer folder removal failed: {e}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         self.write_done(&reserved_id, &response)?;
         let _ = std::fs::remove_file(work_path);
         let _ = self.layout.replenish()?;

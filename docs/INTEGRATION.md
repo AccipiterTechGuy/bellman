@@ -195,12 +195,16 @@ line, `bellman-event/1`):
 Top-level `kind` is always the **event kind**, from the one R5 run-state
 vocabulary shared with the slot run-event feed: `registered`, `fired`,
 `fired_late`, `skipped_misfire`, `coalesced`, `wake_delivered`, `wake_failed`,
-`no_ack`, `pruned`, `year_recalibrate` are written by Bellman;
+`no_ack`, `pruned`, `year_recalibrate`, `cancelled`, `superseded` are written
+by Bellman;
 `acknowledged`, `running`, `completed`, `failed` are reserved for app reports
 (reply channel). Timestamps end `_at` (`logged_at`); `scheduled_for` is the
-one exception — it is an intent, not an occurrence. Weekly rotation renames
-the current file to `logs/archive/events-<ISO-week>.jsonl`; archives older
-than 30 days are deleted.
+one exception — it is an intent, not an occurrence. Rotation moves the
+current file to `logs/archive/events-<ISO-week>.jsonl.gz` (gzip-compressed) —
+weekly, or before an append would take it past 64 MB (configurable); archives
+older than 30 days (configurable) are deleted, then oldest archives until
+current + archives fit a 1 GB (configurable) retained-log budget. History is
+therefore 30-day history (configurable), not forever.
 
 ## Fire notification (write-output-slot action)
 

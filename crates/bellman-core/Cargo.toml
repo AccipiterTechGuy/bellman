@@ -9,10 +9,12 @@ description = "Bellman scheduling engine core library"
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
 croner = { workspace = true }
+flate2 = { workspace = true }
 notify = { workspace = true }
 notify-debouncer-full = { workspace = true }
 resvg = { workspace = true }
 rusqlite = { workspace = true }
+sanitize-filename = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

@@ -49,12 +49,14 @@ pub fn read_log_tail(
     Ok((recs, stats))
 }
 
-/// Read retained history: `logs/archive/events-*.jsonl` (sorted) then
+/// Read retained history: `logs/archive/events-*.jsonl[.gz]` (sorted) then
 /// `logs/events.current.jsonl`.
 ///
 /// Used by the calendar truth model so weekly rotation does not erase
 /// durable outcomes from Week/Month views while archives remain in the
-/// retention window. Missing dirs/files yield empty (not error).
+/// retention window. Missing dirs/files yield empty (not error). Records are
+/// deduplicated by `event_id` (a crash mid-rotation can briefly leave both a
+/// plain staging archive and its compressed twin).
 pub fn read_log_history(logs_dir: &Path) -> std::io::Result<(Vec<EventRecord>, ReadStats)> {
     let mut all = Vec::new();
     let mut stats = ReadStats::default();
@@ -68,7 +70,10 @@ pub fn read_log_history(logs_dir: &Path) -> std::io::Result<(Vec<EventRecord>, R
                 p.is_file()
                     && p.file_name()
                         .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.starts_with("events-") && n.ends_with(".jsonl"))
+                        .is_some_and(|n| {
+                            n.starts_with("events-")
+                                && (n.ends_with(".jsonl") || n.ends_with(".jsonl.gz"))
+                        })
             })
             .collect();
         paths.sort();
@@ -99,6 +104,13 @@ pub fn read_log_history(logs_dir: &Path) -> std::io::Result<(Vec<EventRecord>, R
             Err(e) => return Err(e),
         }
     }
+
+    // Dedupe by event_id (first occurrence wins), preserving read order.
+    let mut seen = std::collections::HashSet::new();
+    let dupes = all.len();
+    all.retain(|r| seen.insert(r.event_id));
+    let dupes = dupes - all.len();
+    stats.records -= dupes;
 
     Ok((all, stats))
 }

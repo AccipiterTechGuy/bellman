@@ -32,6 +32,10 @@ pub struct SchedulerConfig {
     pub prune_interval: Duration,
     /// Ack grace before terminal one-shots are eligible for prune.
     pub ack_grace: Duration,
+    /// Rotate the live event log before it crosses this size (default 64 MiB).
+    pub log_rotation_max_bytes: u64,
+    /// Retained-log budget for current + archives (default 1 GiB).
+    pub log_retention_budget_bytes: u64,
 }
 
 impl Default for SchedulerConfig {
@@ -57,6 +61,8 @@ impl SchedulerConfig {
             retention: cfg.retention(),
             prune_interval: cfg.prune_interval(),
             ack_grace: cfg.ack_grace(),
+            log_rotation_max_bytes: cfg.log_rotation_max_bytes,
+            log_retention_budget_bytes: cfg.log_retention_budget_bytes,
         }
     }
 

@@ -14,6 +14,20 @@ use crate::store::{
 };
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 
+/// IK2: rewrite `timer.json` from the fresh store row (next_fire advanced by
+/// the fire bookkeeping). View-only — errors surface on stderr, never fail
+/// the fire path.
+fn refresh_timer_json(tree: &crate::tree::TimersTree, store: &crate::store::Store, id: TimerId) {
+    let fresh = match store.get_timer(id) {
+        Ok(Some(t)) => t,
+        _ => return,
+    };
+    let owner = store.get_timer_owner(id).ok().flatten();
+    if let Err(e) = tree.sync_timer_json(&fresh, owner.as_deref()) {
+        eprintln!("bellman: timer.json refresh failed for {id}: {e}");
+    }
+}
+
 impl<C: Clock, A: FireAction> Scheduler<C, A> {
     /// Apply misfire policy for a single overdue / due timer. Returns delivered fires.
     pub(super) fn handle_due_timer(
@@ -253,6 +267,27 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         }
 
         let ctx = FireContext::from_claim(timer, claim, kind.clone());
+
+        // IK2: project the fire into the per-timer folder tree (view only —
+        // failures surface but never break the fire path).
+        let tree = self
+            .config
+            .data_dir
+            .as_ref()
+            .map(|d| crate::tree::TimersTree::new(d));
+        if let (Some(tree), Some(data_dir)) = (tree.as_ref(), self.config.data_dir.as_ref()) {
+            match crate::events::EventLog::open_under_configured(data_dir) {
+                Ok(mut log) => {
+                    if let Err(e) = crate::tree::project_run_started(
+                        tree, &self.store, timer, claim, &ctx.kind, &mut log,
+                    ) {
+                        eprintln!("bellman: timer tree fire projection failed: {e}");
+                    }
+                }
+                Err(e) => eprintln!("bellman: timer tree fire projection (log open) failed: {e}"),
+            }
+        }
+
         let action_res = self.action.on_fire(&ctx);
 
         // Dogfood: when the internal system.prune timer fires, run the prune
@@ -263,6 +298,8 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                     retention: self.config.retention,
                     interval: self.config.prune_interval,
                     ack_grace: self.config.ack_grace,
+                    max_current_bytes: self.config.log_rotation_max_bytes,
+                    budget_bytes: self.config.log_retention_budget_bytes,
                 };
                 let now = self.clock.wall_now();
                 if let Err(e) =
@@ -297,7 +334,22 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         }
 
         if let Err(e) = action_res {
+            // IK2: status.json stays the firing snapshot — the delivery
+            // failure is honest in the claim ledger and the wake_failed event
+            // (R5 `failed` is reserved for app reports, IK3). timer.json
+            // still picks up the advanced next_fire.
+            if let Some(tree) = tree.as_ref() {
+                refresh_timer_json(tree, &self.store, timer.id);
+            }
             return Err(SchedulerError::Action(e));
+        }
+
+        // IK2: timer.json picks up the advanced next_fire from
+        // mark_fired/requeue above. status.json intentionally stays at the
+        // firing snapshot: the R5 `completed` state is an app report (IK3),
+        // and the claim ledger's `Completed` only means wake_delivered.
+        if let Some(tree) = tree.as_ref() {
+            refresh_timer_json(tree, &self.store, timer.id);
         }
 
         Ok(Some(DeliveredFire {

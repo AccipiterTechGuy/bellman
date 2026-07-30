@@ -11,7 +11,9 @@ the defaults below.
 | `start_minimized` | bool | `false` | Start tray-only |
 | `wake_enabled` | bool | `false` | Master toggle: allow RTC wake-from-sleep (P7) |
 | `horizon_secs` | u64 | `86400` (24 h) | Near-horizon heap window |
-| `retention_days` | u64 | `30` | JSONL archive retention |
+| `retention_days` | u64 | `30` | JSONL archive retention (30-day history) |
+| `log_rotation_max_bytes` | u64 | `67108864` (64 MiB) | Rotate `events.current.jsonl` before an append crosses this |
+| `log_retention_budget_bytes` | u64 | `1073741824` (1 GiB) | Retained-log budget: current + archives; oldest archives pruned first |
 | `min_free_slots` | usize | `5` | Empty free-slot floor |
 | `max_concurrent_actions` | usize | `16` | Global wake-action concurrency cap (1..=256) |
 | `ack_grace_secs` | u64 | `60` | Grace before terminal one-shots are prune-eligible |
