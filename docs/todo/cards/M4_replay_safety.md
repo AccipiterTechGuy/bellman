@@ -33,6 +33,11 @@ By now it has shipped and been exercised for three cards.
 
 ## Do NOT
 
+- **Do not expose an arbitrary typing primitive to agents** (D-6). If this card adds
+  `bellman type` / `bellman key`, they are for humans and for macro steps only. An agent must
+  never be able to compose novel keystrokes — it may only replay a macro a human recorded and
+  approved. That capability minimisation is the control the dropped virtual-keyboard overlay
+  was reaching for; do not hand it back through a CLI flag.
 - **Do not put the abort path behind the gate** (D-15). Stopping needs no password, no token
   and no unlocked store. `replay()` takes a `RunToken`; `abort()` takes nothing.
 - No conditionals. Ever. A fixed count only (D-9).
