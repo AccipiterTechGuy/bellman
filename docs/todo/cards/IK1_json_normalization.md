@@ -24,7 +24,14 @@ Three shapes grew in three cards and drifted:
   becomes `occurrence_kind`, and it gains a real top-level `kind` (`fired`).
 - Rename `ts` → `logged_at`, `next_fire` → `next_fire_at`. Every timestamp ends `_at`;
   `scheduled_for` is the one deliberate exception — it is an intent, not an occurrence.
-- One run-state vocabulary, per R5, shared by the log and (later) the reply channel.
+- One run-state vocabulary, per R5, shared by the log and (later) the reply channel. This
+  means **adding event kinds that do not exist yet** — `acknowledged`, `running`, `completed`,
+  `failed`, `superseded`, `reply_rejected` — alongside today's `Registered · Fired · FiredLate ·
+  SkippedMisfire · Coalesced · WakeDelivered · WakeFailed · NoAck · Pruned · YearRecalibrate ·
+  WakeCapability`. IK3 consumes them; the vocabulary belongs here.
+- Note while you are in there: **`NoAck` is declared but emitted nowhere** today, and
+  `ack_grace` currently serves the pruner's one-shot terminality check rather than acking.
+  Do not assume the ack machinery is more built than it is.
 - Update `docs/INTEGRATION.md` and the four copy-paste clients to match.
 
 ## Do NOT

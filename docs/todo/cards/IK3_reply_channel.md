@@ -134,6 +134,38 @@ fully-supported app — most will be. So:
 
 Bellman watches it, validates, logs the transition, and folds the result into `status.json`.
 
+### Every transition is appended to the event log
+
+With no `runs/`, **`events.current.jsonl` is the only per-run record**. A transition that
+never reaches it is gone permanently — so logging is not incidental here, it is the durability
+story.
+
+These event kinds are **new** and do not exist in `EventKind` today (the enum has
+`Registered · Fired · FiredLate · SkippedMisfire · Coalesced · WakeDelivered · WakeFailed ·
+NoAck · Pruned · YearRecalibrate · WakeCapability`). IK1 owns the vocabulary, so they are
+added there and consumed here:
+
+| kind | written when | carries |
+|---|---|---|
+| `acknowledged` | the app first answers | `app_name`, `expected_secs`, `error_detection` |
+| `running` | a heartbeat or progress update | `progress` (omit if absent) |
+| `completed` | the app reports success | `duration_ms`, `result` |
+| `failed` | the app reports failure, or a watchdog expires | `failure_kind`, `reason` |
+| `superseded` | the timer fires again over an open run | the abandoned `run_id` |
+| `reply_rejected` | validation refuses a reply | `reason` |
+
+Every line carries `run_id` and `timer_id`, so one run's whole story is `grep`-able by id.
+
+**One line per observed transition, not per file write.** A heartbeat that changes only
+`heartbeat_at` is not a state change and must not append a line — otherwise a long job floods
+the log. Log when the *state* moves, or when `progress` text changes.
+
+**Reconstruct what the watcher missed.** If the app moves `acknowledged` → `completed`
+between two watcher ticks, Bellman sees only `completed` — but the accumulated
+`acknowledged_at` is still in the file. Emit both lines, using the app's own timestamps
+rather than the observation time, so the log reflects what happened rather than when we
+noticed.
+
 ## `status.json` is the MIRROR — this is the point of the card
 
 **`cat status.json` must always show the truth right now.** Not "what Bellman knows", not
@@ -247,7 +279,10 @@ keep that safe:
 ## Exit gate
 
 - Full chain observed: fired → acknowledged → running → completed, each transition in the log
-  under one `run_id`.
+  under one `run_id`, using the app's own timestamps.
+- A transition the watcher never observed directly is still logged, reconstructed from the
+  accumulated timestamps in `reply.json`.
+- A heartbeat that changes only `heartbeat_at` appends **no** log line.
 - **The mirror holds at every step**: after each app write, `cat status.json` shows that
   state and every field reported so far — asserted at all four points, not only at the end.
   A `status.json` still reading `fired` after the app acknowledged is a failure of this card
