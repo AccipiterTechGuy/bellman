@@ -27,7 +27,10 @@ request/response **channel**. Two trees, two jobs.
 ## Scope
 
 - `timers/<slug>-<short-id>/` with `timer.json`, `status.json`, `runs/`, and a `README.txt`
-  at the root explaining the layout to whoever opens it.
+  at the root explaining the layout to whoever opens it. The README must state which file
+  answers the question: **`status.json` is the truth; `reply.json` is only the app's side.**
+  They diverge whenever Bellman judged a run (`no_ack`, watchdog expiry) and the app did not
+  speak — see IK3.
 - **Slug rules identical on all three platforms.** See the verified rules below — the
   original phrasing of this card was wrong on the most dangerous case.
 - **Renaming a timer does not rename the folder** — integrations depend on the path. The live

@@ -179,6 +179,33 @@ held to a deadline **it declared itself** — not Bellman guessing. Default fals
 
 Cheap to build because Bellman is a scheduler — a deadline is one entry in the existing heap.
 
+### Where the failure is written — the two files diverge, on purpose
+
+When the deadline expires the app is, by definition, silent. So **Bellman writes the failure
+into `status.json` and the event log, and does not touch `reply.json`.**
+
+```
+status.json   state: "failed", failure_kind: "timed_out", failed_at: "…"
+reply.json    state: "running"          ← unchanged, the app's last word
+```
+
+That divergence is correct and must not be "fixed":
+
+- `reply.json` is **what the app said**. The app said `running` and then said nothing. Writing
+  a failure into it would put words in the app's mouth — and would break the single-writer
+  rule that makes the whole split safe.
+- `status.json` is **the truth about the run**, which includes Bellman's own judgement.
+
+`no_ack` has the same shape: the app never touched `reply.json` at all, so the stub still
+reads `state: null` while `status.json` reads `no_ack`.
+
+**A human browsing the folder must be told which to read.** The `README.txt` from IK2 has to
+say it plainly: `status.json` is the answer; `reply.json` is only the app's side of the
+conversation.
+
+When the app eventually does reply `completed`, Bellman folds it in and `status.json` revises
+— see the next section. At that point the two agree again.
+
 ## A late reply REVISES the state
 
 `completed` arriving after a run was marked failed moves it to `completed`. Three properties
@@ -214,6 +241,10 @@ keep that safe:
 - An app that never replies stays `running` **indefinitely** — no auto-complete, no auto-fail.
 - With `error_detection` on: the deadline marks `failed`/`timed_out`; a heartbeat before it
   prevents that; a late `completed` revises the state and the log retains both.
+- **On watchdog expiry `reply.json` is byte-identical to what the app last wrote** — Bellman
+  writes the failure to `status.json` and the log only. Asserted, because writing it into
+  `reply.json` is the obvious-looking wrong move.
+- On `no_ack`, `reply.json` is still the untouched stub while `status.json` reads `no_ack`.
 - The stub exists at T0 with `state: null` and `app_name` pre-filled from the timer's owner;
   Bellman does not act on it.
 - An app that edits the stub and an app that writes a minimal file both work.
