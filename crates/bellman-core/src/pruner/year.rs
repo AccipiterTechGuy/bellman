@@ -79,7 +79,7 @@ pub fn run_year_recalibration(
 
     if let Some(log) = event_log {
         let rec = EventRecord::new(EventKind::YearRecalibrate)
-            .with_ts(now)
+            .with_logged_at(now)
             .with_message(format!("year={year}"))
             .with_count(u32::try_from(checked).unwrap_or(u32::MAX))
             .with_detail(serde_json::json!({

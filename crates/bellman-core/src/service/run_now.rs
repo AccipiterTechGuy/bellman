@@ -210,18 +210,7 @@ pub fn publish_fire_slot_response(
     let runs = store
         .unacked_runs_for_timer(timer.id, 64)
         .map_err(|e| e.to_string())?;
-    let events: Vec<SlotRunEvent> = runs
-        .into_iter()
-        .map(|run| SlotRunEvent {
-            event_sequence: run.event_sequence,
-            run_id: run.run_id,
-            timer_id: run.timer_id,
-            scheduled_for: run.scheduled_for,
-            status: run.status.as_str().to_string(),
-            claimed_at: run.claimed_at,
-            completed_at: run.completed_at,
-        })
-        .collect();
+    let events: Vec<SlotRunEvent> = runs.iter().map(SlotRunEvent::from_claim).collect();
 
     let response = SlotResponse {
         schema: SCHEMA_V1.to_string(),
@@ -229,7 +218,7 @@ pub fn publish_fire_slot_response(
         request_id: rec.request_id.clone(),
         status: SlotStatus::Ok,
         timer_id: Some(timer.id),
-        next_fire: timer.next_fire_utc,
+        next_fire_at: timer.next_fire_utc,
         error: None,
         events,
     };

@@ -161,7 +161,7 @@ pub fn build_truth_window(
         if !is_outcome_event(ev.kind) {
             continue;
         }
-        let when = ev.scheduled_for.unwrap_or(ev.ts);
+        let when = ev.scheduled_for.unwrap_or(ev.logged_at);
         // Past-only for recorded display; also require it lands in the window.
         if when >= opts.now_utc {
             continue;
@@ -682,22 +682,22 @@ mod tests {
                 .with_timer(tid, "Old Name")
                 .with_run(run_ok)
                 .with_scheduled_for(sched_ok)
-                .with_ts(sched_ok),
+                .with_logged_at(sched_ok),
             EventRecord::new(EventKind::WakeDelivered)
                 .with_timer(tid, "Old Name")
                 .with_run(run_ok)
                 .with_scheduled_for(sched_ok)
-                .with_ts(sched_ok + Duration::seconds(1)),
+                .with_logged_at(sched_ok + Duration::seconds(1)),
             EventRecord::new(EventKind::Fired)
                 .with_timer(tid, "Old Name")
                 .with_run(run_fail)
                 .with_scheduled_for(sched_fail)
-                .with_ts(sched_fail),
+                .with_logged_at(sched_fail),
             EventRecord::new(EventKind::WakeFailed)
                 .with_timer(tid, "Old Name")
                 .with_run(run_fail)
                 .with_scheduled_for(sched_fail)
-                .with_ts(sched_fail + Duration::seconds(2))
+                .with_logged_at(sched_fail + Duration::seconds(2))
                 .with_error("launch failed"),
         ];
         // Live timer was renamed.
@@ -740,7 +740,7 @@ mod tests {
             .with_timer(tid, "daily")
             .with_run(Uuid::new_v4())
             .with_scheduled_for(sched)
-            .with_ts(sched)];
+            .with_logged_at(sched)];
         let now = Utc.with_ymd_and_hms(2026, 7, 29, 12, 0, 0).unwrap();
         let win = build_truth_window(
             &[task],
@@ -774,7 +774,7 @@ mod tests {
             .with_timer(tid, "late-one")
             .with_run(Uuid::new_v4())
             .with_scheduled_for(sched)
-            .with_ts(sched + Duration::minutes(20))];
+            .with_logged_at(sched + Duration::minutes(20))];
         let task = daily_with_id(&tid.to_string(), "late-one", 8, 0, "UTC");
         let win = build_truth_window(
             &[task],
@@ -807,7 +807,7 @@ mod tests {
             .with_timer(tid, "split")
             .with_run(Uuid::new_v4())
             .with_scheduled_for(morning)
-            .with_ts(morning)];
+            .with_logged_at(morning)];
         let win = build_truth_window(
             &[task],
             &events,
@@ -846,7 +846,7 @@ mod tests {
             .with_timer(tid, "edited")
             .with_run(Uuid::new_v4())
             .with_scheduled_for(morning)
-            .with_ts(morning)];
+            .with_logged_at(morning)];
         let task = daily_with_id(&tid.to_string(), "edited", 15, 0, "UTC");
         let now = Utc.with_ymd_and_hms(2026, 7, 29, 12, 0, 0).unwrap();
         let win = build_truth_window(
@@ -879,7 +879,7 @@ mod tests {
             .with_timer(tid, "gone-timer")
             .with_run(Uuid::new_v4())
             .with_scheduled_for(sched)
-            .with_ts(sched)
+            .with_logged_at(sched)
             .with_count(3)];
         // No live tasks — timer was deleted.
         let now = Utc.with_ymd_and_hms(2026, 7, 29, 12, 0, 0).unwrap();
@@ -991,7 +991,7 @@ mod tests {
             .with_timer(tid, "Historical Name")
             .with_run(run_id)
             .with_scheduled_for(sched)
-            .with_ts(sched)];
+            .with_logged_at(sched)];
         let mut task = daily_with_id(&tid.to_string(), "NEW CURRENT NAME", 8, 0, "UTC");
         task.enabled = false;
         let now = Utc.with_ymd_and_hms(2026, 7, 29, 12, 0, 0).unwrap();
@@ -1034,7 +1034,7 @@ mod tests {
             .with_timer(tid, "month-browse")
             .with_run(Uuid::new_v4())
             .with_scheduled_for(rec_sched)
-            .with_ts(rec_sched)];
+            .with_logged_at(rec_sched)];
         let cur = build_truth_window(
             std::slice::from_ref(&task),
             &events,
@@ -1081,7 +1081,7 @@ mod tests {
             .with_timer(tid, "audit-duplicate")
             .with_run(run_id)
             .with_scheduled_for(sched)
-            .with_ts(sched)
+            .with_logged_at(sched)
             .with_error("launch failed")];
         let claims = vec![RunClaim {
             run_id,
@@ -1127,7 +1127,7 @@ mod tests {
         let events = vec![EventRecord::new(EventKind::Fired)
             .with_timer(tid, "no-run-id-ev")
             .with_scheduled_for(sched)
-            .with_ts(sched)];
+            .with_logged_at(sched)];
         // No .with_run on the event.
         let claims = vec![RunClaim {
             run_id,
@@ -1212,7 +1212,7 @@ mod tests {
             .with_timer(tid, "browse")
             .with_run(Uuid::new_v4())
             .with_scheduled_for(rec_sched)
-            .with_ts(rec_sched)];
+            .with_logged_at(rec_sched)];
         let cur = build_truth_window(
             std::slice::from_ref(&task),
             &events,

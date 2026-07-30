@@ -128,7 +128,7 @@ export function buildClientTruthEntries({ timers = [], events = [], from, to, no
   for (const ev of events || []) {
     const kind = ev.kind || '';
     if (!isOutcomeKind(kind)) continue;
-    const whenIso = ev.scheduled_for || ev.scheduledFor || ev.ts;
+    const whenIso = ev.scheduled_for || ev.scheduledFor || ev.logged_at;
     const when = parseUtc(whenIso);
     if (!when) continue;
     if (when.getTime() >= nowMs) continue;

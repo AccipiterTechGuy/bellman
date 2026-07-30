@@ -1063,7 +1063,7 @@ mod tests {
                 .with_timer(tid, "Historical Failed")
                 .with_run(run_fail_id)
                 .with_scheduled_for(sched_fail)
-                .with_ts(sched_fail)
+                .with_logged_at(sched_fail)
                 .with_error("boom"),
         )
         .unwrap();

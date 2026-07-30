@@ -107,7 +107,7 @@
   <div class="history-list">
     {#each filteredEvents.slice().reverse() as e (e.event_id)}
       <div class="log-line">
-        <span class="ts">{fmtTs(e.ts)}</span>
+        <span class="ts">{fmtTs(e.logged_at)}</span>
         <span class="kind {kindClass(e.kind)}">{e.kind}</span>
         <span class="msg">
           {#if e.timer_name}

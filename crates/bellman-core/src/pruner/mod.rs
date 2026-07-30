@@ -246,7 +246,7 @@ pub fn run_prune(
             report.timers_pruned = report.timers_pruned.saturating_add(1);
             report.pruned_timer_ids.push(id);
             let tomb = EventRecord::new(EventKind::Pruned)
-                .with_ts(now)
+                .with_logged_at(now)
                 .with_timer(id, name)
                 .with_message("elapsed_oneshot")
                 .with_detail(serde_json::json!({
