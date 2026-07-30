@@ -22,7 +22,7 @@ pub use launch::{run_launch, LaunchConfig, LaunchError, LaunchOutcome, DEFAULT_O
 pub use notify::{notify_stub, NotifyOutcome};
 pub use notify_sink::{NotifySink, StubNotifySink};
 pub use runner::{ActionRunner, ActionRunnerConfig, ActionRunnerError};
-pub use write_slot::{write_output_slot, WriteSlotPayload};
+pub use write_slot::{write_output_slot, WriteSlotPayload, FIRE_SCHEMA_V1};
 
 #[cfg(test)]
 mod tests;

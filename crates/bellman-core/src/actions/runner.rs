@@ -3,7 +3,7 @@
 use super::concurrency::{ActionLimiter, DEFAULT_MAX_CONCURRENT_ACTIONS};
 use super::launch::{run_launch, LaunchConfig, DEFAULT_OUTPUT_CAP_BYTES, DEFAULT_TIMEOUT};
 use super::notify_sink::{NotifySink, StubNotifySink};
-use super::write_slot::{write_output_slot, WriteSlotPayload};
+use super::write_slot::{write_output_slot, WriteSlotPayload, FIRE_SCHEMA_V1};
 use crate::events::{EventKind, EventLog, EventRecord};
 use crate::scheduler::{FireAction, FireContext, FireKind};
 use crate::store::{Action, OverlapPolicy, TimerId};
@@ -259,16 +259,28 @@ impl ActionRunner {
             .clone()
             .unwrap_or_else(|| format!("run-{}.json", ctx.run_id));
         let payload = WriteSlotPayload {
-            schema: "bellman-fire/1",
+            schema: FIRE_SCHEMA_V1.to_string(),
+            kind: fire_event_kind(&ctx.kind).to_string(),
             timer_id: ctx.timer.id,
             timer_name: ctx.timer.name.clone(),
             run_id: ctx.run_id,
             scheduled_for: ctx.scheduled_for,
             fired_at: chrono::Utc::now(),
-            kind: fire_kind_label(&ctx.kind),
+            occurrence_kind: fire_kind_label(&ctx.kind),
         };
         let path = write_output_slot(dir, &file, &payload)?;
         Ok(Some(path))
+    }
+}
+
+/// R2: top-level `kind` is the event kind (R5 vocabulary), mirroring the
+/// [`EventKind`] the runner logs for the same fire.
+fn fire_event_kind(kind: &FireKind) -> &'static str {
+    match kind {
+        FireKind::OnTime => EventKind::Fired.as_str(),
+        FireKind::Late { .. } => EventKind::FiredLate.as_str(),
+        FireKind::Coalesced { .. } => EventKind::Coalesced.as_str(),
+        FireKind::CatchUp { .. } => EventKind::Fired.as_str(),
     }
 }
 

@@ -88,8 +88,8 @@ impl SlotService {
                 "publish requires operation (add|modify|delete)".into(),
             ));
         }
-        if request.ts.is_none() {
-            request.ts = Some(Utc::now());
+        if request.logged_at.is_none() {
+            request.logged_at = Some(Utc::now());
         }
         if request.schema.is_empty() {
             request.schema = super::envelope::SCHEMA_V1.to_string();
@@ -484,18 +484,7 @@ fn events_for_tx(
 ) -> SlotResult<Vec<SlotRunEvent>> {
     let runs = Store::unacked_runs_for_timer_in_tx(tx, timer_id, max_events)
         .map_err(SlotError::from)?;
-    Ok(runs
-        .into_iter()
-        .map(|run| SlotRunEvent {
-            event_sequence: run.event_sequence,
-            run_id: run.run_id,
-            timer_id: run.timer_id,
-            scheduled_for: run.scheduled_for,
-            status: run.status.as_str().to_string(),
-            claimed_at: run.claimed_at,
-            completed_at: run.completed_at,
-        })
-        .collect())
+    Ok(runs.iter().map(SlotRunEvent::from_claim).collect())
 }
 
 /// Build a ready-to-publish add request.
@@ -526,7 +515,7 @@ pub fn make_add_request(
         schema: super::envelope::SCHEMA_V1.to_string(),
         slot_id: String::new(), // filled on publish from free stub
         request_id: Some(Uuid::new_v4().to_string()),
-        ts: Some(Utc::now()),
+        logged_at: Some(Utc::now()),
         operation: Some(SlotOperation::Add),
         payload: Some(payload),
     }

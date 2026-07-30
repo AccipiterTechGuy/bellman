@@ -4,7 +4,16 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Wire schema identifier carried by every event-log line (R1).
+pub const EVENT_SCHEMA_V1: &str = "bellman-event/1";
+
 /// Lifecycle event kinds written to the JSONL log.
+///
+/// This is the Bellman-written half of the single R5 run-state vocabulary
+/// (`registered`, `fired`, `fired_late`, `no_ack`, `skipped_misfire`,
+/// `coalesced`, `pruned`, `wake_*`, `year_recalibrate`). The app-written half
+/// (`acknowledged`, `running`, `completed`, `failed`) arrives with the reply
+/// channel (IK3); slot run events reuse these same strings.
 ///
 /// String form matches the product vocabulary (`registered`, `fired`, …).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -64,9 +73,12 @@ impl std::fmt::Display for EventKind {
 /// `deny_unknown_fields` (BUILD_PLAN rule 7).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventRecord {
-    /// Wall-clock timestamp of the event (UTC).
-    pub ts: DateTime<Utc>,
-    /// Lifecycle kind.
+    /// Schema id (`bellman-event/1`) so consumers can version-check (R1).
+    #[serde(default = "default_event_schema")]
+    pub schema: String,
+    /// Wall-clock timestamp when the event was logged (UTC).
+    pub logged_at: DateTime<Utc>,
+    /// Lifecycle kind (R2: top-level `kind` is always the event kind).
     pub kind: EventKind,
     /// Stable event id (dedupe / correlation).
     pub event_id: Uuid,
@@ -99,11 +111,16 @@ pub struct EventRecord {
     pub detail: Option<serde_json::Value>,
 }
 
+fn default_event_schema() -> String {
+    EVENT_SCHEMA_V1.to_string()
+}
+
 impl EventRecord {
-    /// Build a minimal event with a fresh `event_id` and `ts = now`.
+    /// Build a minimal event with a fresh `event_id` and `logged_at = now`.
     pub fn new(kind: EventKind) -> Self {
         Self {
-            ts: Utc::now(),
+            schema: EVENT_SCHEMA_V1.to_string(),
+            logged_at: Utc::now(),
             kind,
             event_id: Uuid::new_v4(),
             timer_id: None,
@@ -159,8 +176,8 @@ impl EventRecord {
         self
     }
 
-    pub fn with_ts(mut self, ts: DateTime<Utc>) -> Self {
-        self.ts = ts;
+    pub fn with_logged_at(mut self, logged_at: DateTime<Utc>) -> Self {
+        self.logged_at = logged_at;
         self
     }
 }

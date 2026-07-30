@@ -100,7 +100,7 @@ fn tolerant_reader_skips_torn_tail_and_garbage() {
     writeln!(f, "{good1}").unwrap();
     writeln!(f, "{{this is not json").unwrap(); // garbage line
     writeln!(f, "{good2}").unwrap();
-    write!(f, "{{\"ts\":\"2026-01-01T00:00:00Z\",\"kind\":\"fired\"").unwrap(); // torn tail
+    write!(f, "{{\"logged_at\":\"2026-01-01T00:00:00Z\",\"kind\":\"fired\"").unwrap(); // torn tail
     f.flush().unwrap();
     drop(f);
 
