@@ -42,7 +42,7 @@ everything about one timer. Both present on every message where they apply.
 | `completed` | **the app** | yes |
 | `failed` | **the app** | yes |
 | `no_ack` | Bellman — nobody picked it up | yes |
-| `timed_out` | Bellman — only if the app set `error_detection` | yes (late replies still accepted) |
+| `failed` (`failure_kind: "timed_out"`) | Bellman — only if the app set `error_detection` | **revisable** — a late app reply supersedes it |
 | `skipped_misfire`, `coalesced`, `pruned`, `wake_*`, `year_recalibrate` | Bellman | as today |
 
 **R6 — readers stay tolerant.** Unknown fields ignored, never `deny_unknown_fields`
@@ -75,15 +75,27 @@ When enabled:
   exactly the stated second means every app pads its estimate and the field becomes fiction.
 - **A heartbeat restarts the countdown.** An app reporting progress is alive and must not be
   timed out. This is what makes heartbeats worth sending.
-- **The outcome is `timed_out`, not `failed`.** We do not know the work failed — the
-  reporting went quiet. Three distinct not-success endings keep the log honest:
-  `failed` (the app said so) · `timed_out` (its own deadline passed in silence) ·
-  `no_ack` (nobody ever picked it up).
+- **The outcome is `failed` with `failure_kind: "timed_out"`.** One state to reason about,
+  and the distinction is preserved where it matters: `reported` means the app said it
+  failed, `timed_out` means the app went quiet past its own deadline. Those need different
+  reactions from a human. (`no_ack` stays its own state — nobody ever picked the run up.)
 - **Marking is not killing.** Bellman flags the run; it does not terminate the process. If
   Bellman launched it, killing may be a separate opt-in later — a different decision that
   must not ride along silently with this one.
-- **A late reply is accepted.** `completed` arriving after `timed_out` is taken and logged as
-  late. Same rule as a late ack: better a late truth than a permanent lie.
+- **A late reply REVISES the state.** `completed` arriving after the run was marked failed
+  moves it to `completed`. The state always shows the best available truth; nothing stays a
+  lie. Three properties make that safe:
+
+  - **The log does not flip.** `status.json` holds the latest state; `events.current.jsonl`
+    is append-only and keeps both facts, so "marked failed 05:15, completed 05:22" survives.
+    That sequence is the interesting story and would be lost if only the state remained.
+  - **One direction only.** An app's own report always beats Bellman's inference — Bellman
+    *deduced* silence, the app *knows*. Bellman must never flip an app's `completed` back to
+    failed. Bellman's guesses are overridable; the app's claims are not.
+  - **`runs/` must not freeze too early.** A run archived at the deadline would be frozen
+    wrong. Either freeze only on an app report, or let a late reply rewrite the frozen file.
+    Lateness is bounded naturally: once the run is pruned its `run_id` is unknown and the
+    reply is rejected, which is already a rule.
 
 Cheap to implement precisely because Bellman is a scheduler — a watchdog deadline is one
 entry in the heap it already runs.
