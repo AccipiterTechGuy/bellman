@@ -76,3 +76,68 @@ unknown fields, so additive parts cost nothing.
 
 Renames: `ts` → `logged_at`; `next_fire` → `next_fire_at`; fire-notification `kind` →
 `occurrence_kind`, with top-level `kind` becoming the event kind.
+
+---
+
+# The per-timer folder tree
+
+A human-browsable view of state. Open a folder in a file manager and read what happened —
+no CLI, no log parsing.
+
+```
+~/.bellman/timers/
+├── README.txt
+├── bulb-test-3f1a/
+│   ├── timer.json      what the timer IS      (Bellman writes, you read)
+│   ├── status.json     the CURRENT run        (Bellman + the app write)
+│   └── runs/           one file per past run  (frozen at close)
+└── morning-backup-7b22/
+```
+
+**This tree is a VIEW, not the record.** The database is the source of truth for timers, and
+`logs/events.current.jsonl` is the durable history of everything that fired. The folders can
+be deleted, rebuilt or lost without losing anything permanent — that is what makes the rules
+below safe.
+
+Keep it separate from `slots/`, which is the transient request/response **channel**. Two
+trees, two jobs.
+
+## Naming
+
+`<slug>-<short-id>/` — readable *and* unique. The slug rule must be identical on all three
+platforms, and must handle Windows' reserved names (`CON`, `PRN`, `AUX`, `NUL`, …) and its
+refusal of trailing dots, or a timer that works on Linux breaks on Windows.
+
+**Renaming a timer does not rename the folder.** The path stays stable because integrations
+depend on it; the live name lives in `timer.json`.
+
+## Deletion — decided
+
+**Deleting a timer deletes its folder, including `runs/`.** No tombstone, no orphan tree.
+
+Safe precisely because the event log survives: "what fired, and when" is answerable forever
+from `events.current.jsonl` regardless of which folders still exist.
+
+Two cases that follow:
+
+- **An open run at delete time.** Close it first — mark the run terminal (`cancelled`) in the
+  event log, *then* remove the folder. An app whose `status.json` has vanished must read that
+  as cancelled, not crash. Do not delete out from under a live run silently.
+- **Orphan folders.** A crash between the database delete and the folder delete leaves a tree
+  with no timer. The pruner already does orphan sweeps for slots — extend it here.
+
+## `runs/` retention — OPEN
+
+Needs a decision before build. The hazard is not disk, it is browsability: Bellman supports
+interval timers at second resolution, so a per-minute timer produces **43,200 files in 30
+days**. A folder like that is useless to the human this tree exists for.
+
+Recommended default: **keep the last 50 runs per timer, and nothing older than 30 days,
+whichever bites first.** Thirty days matches the event-log archive policy already in place;
+the count cap is what keeps the folder readable. Both configurable.
+
+## `timer.json` is readable, not authoritative
+
+Bellman writes it, humans read it. Hand edits are ignored — the database wins. The file
+carries a `note` field saying so, because someone will open it, change the time, and wonder
+why nothing happened.
