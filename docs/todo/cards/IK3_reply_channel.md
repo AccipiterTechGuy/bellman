@@ -148,7 +148,7 @@ added there and consumed here:
 | kind | written when | carries |
 |---|---|---|
 | `acknowledged` | the app first answers | `app_name`, `expected_secs`, `error_detection` |
-| `running` | a heartbeat or progress update | `progress` (omit if absent) |
+| `running` | the app first enters `running` — **once**, on the state change | — |
 | `completed` | the app reports success | `duration_ms`, `result` |
 | `failed` | the app reports failure, or a watchdog expires | `failure_kind`, `reason` |
 | `superseded` | the timer fires again over an open run | the abandoned `run_id` |
@@ -156,9 +156,16 @@ added there and consumed here:
 
 Every line carries `run_id` and `timer_id`, so one run's whole story is `grep`-able by id.
 
-**One line per observed transition, not per file write.** A heartbeat that changes only
-`heartbeat_at` is not a state change and must not append a line — otherwise a long job floods
-the log. Log when the *state* moves, or when `progress` text changes.
+**Heartbeats and progress are NEVER logged.** Not the timestamps, not the text, not once.
+They belong to the live view only — `status.json` and the GUI. A six-hour job with a
+30-second heartbeat must add exactly **zero** lines to the log between `running` and
+`completed`.
+
+The log records **state transitions only**: one line each for `acknowledged`, `running`,
+`completed`. Repeated writes inside a state append nothing.
+
+Consequence worth knowing: because progress never reaches the log, the live view is the
+**only** place it is ever visible. See the GUI card.
 
 **Reconstruct what the watcher missed.** If the app moves `acknowledged` → `completed`
 between two watcher ticks, Bellman sees only `completed` — but the accumulated
@@ -282,7 +289,8 @@ keep that safe:
   under one `run_id`, using the app's own timestamps.
 - A transition the watcher never observed directly is still logged, reconstructed from the
   accumulated timestamps in `reply.json`.
-- A heartbeat that changes only `heartbeat_at` appends **no** log line.
+- A long run with many heartbeats and changing `progress` appends **zero** log lines between
+  `running` and `completed` — asserted by counting lines, not by inspection.
 - **The mirror holds at every step**: after each app write, `cat status.json` shows that
   state and every field reported so far — asserted at all four points, not only at the end.
   A `status.json` still reading `fired` after the app acknowledged is a failure of this card
