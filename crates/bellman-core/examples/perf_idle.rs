@@ -16,7 +16,7 @@
 //! - `perf_idle_report.json` — measured numbers + method
 
 use bellman_core::actions::{ActionRunner, ActionRunnerConfig};
-use bellman_core::events::{read_events, EventKind, EventLog, EventLogConfig};
+use bellman_core::events::{read_events, RunState, EventLog, EventLogConfig};
 use bellman_core::occurrence::{Occurrence, OccurrenceKind};
 use bellman_core::scheduler::{Scheduler, SchedulerConfig, SystemClock};
 use bellman_core::store::{Action, MisfirePolicy, NewTimer, OpenOptions, Store};
@@ -158,11 +158,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // fire and must not double-count wakeups/min.
     let fired = recs
         .iter()
-        .filter(|r| matches!(r.kind, EventKind::Fired | EventKind::FiredLate))
+        .filter(|r| matches!(r.kind, RunState::Fired | RunState::FiredLate))
         .count();
     let wake_delivered = recs
         .iter()
-        .filter(|r| r.kind == EventKind::WakeDelivered)
+        .filter(|r| r.kind == RunState::WakeDelivered)
         .count();
     let elapsed_min = wall_elapsed.as_secs_f64() / 60.0;
     let wakeups_per_min = if elapsed_min > 0.0 {

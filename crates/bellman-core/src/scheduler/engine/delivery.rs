@@ -184,8 +184,9 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         let mut out = Vec::new();
         for claim in pending {
             let Some(timer) = self.store.get_timer(claim.timer_id)? else {
-                // Timer gone — complete the orphan claim so it does not loop.
-                let _ = self.store.complete_run(claim.run_id);
+                // Timer gone — close the orphan claim so it does not loop. The
+                // action was never delivered, so do not record it as success.
+                let _ = self.store.fail_run(claim.run_id);
                 continue;
             };
             if let Some(d) = self.finish_claimed_run(&timer, &claim, FireKind::Late {
@@ -272,10 +273,15 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             }
         }
 
-        // Complete even when the action fails so recovery does not infinite-loop;
-        // action errors still surface to the caller.
+        // Close the claim even when the action fails so recovery does not
+        // infinite-loop — but record the real outcome: delivered vs
+        // wake-failed. Action errors still surface to the caller.
         if claim.status == ClaimStatus::Claimed {
-            self.store.complete_run(claim.run_id)?;
+            if action_res.is_ok() {
+                self.store.complete_run(claim.run_id)?;
+            } else {
+                self.store.fail_run(claim.run_id)?;
+            }
         }
 
         // Advance last_fired only when this slot is not yet recorded (crash may

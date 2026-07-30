@@ -1,4 +1,4 @@
-//! Event kinds and the self-contained JSONL line shape.
+//! The R5 run-state vocabulary and the self-contained JSONL line shape.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -7,23 +7,27 @@ use uuid::Uuid;
 /// Wire schema identifier carried by every event-log line (R1).
 pub const EVENT_SCHEMA_V1: &str = "bellman-event/1";
 
-/// Lifecycle event kinds written to the JSONL log.
+/// The one R5 run-state vocabulary
+/// (`docs/todo/json_normalization.md`), shared by the event log
+/// (`EventRecord.kind`), the slot run-event feed (`SlotRunEvent.status`) and
+/// later the reply channel (IK3). Top-level `kind` everywhere means one of
+/// these states (R2).
 ///
-/// This is the Bellman-written half of the single R5 run-state vocabulary
-/// (`registered`, `fired`, `fired_late`, `no_ack`, `skipped_misfire`,
-/// `coalesced`, `pruned`, `wake_*`, `year_recalibrate`). The app-written half
-/// (`acknowledged`, `running`, `completed`, `failed`) arrives with the reply
-/// channel (IK3); slot run events reuse these same strings.
+/// Bellman writes `registered`, `fired`, `fired_late`, `no_ack`,
+/// `skipped_misfire`, `coalesced`, `pruned`, `wake_*` and
+/// `year_recalibrate`. The app writes `acknowledged`, `running`, `completed`
+/// and `failed` via its replies — Bellman never emits those four itself; a
+/// finished wake action is `wake_delivered` / `wake_failed`, not `completed`.
 ///
 /// String form matches the product vocabulary (`registered`, `fired`, …).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum EventKind {
+pub enum RunState {
     /// Timer created (CLI / slot / GUI).
     Registered,
-    /// Fire delivered on time (within ~1 s).
+    /// Fire delivered on time (within ~1 s). Run is open.
     Fired,
-    /// Fire delivered late but still within grace.
+    /// Fire delivered late but still within grace. Run is open.
     FiredLate,
     /// Missed fire dropped by misfire policy.
     SkippedMisfire,
@@ -41,9 +45,17 @@ pub enum EventKind {
     YearRecalibrate,
     /// Platform wake capability at startup or on transition (status line in `message`).
     WakeCapability,
+    /// App picked the run up (reply channel, IK3).
+    Acknowledged,
+    /// App heartbeat — run alive and in progress (reply channel, IK3).
+    Running,
+    /// App reported the run finished successfully (reply channel, IK3).
+    Completed,
+    /// App reported the run failed (reply channel, IK3).
+    Failed,
 }
 
-impl EventKind {
+impl RunState {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Registered => "registered",
@@ -57,11 +69,15 @@ impl EventKind {
             Self::Pruned => "pruned",
             Self::YearRecalibrate => "year_recalibrate",
             Self::WakeCapability => "wake_capability",
+            Self::Acknowledged => "acknowledged",
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
         }
     }
 }
 
-impl std::fmt::Display for EventKind {
+impl std::fmt::Display for RunState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
@@ -70,16 +86,16 @@ impl std::fmt::Display for EventKind {
 /// One self-contained JSONL line.
 ///
 /// Tolerant: unknown fields are ignored on read. Never use
-/// `deny_unknown_fields` (BUILD_PLAN rule 7).
+/// `deny_unknown_fields` (BUILD_PLAN rule 7). `schema` is required (R1) — a
+/// schema-less line is not an event and the tolerant reader skips it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventRecord {
     /// Schema id (`bellman-event/1`) so consumers can version-check (R1).
-    #[serde(default = "default_event_schema")]
     pub schema: String,
     /// Wall-clock timestamp when the event was logged (UTC).
     pub logged_at: DateTime<Utc>,
-    /// Lifecycle kind (R2: top-level `kind` is always the event kind).
-    pub kind: EventKind,
+    /// Run state (R2: top-level `kind` is always the R5 event kind).
+    pub kind: RunState,
     /// Stable event id (dedupe / correlation).
     pub event_id: Uuid,
     /// Related timer, when applicable.
@@ -111,13 +127,9 @@ pub struct EventRecord {
     pub detail: Option<serde_json::Value>,
 }
 
-fn default_event_schema() -> String {
-    EVENT_SCHEMA_V1.to_string()
-}
-
 impl EventRecord {
     /// Build a minimal event with a fresh `event_id` and `logged_at = now`.
-    pub fn new(kind: EventKind) -> Self {
+    pub fn new(kind: RunState) -> Self {
         Self {
             schema: EVENT_SCHEMA_V1.to_string(),
             logged_at: Utc::now(),

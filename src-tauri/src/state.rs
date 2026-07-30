@@ -122,7 +122,7 @@ impl AppState {
         if let Ok(mut log) = bellman_core::EventLog::open_under(&self.data_dir) {
             let _ = log.emit(
                 bellman_core::events::EventRecord::new(
-                    bellman_core::events::EventKind::WakeCapability,
+                    bellman_core::events::RunState::WakeCapability,
                 )
                 .with_message(line),
             );

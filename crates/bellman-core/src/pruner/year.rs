@@ -7,7 +7,7 @@
 //! a no-op when `last_recalibration >= year_start(now)`.
 
 use super::{PruneError, PruneResult};
-use crate::events::{EventKind, EventLog, EventRecord};
+use crate::events::{RunState, EventLog, EventRecord};
 use crate::store::{Store, TimerPatch, TimerUpdate};
 use chrono::{DateTime, Datelike, TimeZone, Utc};
 
@@ -78,7 +78,7 @@ pub fn run_year_recalibration(
     store.set_last_recalibration(now)?;
 
     if let Some(log) = event_log {
-        let rec = EventRecord::new(EventKind::YearRecalibrate)
+        let rec = EventRecord::new(RunState::YearRecalibrate)
             .with_logged_at(now)
             .with_message(format!("year={year}"))
             .with_count(u32::try_from(checked).unwrap_or(u32::MAX))

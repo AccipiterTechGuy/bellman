@@ -191,9 +191,9 @@ pub struct SlotRunEvent {
     pub run_id: Uuid,
     pub timer_id: Uuid,
     pub scheduled_for: DateTime<Utc>,
-    /// Run state from the single R5 vocabulary (`fired` = open, `completed` =
-    /// closed) — the same strings the event log uses in `kind`.
-    pub status: String,
+    /// Run state from the one R5 vocabulary ([`crate::events::RunState`]) —
+    /// the same strings the event log uses in `kind`.
+    pub status: crate::events::RunState,
     pub claimed_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
@@ -202,20 +202,23 @@ pub struct SlotRunEvent {
 impl SlotRunEvent {
     /// Project a runs-ledger row onto the wire shape.
     ///
-    /// The ledger's internal `ClaimStatus` (`claimed` / `completed`) maps onto
-    /// the R5 run-state vocabulary: an open claimed run is `fired` (Bellman
-    /// delivered it; the run is still open), a finished one is `completed`.
+    /// The ledger's internal `ClaimStatus` is delivery bookkeeping; the wire
+    /// speaks R5: an open claimed run is `fired`, a delivered wake action is
+    /// `wake_delivered`, a failed one is `wake_failed`. The R5 states
+    /// `completed` / `failed` are reserved for app reports (IK3) and are
+    /// never invented from scheduler bookkeeping.
     pub fn from_claim(run: &crate::store::RunClaim) -> Self {
         let status = match run.status {
-            crate::store::ClaimStatus::Claimed => "fired",
-            crate::store::ClaimStatus::Completed => "completed",
+            crate::store::ClaimStatus::Claimed => crate::events::RunState::Fired,
+            crate::store::ClaimStatus::Completed => crate::events::RunState::WakeDelivered,
+            crate::store::ClaimStatus::WakeFailed => crate::events::RunState::WakeFailed,
         };
         Self {
             event_sequence: run.event_sequence,
             run_id: run.run_id,
             timer_id: run.timer_id,
             scheduled_for: run.scheduled_for,
-            status: status.to_string(),
+            status,
             claimed_at: run.claimed_at,
             completed_at: run.completed_at,
         }

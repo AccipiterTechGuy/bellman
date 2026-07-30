@@ -12,7 +12,7 @@
 //! 5. shapes round-trip and unknown fields are still ignored on read (R6).
 
 use bellman_core::actions::{WriteSlotPayload, FIRE_SCHEMA_V1};
-use bellman_core::events::{EventKind, EventRecord, EVENT_SCHEMA_V1};
+use bellman_core::events::{RunState, EventRecord, EVENT_SCHEMA_V1};
 use bellman_core::slots::{
     SlotErrSidecar, SlotRequest, SlotResponse, SlotRunEvent, SCHEMA_V1,
 };
@@ -26,7 +26,7 @@ fn fixed() -> DateTime<Utc> {
 }
 
 fn sample_event_record() -> EventRecord {
-    EventRecord::new(EventKind::Fired)
+    EventRecord::new(RunState::Fired)
         .with_logged_at(fixed())
         .with_timer(Uuid::nil(), "tick")
         .with_run(Uuid::nil())
@@ -59,7 +59,7 @@ fn sample_run_claim(status: ClaimStatus) -> RunClaim {
         claimed_at: fixed(),
         completed_at: match status {
             ClaimStatus::Claimed => None,
-            ClaimStatus::Completed => Some(fixed()),
+            ClaimStatus::Completed | ClaimStatus::WakeFailed => Some(fixed()),
         },
         event_sequence: 7,
     }
@@ -135,15 +135,23 @@ fn top_level_kind_is_always_the_event_kind() {
     );
     assert_eq!(v["occurrence_kind"], "on_time");
 
-    // R5 run-state vocabulary on the run-event feed.
+    // R5 run-state vocabulary on the run-event feed: the ledger's internal
+    // bookkeeping projects onto the same `RunState` the event log uses, and
+    // never invents the app-reported `completed` / `failed`.
     assert_eq!(
         SlotRunEvent::from_claim(&sample_run_claim(ClaimStatus::Claimed)).status,
-        "fired",
+        RunState::Fired,
         "an open claimed run is `fired` in the R5 vocabulary"
     );
     assert_eq!(
         SlotRunEvent::from_claim(&sample_run_claim(ClaimStatus::Completed)).status,
-        "completed"
+        RunState::WakeDelivered,
+        "ledger-completed means Bellman delivered the wake action, not an app outcome"
+    );
+    assert_eq!(
+        SlotRunEvent::from_claim(&sample_run_claim(ClaimStatus::WakeFailed)).status,
+        RunState::WakeFailed,
+        "a failed wake action projects as wake_failed, never as success"
     );
 }
 
@@ -194,7 +202,7 @@ fn shapes_round_trip_and_ignore_unknown_fields() {
     v["future_field"] = serde_json::json!({"nested": true});
     let back: EventRecord = serde_json::from_value(v).unwrap();
     assert_eq!(back.schema, EVENT_SCHEMA_V1);
-    assert_eq!(back.kind, EventKind::Fired);
+    assert_eq!(back.kind, RunState::Fired);
     assert_eq!(back.logged_at, fixed());
 
     // SlotRequest (filled request, not just the stub).
@@ -212,7 +220,7 @@ fn shapes_round_trip_and_ignore_unknown_fields() {
     assert_eq!(back.schema, SCHEMA_V1);
     assert_eq!(back.next_fire_at, Some(fixed()));
     assert_eq!(back.events.len(), 1);
-    assert_eq!(back.events[0].status, "fired");
+    assert_eq!(back.events[0].status, RunState::Fired);
 
     // SlotErrSidecar.
     let sidecar = SlotErrSidecar::new("bad json", Some("0001".into()), None);
@@ -249,4 +257,47 @@ fn fire_notification_wire_keys() {
         assert!(obj.contains_key(key), "fire notification missing `{key}`: {v}");
     }
     assert_eq!(obj.len(), 8, "unexpected extra keys in fire notification: {v}");
+}
+
+#[test]
+fn event_record_requires_schema() {
+    // R1 clean break, no shim: a schema-less line is rejected (the tolerant
+    // reader then skips it) — never silently relabelled as the current
+    // version, so consumers can version-check.
+    let mut v = serde_json::to_value(sample_event_record()).unwrap();
+    v.as_object_mut().unwrap().remove("schema");
+    assert!(
+        serde_json::from_value::<EventRecord>(v).is_err(),
+        "EventRecord without `schema` must not deserialize"
+    );
+}
+
+#[test]
+fn run_state_is_the_one_r5_vocabulary() {
+    // Every R5 state, Bellman-written and app-written, lives in the single
+    // `RunState` enum shared by the event log and the slot run-event feed.
+    let cases = [
+        (RunState::Registered, "registered"),
+        (RunState::Fired, "fired"),
+        (RunState::FiredLate, "fired_late"),
+        (RunState::SkippedMisfire, "skipped_misfire"),
+        (RunState::Coalesced, "coalesced"),
+        (RunState::WakeDelivered, "wake_delivered"),
+        (RunState::WakeFailed, "wake_failed"),
+        (RunState::NoAck, "no_ack"),
+        (RunState::Pruned, "pruned"),
+        (RunState::YearRecalibrate, "year_recalibrate"),
+        (RunState::WakeCapability, "wake_capability"),
+        (RunState::Acknowledged, "acknowledged"),
+        (RunState::Running, "running"),
+        (RunState::Completed, "completed"),
+        (RunState::Failed, "failed"),
+    ];
+    for (state, name) in cases {
+        assert_eq!(state.as_str(), name);
+        let v = serde_json::to_value(state).unwrap();
+        assert_eq!(v, name);
+        let back: RunState = serde_json::from_value(v).unwrap();
+        assert_eq!(back, state);
+    }
 }

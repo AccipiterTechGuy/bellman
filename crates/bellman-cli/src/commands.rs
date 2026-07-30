@@ -3,7 +3,7 @@
 use crate::output;
 use crate::parse;
 use crate::resolve::{resolve_timer, ResolveError};
-use bellman_core::events::{EventKind, EventLog, EventLogConfig, EventRecord};
+use bellman_core::events::{RunState, EventLog, EventLogConfig, EventRecord};
 use bellman_core::slots::{
     SlotConfig, SlotRequest, SlotService, SlotStatus, SCHEMA_V1,
 };
@@ -321,7 +321,7 @@ pub fn add(db: &Path, args: AddArgs) -> Result<CommandPayload, CliError> {
     let logs_dir = resolve_logs_dir(db);
     if let Ok(mut log) = EventLog::open(EventLogConfig::new(&logs_dir)) {
         let _ = log.emit(
-            EventRecord::new(EventKind::Registered)
+            EventRecord::new(RunState::Registered)
                 .with_timer(timer.id, timer.name.clone())
                 .with_message("cli add"),
         );
@@ -517,7 +517,18 @@ pub fn run_now(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> 
         ..Default::default()
     };
 
-    let outcome = bellman_core::run_now(&mut store, db, timer.id, &opts).map_err(|e| {
+    let outcome = bellman_core::run_now(&mut store, db, timer.id, &opts);
+
+    // Overlay the full SlotResponse so consumers that parse done/ as
+    // bellman-slot/1 still see events + next_fire_at. Done on success AND
+    // failure: a failed wake must surface as `wake_failed` in the feed, not
+    // as silence.
+    if let (Some(root), Some(rec)) = (slots_root.as_ref(), slot_rec.as_ref()) {
+        let t = outcome.as_ref().map_or(&timer, |o| &o.timer);
+        let _ = bellman_core::publish_fire_slot_response(&store, root, t, rec);
+    }
+
+    let outcome = outcome.map_err(|e| {
         use bellman_core::RunNowError::*;
         let code = match e {
             NotFound { .. } => "not_found",
@@ -527,12 +538,6 @@ pub fn run_now(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> 
         };
         CliError::new(CMD, code, e.to_string())
     })?;
-
-    // Overlay the full SlotResponse so consumers that parse done/ as
-    // bellman-slot/1 still see events + next_fire_at.
-    if let (Some(root), Some(rec)) = (slots_root.as_ref(), slot_rec.as_ref()) {
-        let _ = bellman_core::publish_fire_slot_response(&store, root, &outcome.timer, rec);
-    }
 
     Ok(CommandPayload::RunNow {
         command: CMD,
@@ -667,7 +672,7 @@ pub fn slot_submit(
                     .map(|t| t.name)
                     .unwrap_or_default();
                 let _ = log.emit(
-                    EventRecord::new(EventKind::Registered)
+                    EventRecord::new(RunState::Registered)
                         .with_timer(tid, name)
                         .with_message(format!("slot-submit {request_id}")),
                 );

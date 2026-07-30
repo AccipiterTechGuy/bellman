@@ -6,7 +6,7 @@
 
 use super::build::ExpandableTask;
 use super::types::CalendarCaps;
-use crate::events::{EventKind, EventRecord};
+use crate::events::{RunState, EventRecord};
 use crate::store::{ClaimStatus, RunClaim};
 use chrono::{DateTime, Duration, NaiveDate, Timelike, Utc};
 use chrono_tz::Tz;
@@ -429,7 +429,7 @@ struct RecordBucket {
     run_id: Option<String>,
     scheduled_for: DateTime<Utc>,
     name: Option<String>,
-    kinds: Vec<EventKind>,
+    kinds: Vec<RunState>,
     /// True when at least one JSONL outcome event contributed.
     has_outcome_events: bool,
 }
@@ -506,16 +506,16 @@ fn resolve_or_create_bucket(
     bid
 }
 
-fn is_outcome_event(kind: EventKind) -> bool {
+fn is_outcome_event(kind: RunState) -> bool {
     matches!(
         kind,
-        EventKind::Fired
-            | EventKind::FiredLate
-            | EventKind::SkippedMisfire
-            | EventKind::Coalesced
-            | EventKind::WakeDelivered
-            | EventKind::WakeFailed
-            | EventKind::NoAck
+        RunState::Fired
+            | RunState::FiredLate
+            | RunState::SkippedMisfire
+            | RunState::Coalesced
+            | RunState::WakeDelivered
+            | RunState::WakeFailed
+            | RunState::NoAck
     )
 }
 
@@ -528,20 +528,20 @@ fn outcome_from_bucket(b: &RecordBucket) -> OutcomeLabel {
     outcome_from_kinds(&b.kinds)
 }
 
-fn outcome_from_kinds(kinds: &[EventKind]) -> OutcomeLabel {
+fn outcome_from_kinds(kinds: &[RunState]) -> OutcomeLabel {
     if kinds
         .iter()
-        .any(|k| matches!(k, EventKind::WakeFailed | EventKind::NoAck))
+        .any(|k| matches!(k, RunState::WakeFailed | RunState::NoAck))
     {
         return OutcomeLabel::Failed;
     }
-    if kinds.iter().any(|k| matches!(k, EventKind::SkippedMisfire)) {
+    if kinds.iter().any(|k| matches!(k, RunState::SkippedMisfire)) {
         return OutcomeLabel::Skipped;
     }
-    if kinds.iter().any(|k| matches!(k, EventKind::Coalesced)) {
+    if kinds.iter().any(|k| matches!(k, RunState::Coalesced)) {
         return OutcomeLabel::Coalesced;
     }
-    if kinds.iter().any(|k| matches!(k, EventKind::FiredLate)) {
+    if kinds.iter().any(|k| matches!(k, RunState::FiredLate)) {
         return OutcomeLabel::Late;
     }
     // Fired / WakeDelivered / CatchUp-as-Fired
@@ -678,22 +678,22 @@ mod tests {
         let sched_ok = Utc.with_ymd_and_hms(2026, 7, 28, 9, 0, 0).unwrap();
         let sched_fail = Utc.with_ymd_and_hms(2026, 7, 27, 9, 0, 0).unwrap();
         let events = vec![
-            EventRecord::new(EventKind::Fired)
+            EventRecord::new(RunState::Fired)
                 .with_timer(tid, "Old Name")
                 .with_run(run_ok)
                 .with_scheduled_for(sched_ok)
                 .with_logged_at(sched_ok),
-            EventRecord::new(EventKind::WakeDelivered)
+            EventRecord::new(RunState::WakeDelivered)
                 .with_timer(tid, "Old Name")
                 .with_run(run_ok)
                 .with_scheduled_for(sched_ok)
                 .with_logged_at(sched_ok + Duration::seconds(1)),
-            EventRecord::new(EventKind::Fired)
+            EventRecord::new(RunState::Fired)
                 .with_timer(tid, "Old Name")
                 .with_run(run_fail)
                 .with_scheduled_for(sched_fail)
                 .with_logged_at(sched_fail),
-            EventRecord::new(EventKind::WakeFailed)
+            EventRecord::new(RunState::WakeFailed)
                 .with_timer(tid, "Old Name")
                 .with_run(run_fail)
                 .with_scheduled_for(sched_fail)
@@ -736,7 +736,7 @@ mod tests {
         let tid = Uuid::parse_str("cccccccc-cccc-cccc-cccc-cccccccccccc").unwrap();
         let task = daily_with_id(&tid.to_string(), "daily", 8, 0, "UTC");
         let sched = Utc.with_ymd_and_hms(2026, 7, 25, 8, 0, 0).unwrap();
-        let events = vec![EventRecord::new(EventKind::Fired)
+        let events = vec![EventRecord::new(RunState::Fired)
             .with_timer(tid, "daily")
             .with_run(Uuid::new_v4())
             .with_scheduled_for(sched)
@@ -770,7 +770,7 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 7, 29, 8, 30, 0).unwrap();
         // A fire scheduled for 09:00 that somehow was already logged? Use past fire at 08:00.
         let sched = Utc.with_ymd_and_hms(2026, 7, 29, 8, 0, 0).unwrap();
-        let events = vec![EventRecord::new(EventKind::FiredLate)
+        let events = vec![EventRecord::new(RunState::FiredLate)
             .with_timer(tid, "late-one")
             .with_run(Uuid::new_v4())
             .with_scheduled_for(sched)
@@ -803,7 +803,7 @@ mod tests {
         // Daily 09:00: past today 09:00 needs record; future is tomorrow 09:00.
         let now = Utc.with_ymd_and_hms(2026, 7, 29, 12, 0, 0).unwrap();
         let morning = Utc.with_ymd_and_hms(2026, 7, 29, 9, 0, 0).unwrap();
-        let events = vec![EventRecord::new(EventKind::Fired)
+        let events = vec![EventRecord::new(RunState::Fired)
             .with_timer(tid, "split")
             .with_run(Uuid::new_v4())
             .with_scheduled_for(morning)
@@ -842,7 +842,7 @@ mod tests {
         let tid = Uuid::parse_str("ffffffff-ffff-ffff-ffff-ffffffffffff").unwrap();
         // Historical fire at 09:00; live timer now fires at 15:00.
         let morning = Utc.with_ymd_and_hms(2026, 7, 28, 9, 0, 0).unwrap();
-        let events = vec![EventRecord::new(EventKind::Fired)
+        let events = vec![EventRecord::new(RunState::Fired)
             .with_timer(tid, "edited")
             .with_run(Uuid::new_v4())
             .with_scheduled_for(morning)
@@ -875,7 +875,7 @@ mod tests {
     fn deleted_timer_history_keeps_recorded_name() {
         let tid = Uuid::parse_str("12345678-1234-1234-1234-123456789abc").unwrap();
         let sched = Utc.with_ymd_and_hms(2026, 7, 22, 7, 30, 0).unwrap();
-        let events = vec![EventRecord::new(EventKind::Coalesced)
+        let events = vec![EventRecord::new(RunState::Coalesced)
             .with_timer(tid, "gone-timer")
             .with_run(Uuid::new_v4())
             .with_scheduled_for(sched)
@@ -987,7 +987,7 @@ mod tests {
         let tid = Uuid::parse_str("cccccccc-dddd-eeee-ffff-000000000001").unwrap();
         let run_id = Uuid::new_v4();
         let sched = Utc.with_ymd_and_hms(2026, 7, 22, 8, 0, 0).unwrap();
-        let events = vec![EventRecord::new(EventKind::Fired)
+        let events = vec![EventRecord::new(RunState::Fired)
             .with_timer(tid, "Historical Name")
             .with_run(run_id)
             .with_scheduled_for(sched)
@@ -1030,7 +1030,7 @@ mod tests {
 
         // Current month: one recorded + upcoming after now.
         let rec_sched = Utc.with_ymd_and_hms(2026, 7, 10, 11, 0, 0).unwrap();
-        let events = vec![EventRecord::new(EventKind::Fired)
+        let events = vec![EventRecord::new(RunState::Fired)
             .with_timer(tid, "month-browse")
             .with_run(Uuid::new_v4())
             .with_scheduled_for(rec_sched)
@@ -1077,7 +1077,7 @@ mod tests {
         let tid = Uuid::parse_str("aaaaaaaa-aaaa-bbbb-bbbb-cccccccccccc").unwrap();
         let run_id = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
         let sched = Utc.with_ymd_and_hms(2026, 7, 28, 15, 18, 11).unwrap();
-        let events = vec![EventRecord::new(EventKind::WakeFailed)
+        let events = vec![EventRecord::new(RunState::WakeFailed)
             .with_timer(tid, "audit-duplicate")
             .with_run(run_id)
             .with_scheduled_for(sched)
@@ -1124,7 +1124,7 @@ mod tests {
         let tid = Uuid::parse_str("dddddddd-dddd-dddd-dddd-dddddddddddd").unwrap();
         let run_id = Uuid::new_v4();
         let sched = Utc.with_ymd_and_hms(2026, 7, 28, 9, 0, 0).unwrap();
-        let events = vec![EventRecord::new(EventKind::Fired)
+        let events = vec![EventRecord::new(RunState::Fired)
             .with_timer(tid, "no-run-id-ev")
             .with_scheduled_for(sched)
             .with_logged_at(sched)];
@@ -1208,7 +1208,7 @@ mod tests {
 
         // Current week 27–02 Aug: only upcoming after now + any records.
         let rec_sched = Utc.with_ymd_and_hms(2026, 7, 28, 11, 0, 0).unwrap();
-        let events = vec![EventRecord::new(EventKind::SkippedMisfire)
+        let events = vec![EventRecord::new(RunState::SkippedMisfire)
             .with_timer(tid, "browse")
             .with_run(Uuid::new_v4())
             .with_scheduled_for(rec_sched)

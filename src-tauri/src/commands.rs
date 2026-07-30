@@ -627,7 +627,7 @@ pub(crate) fn do_create_timer(state: &AppState, input: CreateTimerInput) -> Resu
     // Lifecycle: emit Registered event (analogous to the CLI)
     if let Ok(mut log) = bellman_core::EventLog::open_under(&state.data_dir) {
         let _ = log.emit(
-            bellman_core::events::EventRecord::new(bellman_core::events::EventKind::Registered)
+            bellman_core::events::EventRecord::new(bellman_core::events::RunState::Registered)
                 .with_timer(timer.id, timer.name.clone())
                 .with_message("gui create"),
         );
@@ -1027,7 +1027,7 @@ mod tests {
     /// Production path: archive JSONL + claim ledger through list_calendar_truth.
     #[test]
     fn list_calendar_truth_merges_archive_and_ledger() {
-        use bellman_core::events::{EventKind, EventRecord};
+        use bellman_core::events::{RunState, EventRecord};
         use bellman_core::store::NewTimer;
         use bellman_core::{Occurrence, OccurrenceKind, OutcomeLabel, TruthSource};
         use chrono::{NaiveTime, TimeZone, Utc};
@@ -1059,7 +1059,7 @@ mod tests {
         fs::create_dir_all(&archive_dir).unwrap();
         let sched_fail = Utc.with_ymd_and_hms(2026, 7, 10, 9, 0, 0).unwrap();
         let line = serde_json::to_string(
-            &EventRecord::new(EventKind::WakeFailed)
+            &EventRecord::new(RunState::WakeFailed)
                 .with_timer(tid, "Historical Failed")
                 .with_run(run_fail_id)
                 .with_scheduled_for(sched_fail)

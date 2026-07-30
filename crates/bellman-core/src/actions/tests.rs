@@ -1,7 +1,7 @@
 //! Action acceptance: launch timeout kill, retry/FAILED path, write-slot, notify.
 
 use super::*;
-use crate::events::{read_events, EventKind, EventLog, EventLogConfig};
+use crate::events::{read_events, RunState, EventLog, EventLogConfig};
 use crate::occurrence::{Occurrence, OccurrenceKind};
 use crate::scheduler::{FireAction, FireContext, FireKind};
 use crate::store::{Action, OverlapPolicy, RetryPolicy, Timer};
@@ -154,16 +154,16 @@ fn retry_then_failed_event() {
     assert_eq!(stats.skipped, 0);
     let kinds: Vec<_> = recs.iter().map(|r| r.kind).collect();
     assert!(
-        kinds.contains(&EventKind::Fired),
+        kinds.contains(&RunState::Fired),
         "expected fired event, got {kinds:?}"
     );
     assert!(
-        kinds.contains(&EventKind::WakeFailed),
+        kinds.contains(&RunState::WakeFailed),
         "expected wake_failed, got {kinds:?}"
     );
     let failed = recs
         .iter()
-        .find(|r| r.kind == EventKind::WakeFailed)
+        .find(|r| r.kind == RunState::WakeFailed)
         .unwrap();
     assert_eq!(failed.message.as_deref(), Some("FAILED"));
     assert_eq!(failed.run_id, Some(run_id));
@@ -188,7 +188,7 @@ fn launch_success_emits_wake_delivered() {
     runner.on_fire(&c).expect("true must succeed");
     let log = runner.take_event_log().unwrap();
     let (recs, _) = read_events(log.current_path()).unwrap();
-    assert!(recs.iter().any(|r| r.kind == EventKind::WakeDelivered));
+    assert!(recs.iter().any(|r| r.kind == RunState::WakeDelivered));
 }
 
 #[test]
@@ -301,7 +301,7 @@ fn failed_launch_with_multibyte_output_returns_failed_not_panic() {
     assert!(err.contains("FAILED"), "err={err}");
     let log = runner.take_event_log().unwrap();
     let (recs, _) = read_events(log.current_path()).unwrap();
-    assert!(recs.iter().any(|r| r.kind == EventKind::WakeFailed));
+    assert!(recs.iter().any(|r| r.kind == RunState::WakeFailed));
 }
 
 #[test]

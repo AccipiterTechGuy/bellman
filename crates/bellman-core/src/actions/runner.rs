@@ -4,7 +4,7 @@ use super::concurrency::{ActionLimiter, DEFAULT_MAX_CONCURRENT_ACTIONS};
 use super::launch::{run_launch, LaunchConfig, DEFAULT_OUTPUT_CAP_BYTES, DEFAULT_TIMEOUT};
 use super::notify_sink::{NotifySink, StubNotifySink};
 use super::write_slot::{write_output_slot, WriteSlotPayload, FIRE_SCHEMA_V1};
-use crate::events::{EventKind, EventLog, EventRecord};
+use crate::events::{RunState, EventLog, EventRecord};
 use crate::scheduler::{FireAction, FireContext, FireKind};
 use crate::store::{Action, OverlapPolicy, TimerId};
 use std::collections::HashSet;
@@ -135,7 +135,7 @@ impl ActionRunner {
 
     fn log_fire_kind(&mut self, ctx: &FireContext<'_>) {
         let base = || {
-            EventRecord::new(EventKind::Fired)
+            EventRecord::new(RunState::Fired)
                 .with_timer(ctx.timer.id, ctx.timer.name.clone())
                 .with_run(ctx.run_id)
                 .with_scheduled_for(ctx.scheduled_for)
@@ -144,7 +144,7 @@ impl ActionRunner {
             FireKind::OnTime => self.emit(base()),
             FireKind::Late { lateness } => {
                 self.emit(
-                    EventRecord::new(EventKind::FiredLate)
+                    EventRecord::new(RunState::FiredLate)
                         .with_timer(ctx.timer.id, ctx.timer.name.clone())
                         .with_run(ctx.run_id)
                         .with_scheduled_for(ctx.scheduled_for)
@@ -153,7 +153,7 @@ impl ActionRunner {
             }
             FireKind::Coalesced { missed_count } => {
                 self.emit(
-                    EventRecord::new(EventKind::Coalesced)
+                    EventRecord::new(RunState::Coalesced)
                         .with_timer(ctx.timer.id, ctx.timer.name.clone())
                         .with_run(ctx.run_id)
                         .with_scheduled_for(ctx.scheduled_for)
@@ -274,13 +274,13 @@ impl ActionRunner {
 }
 
 /// R2: top-level `kind` is the event kind (R5 vocabulary), mirroring the
-/// [`EventKind`] the runner logs for the same fire.
+/// [`RunState`] the runner logs for the same fire.
 fn fire_event_kind(kind: &FireKind) -> &'static str {
     match kind {
-        FireKind::OnTime => EventKind::Fired.as_str(),
-        FireKind::Late { .. } => EventKind::FiredLate.as_str(),
-        FireKind::Coalesced { .. } => EventKind::Coalesced.as_str(),
-        FireKind::CatchUp { .. } => EventKind::Fired.as_str(),
+        FireKind::OnTime => RunState::Fired.as_str(),
+        FireKind::Late { .. } => RunState::FiredLate.as_str(),
+        FireKind::Coalesced { .. } => RunState::Coalesced.as_str(),
+        FireKind::CatchUp { .. } => RunState::Fired.as_str(),
     }
 }
 
@@ -299,7 +299,7 @@ impl FireAction for ActionRunner {
 
         if self.overlap_blocks(ctx) {
             self.emit(
-                EventRecord::new(EventKind::SkippedMisfire)
+                EventRecord::new(RunState::SkippedMisfire)
                     .with_timer(ctx.timer.id, ctx.timer.name.clone())
                     .with_run(ctx.run_id)
                     .with_message("overlap_skip"),
@@ -336,7 +336,7 @@ impl FireAction for ActionRunner {
         match result {
             Ok(msg) => {
                 self.emit(
-                    EventRecord::new(EventKind::WakeDelivered)
+                    EventRecord::new(RunState::WakeDelivered)
                         .with_timer(ctx.timer.id, ctx.timer.name.clone())
                         .with_run(ctx.run_id)
                         .with_scheduled_for(ctx.scheduled_for)
@@ -349,7 +349,7 @@ impl FireAction for ActionRunner {
             Err(e) => {
                 // FAILED path after retries exhausted.
                 self.emit(
-                    EventRecord::new(EventKind::WakeFailed)
+                    EventRecord::new(RunState::WakeFailed)
                         .with_timer(ctx.timer.id, ctx.timer.name.clone())
                         .with_run(ctx.run_id)
                         .with_scheduled_for(ctx.scheduled_for)

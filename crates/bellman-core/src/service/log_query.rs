@@ -106,7 +106,7 @@ pub fn read_log_history(logs_dir: &Path) -> std::io::Result<(Vec<EventRecord>, R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::{EventKind, EventLog, EventLogConfig, EventRecord};
+    use crate::events::{RunState, EventLog, EventLogConfig, EventRecord};
     use std::time::Duration;
     use tempfile::TempDir;
 
@@ -120,7 +120,7 @@ mod tests {
         )
         .unwrap();
         log.emit(
-            EventRecord::new(EventKind::WakeFailed)
+            EventRecord::new(RunState::WakeFailed)
                 .with_message("in-current-then-rotated")
                 .with_error("boom"),
         )
@@ -128,18 +128,18 @@ mod tests {
         let archived = log.rotate().unwrap();
         assert!(archived.is_some(), "rotate should produce an archive");
         // Fresh current with a second event.
-        log.emit(EventRecord::new(EventKind::Fired).with_message("still-current"))
+        log.emit(EventRecord::new(RunState::Fired).with_message("still-current"))
             .unwrap();
 
         let (recs, stats) = read_log_history(&logs).unwrap();
         assert!(stats.records >= 2);
         assert_eq!(recs.len(), 2);
         let kinds: Vec<_> = recs.iter().map(|r| r.kind).collect();
-        assert!(kinds.contains(&EventKind::WakeFailed));
-        assert!(kinds.contains(&EventKind::Fired));
+        assert!(kinds.contains(&RunState::WakeFailed));
+        assert!(kinds.contains(&RunState::Fired));
         // Archived failure still present after rotation.
         assert!(recs.iter().any(|r| {
-            r.kind == EventKind::WakeFailed
+            r.kind == RunState::WakeFailed
                 && r.message.as_deref() == Some("in-current-then-rotated")
         }));
     }
