@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-30 — shipped; card bellman-ik1-normalise-the-json-shapes, run 2026-07-30_0001, merge 0a8ac9b.
+
 # IK1 — Normalise the JSON shapes
 
 Repo: `~/bellman`. Design: **`docs/todo/json_normalization.md`** rules R1–R6. Read it first.
