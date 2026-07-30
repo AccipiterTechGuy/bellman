@@ -21,7 +21,7 @@
 //! sanitise → strip → escape → suffix pipeline never relies on the OS to
 //! reject or trim anything.
 
-use crate::events::{EventLog, EventRecord, RunState};
+use crate::events::{EventRecord, RunState};
 use crate::occurrence::OccurrenceKind;
 use crate::scheduler::FireKind;
 use crate::slots::atomic_write_json;
@@ -697,136 +697,197 @@ fn current_unresolved_run(
     Ok(unresolved.then(|| prev.clone()))
 }
 
-/// Fire-time projection, after the run claim committed and before/with the
-/// action run. With an IK3 [`ReplyEngine`] this is the full fire lifecycle:
+/// The R10 fire transaction + projections. One call does, in order:
 ///
-/// 1. **Pre-fire barrier (R10)**: the previous current run's reply file is
-///    synchronously read and ingested FIRST, so a valid `completed` the
-///    watcher has not processed yet is folded in before the run can be
-///    superseded. The caller holds the per-timer gate across this call.
-/// 2. If the previous run is still unresolved *after* the barrier, it is
-///    logged `superseded` — loudly; for an owned timer it means the app
-///    never reported an ending before the next firing came. Its lifecycle
-///    row is marked `superseded` and its deadlines are consumed.
-/// 3. The new run gets its lifecycle row (owner snapshotted, pickup deadline
-///    started at the fire commit) and its monotonic duration anchor.
-/// 4. Projections, in the R10 order: fresh `status.json` snapshot →
-///    create-only pre-filled reply stub → fire notification under
-///    `slots/fires/` (never eligible while either projection is missing).
-///    The previous run's reply path is never overwritten: its stale file is
-///    deleted after its final ingest and the new run gets its own.
+/// 1. **Acquire the per-timer gate** (REQUIRED — a lock failure aborts the
+///    fire; lifecycle mutation without the gate is not permitted).
+/// 2. **Pre-fire barrier**: the previous current run's reply file is
+///    synchronously read and parsed (bounded: one debounce window), so a
+///    valid `completed` the watcher has not processed yet is folded in
+///    BEFORE the run can be superseded.
+/// 3. **One SQLite transaction** carries: the barrier ingest (previous run's
+///    final known state + its transition events), the `superseded` event and
+///    lifecycle-row update if the previous run is still unresolved *after*
+///    the barrier, the new claim (`UNIQUE(timer_id, scheduled_for)` still
+///    guards double-fire), the new run's lifecycle row (owner snapshotted,
+///    pickup deadline persisted), and the `fired` event. Crash before the
+///    commit and the previous firing is still current — nothing was
+///    half-started; crash after it and the projections below are rebuilt by
+///    the startup/periodic reconciler.
+/// 4. **Post-commit, still under the gate**: monotonic pickup deadline +
+///    duration anchor registration, stale reply removal, then projections
+///    in the R10 order — fresh `status.json` → create-only pre-filled reply
+///    stub → fire notification under `slots/fires/`. Projection failures
+///    surface (stderr + reconciler) but never un-commit the fire.
+///
+/// Returns the new claim. `StoreError::AlreadyClaimed` propagates (inside
+/// `TreeError::Store`) so the scheduler can run its crash-recovery path.
 #[allow(clippy::too_many_arguments)]
-pub fn project_run_started(
+pub fn project_fire(
     tree: &TimersTree,
-    store: &Store,
+    store: &mut Store,
     timer: &Timer,
-    claim: &RunClaim,
+    scheduled_for: DateTime<Utc>,
     kind: &FireKind,
-    log: &mut EventLog,
-    engine: Option<&crate::reply::ReplyEngine>,
+    engine: &crate::reply::ReplyEngine,
     now: DateTime<Utc>,
-) -> TreeResult<()> {
+) -> TreeResult<RunClaim> {
+    use crate::reply::RunDb;
+    use crate::store::{claim_run_conn, insert_run_state_conn, update_run_state_conn};
+
+    // 1. The gate is required: every lifecycle mutation happens under it.
+    let _gate = crate::reply::gate::acquire(&engine.data_dir, timer.id)
+        .map_err(|e| TreeError::Io(format!("per-timer gate: {e}")))?;
+
     let owner = store.get_timer_owner(timer.id)?;
     let folder = tree.sync_timer_json(timer, owner.as_deref())?;
 
-    // 1. Pre-fire barrier: ingest whatever the previous run's app already
-    //    wrote before deciding whether it is unresolved.
-    if let Some(engine) = engine {
-        let prev = store
-            .runs_for_timer(timer.id)?
-            .into_iter()
-            .rev()
-            .find(|r| r.run_id != claim.run_id);
-        if let Some(prev) = prev {
-            crate::reply::barrier_ingest(engine, store, log, timer, &folder, prev.run_id, now)
+    // 2. Barrier READ (file I/O — outside the transaction, bounded).
+    let prev = store.runs_for_timer(timer.id)?.last().cloned();
+    let barrier = prev.as_ref().and_then(|p| {
+        crate::reply::barrier_read(engine, store, timer, &folder, p.run_id)
+            .map(|(doc, digest)| (p.clone(), doc, digest))
+    });
+
+    // 3. The one fire transaction.
+    let mut prev_superseded = None;
+    let claim = {
+        let tx = store.transaction()?;
+        // Barrier ingest: fold the previous run's final outcome in FIRST.
+        if let Some((prev, doc, digest)) = &barrier {
+            let outcome = engine
+                .ingest_as_current(&tx, timer, doc, digest, prev.run_id, now, std::time::Instant::now())
                 .map_err(|e| TreeError::Io(e.to_string()))?;
+            if let crate::reply::IngestOutcome::Rejected(reason) = outcome {
+                engine
+                    .log_rejection(&tx, timer, Some(prev.run_id), reason.as_str())
+                    .map_err(|e| TreeError::Io(e.to_string()))?;
+            }
         }
-    }
-
-    // 2. Supersede the previous run when it is still unresolved.
-    if let Some(prev) = current_unresolved_run(store, timer, Some(claim.run_id))? {
-        log.emit(
-            EventRecord::new(RunState::Superseded)
-                .with_timer(timer.id, timer.name.clone())
-                .with_run(prev.run_id)
-                .with_scheduled_for(prev.scheduled_for)
-                .with_message("superseded by a new firing while still unresolved"),
-        )
-        .map_err(|e| TreeError::Io(e.to_string()))?;
-        if let Some(mut row) = store.get_run_state(prev.run_id)? {
-            row.state = RunState::Superseded.as_str().to_string();
-            row.pickup_deadline = None;
-            row.watchdog_deadline = None;
-            store.update_run_state(&row)?;
+        // Supersede the previous run when still unresolved AFTER the barrier.
+        if let Some(prev) = &prev {
+            let unresolved = match tx.get_run_state(prev.run_id)? {
+                Some(row) => !row.is_terminal(),
+                None => {
+                    if owner.is_some() {
+                        true
+                    } else {
+                        prev.status == ClaimStatus::Claimed
+                    }
+                }
+            };
+            if unresolved {
+                tx.enqueue_event(
+                    &EventRecord::new(RunState::Superseded)
+                        .with_timer(timer.id, timer.name.clone())
+                        .with_run(prev.run_id)
+                        .with_scheduled_for(prev.scheduled_for)
+                        .with_message("superseded by a new firing while still unresolved"),
+                )?;
+                if let Some(mut row) = tx.get_run_state(prev.run_id)? {
+                    row.state = RunState::Superseded.as_str().to_string();
+                    row.pickup_deadline = None;
+                    row.watchdog_deadline = None;
+                    update_run_state_conn(&tx, &row)?;
+                }
+                prev_superseded = Some(prev.run_id);
+            }
         }
+        // The new claim (UNIQUE guard) + lifecycle row + fired event.
+        let claim = claim_run_conn(&tx, timer.id, scheduled_for)?;
+        if let Some(app_name) = owner.as_deref() {
+            let deadline = now
+                + chrono::Duration::from_std(engine.pickup_grace)
+                    .unwrap_or_else(|_| chrono::Duration::seconds(60));
+            let row = crate::store::RunStateRow::fired(
+                claim.run_id,
+                timer.id,
+                app_name,
+                fire_state(kind),
+                claim.claimed_at,
+                deadline,
+            );
+            insert_run_state_conn(&tx, &row)?;
+        }
+        tx.enqueue_event(&fire_event(kind, timer, &claim))?;
+        tx.commit().map_err(|e| TreeError::Io(e.to_string()))?;
+        claim
+    };
+
+    // 4. Post-commit, still under the gate.
+    if owner.is_some() {
+        engine.register_fire(claim.run_id);
+    }
+    if let Some(prev_id) = prev_superseded {
+        engine.clear_deadlines(prev_id);
     }
 
-    // 3. The new run's lifecycle row + duration anchor (integration-owned).
-    if let (Some(app_name), Some(engine)) = (owner.as_deref(), engine) {
-        let deadline = now
-            + chrono::Duration::from_std(engine.pickup_grace)
-                .unwrap_or_else(|_| chrono::Duration::seconds(60));
-        let row = crate::store::RunStateRow::fired(
-            claim.run_id,
-            timer.id,
-            app_name,
-            fire_state(kind),
-            claim.claimed_at,
-            deadline,
-        );
-        store.insert_run_state(&row)?;
-        engine
-            .anchors
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(claim.run_id, std::time::Instant::now());
-    }
-
-    // 4a. The new run owns the channel: drop stale reply files (never
-    //     overwrite), then write the fresh status snapshot.
-    tree.remove_stale_replies(&folder, claim.run_id)?;
-    let status = RunStatus::fired(timer, claim, kind, owner.as_deref());
-    write_status(tree, timer, &status)?;
-
-    // 4b. Integration-owned run: fresh pre-filled per-run reply stub
-    //     (create-only), then the fire notification — in that order, so no
-    //     app ever observes a `reply_path` Bellman has not projected.
-    if let Some(app_name) = owner.as_deref() {
-        tree.create_reply_stub(&folder, claim.run_id, app_name)?;
-        if let Some(engine) = engine {
+    // Projections: surface failures, never un-commit the fire. The bounded
+    // reconciler repairs them (status.json is Bellman's alone; a missing
+    // stub is created O_EXCL only).
+    let projection = (|| -> TreeResult<()> {
+        tree.remove_stale_replies(&folder, claim.run_id)?;
+        let status = RunStatus::fired(timer, &claim, kind, owner.as_deref());
+        write_status(tree, timer, &status)?;
+        if let Some(app_name) = owner.as_deref() {
+            tree.create_reply_stub(&folder, claim.run_id, app_name)?;
             crate::reply::publish_fire_notification(
                 engine,
                 timer,
-                claim,
+                &claim,
                 fire_state(kind),
                 &folder,
                 app_name,
             )
             .map_err(|e| TreeError::Io(e.to_string()))?;
         }
+        Ok(())
+    })();
+    if let Err(e) = projection {
+        eprintln!("bellman: fire projection failed (reconciler will repair): {e}");
     }
-    Ok(())
+    Ok(claim)
+}
+
+/// The `fired` event for the fire transaction (mirrors the fire kind).
+fn fire_event(kind: &FireKind, timer: &Timer, claim: &RunClaim) -> EventRecord {
+    let base = || {
+        EventRecord::new(RunState::Fired)
+            .with_timer(timer.id, timer.name.clone())
+            .with_run(claim.run_id)
+            .with_scheduled_for(claim.scheduled_for)
+    };
+    match kind {
+        FireKind::OnTime => base(),
+        FireKind::Late { lateness } => EventRecord::new(RunState::FiredLate)
+            .with_timer(timer.id, timer.name.clone())
+            .with_run(claim.run_id)
+            .with_scheduled_for(claim.scheduled_for)
+            .with_duration_ms(lateness.num_milliseconds()),
+        FireKind::Coalesced { missed_count } => EventRecord::new(RunState::Coalesced)
+            .with_timer(timer.id, timer.name.clone())
+            .with_run(claim.run_id)
+            .with_scheduled_for(claim.scheduled_for)
+            .with_count(*missed_count),
+        FireKind::CatchUp { index } => base().with_count(*index).with_message("catch_up"),
+    }
 }
 
 /// Delete-time projection, before/with the database delete: if the current
 /// run is unresolved by the exact R5 test (owned: app lifecycle open;
 /// unowned: action claim unfinished), it is logged `cancelled` FIRST, so an
 /// app whose `status.json` vanishes reads the run as cancelled, not missing.
-pub fn log_cancelled_for_open_runs(
-    store: &Store,
-    timer: &Timer,
-    log: &mut EventLog,
-) -> TreeResult<usize> {
+/// The event is enqueued (R11); the elected publisher appends it.
+pub fn log_cancelled_for_open_runs(store: &Store, timer: &Timer) -> TreeResult<usize> {
     let mut n = 0;
     if let Some(run) = current_unresolved_run(store, timer, None)? {
-        log.emit(
-            EventRecord::new(RunState::Cancelled)
+        store.enqueue_event(
+            &EventRecord::new(RunState::Cancelled)
                 .with_timer(timer.id, timer.name.clone())
                 .with_run(run.run_id)
                 .with_scheduled_for(run.scheduled_for)
                 .with_message("timer deleted while its run was open"),
-        )
-        .map_err(|e| TreeError::Io(e.to_string()))?;
+        )?;
         // Close the lifecycle row too: its deadlines must not fire `no_ack`
         // or a watchdog for a timer that no longer exists.
         if let Some(mut row) = store.get_run_state(run.run_id)? {

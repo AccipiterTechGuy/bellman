@@ -8,7 +8,6 @@
 //! in the Tauri shell; the CLI uses the stub.
 
 use crate::actions::{ActionRunner, ActionRunnerConfig, NotifySink};
-use crate::events::{EventLog, EventLogConfig};
 use crate::scheduler::{FireAction, FireContext, FireKind};
 use crate::store::{
     OpenOptions, SlotRequestRecord, Store, StoreError, Timer, TimerPatch, TimerUpdate,
@@ -34,6 +33,10 @@ pub struct RunNowOptions {
     /// fresh registry (CLI one-shots): the terminal event then falls back to
     /// the wall-clock duration, marked `duration_source: "wall_clock"`.
     pub anchors: Option<crate::reply::SharedAnchors>,
+    /// IK3 monotonic deadline book shared with the reply watcher. `None`
+    /// starts a fresh book (CLI one-shots; the GUI watcher lazily
+    /// reconstructs from the persisted wall deadlines).
+    pub deadlines: Option<crate::reply::SharedDeadlines>,
 }
 
 impl std::fmt::Debug for RunNowOptions {
@@ -62,6 +65,7 @@ impl Clone for RunNowOptions {
             skip_retry_sleep: self.skip_retry_sleep,
             notify_sink: self.notify_sink.clone(),
             anchors: self.anchors.clone(),
+            deadlines: self.deadlines.clone(),
         }
     }
 }
@@ -84,10 +88,12 @@ pub fn slot_record_for_timer(store: &Store, timer_id: Uuid) -> Result<Option<Slo
 /// Run the timer action immediately through the real fire path.
 ///
 /// Steps (mirrored from the scheduler's `deliver_one`):
-/// 1. `claim_run(timer_id, now)` on the claim ledger
+/// 1. the R10 fire transaction (`project_fire`): gate → barrier → one commit
+///    (supersede + claim + lifecycle row + `fired` event) → projections
 /// 2. `ActionRunner::on_fire` (launch / notify / write-slot)
 /// 3. `complete_run` / `fail_run` (honest wake outcome)
 /// 4. advance `last_fired` + `record_run` so `next_fire` moves past this slot
+/// 5. best-effort outbox drain (a CLI-only run must not wait for a GUI tick)
 pub fn run_now(
     store: &mut Store,
     db_path: &Path,
@@ -100,32 +106,53 @@ pub fn run_now(
         .ok_or(RunNowError::NotFound { timer_id })?;
     let scheduled_for = Utc::now();
 
-    let claim = store
-        .claim_run(timer.id, scheduled_for)
-        .map_err(RunNowError::Store)?;
-
-    let logs_dir = resolve_logs_dir(db_path);
-    // Honor config.json rotation/retention knobs when present (view writers
-    // opened ad-hoc by the CLI otherwise run with product defaults).
+    // Honor config.json knobs when present (view writers opened ad-hoc by
+    // the CLI otherwise run with product defaults).
     let app_cfg = db_path
         .parent()
         .map(|d| crate::app_config::AppConfig::load(d).unwrap_or_default())
         .unwrap_or_default();
-    let event_log = EventLog::open(
-        EventLogConfig::new(&logs_dir)
-            .with_retention(app_cfg.retention())
-            .with_max_current_bytes(app_cfg.log_rotation_max_bytes)
-            .with_budget_bytes(app_cfg.log_retention_budget_bytes),
+
+    // 1. The R10 fire transaction: required gate, pre-fire barrier, one
+    //    atomic commit, then projections. The gate releases before the
+    //    action runs (a long action never blocks the reply watcher).
+    let engine = crate::reply::ReplyEngine {
+        tree: crate::tree::TimersTree::new(db_path.parent().unwrap_or(Path::new("."))),
+        data_dir: db_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(".")),
+        pickup_grace: app_cfg.pickup_grace(),
+        watchdog_factor: app_cfg.watchdog_factor,
+        anchors: opts
+            .anchors
+            .clone()
+            .unwrap_or_else(crate::reply::new_anchors),
+        deadlines: opts
+            .deadlines
+            .clone()
+            .unwrap_or_else(crate::reply::new_deadlines),
+    };
+    let claim = crate::tree::project_fire(
+        &engine.tree.clone(),
+        store,
+        &timer,
+        scheduled_for,
+        &FireKind::OnTime,
+        &engine,
+        Utc::now(),
     )
-    .map_err(|e| RunNowError::Other(format!("open event log: {e}")))?;
+    .map_err(|e| RunNowError::Other(format!("fire transaction: {e}")))?;
 
     let mut runner = ActionRunner::new(ActionRunnerConfig {
         write_slot_dir: opts.write_slot_dir.clone(),
         write_slot_file: opts.write_slot_file.clone(),
         skip_retry_sleep: opts.skip_retry_sleep,
         ..ActionRunnerConfig::default()
-    })
-    .with_event_log(event_log);
+    });
+    if let Ok(sink_store) = crate::store::Store::open_with(db_path, Default::default()) {
+        runner = runner.with_event_sink(sink_store);
+    }
     if let Some(sink) = opts.notify_sink.as_ref() {
         runner = runner.with_notify_sink(sink.clone());
     }
@@ -137,38 +164,6 @@ pub fn run_now(
         kind: FireKind::OnTime,
         claimed_at: claim.claimed_at,
     };
-
-    // IK2/IK3: project the fire into the per-timer folder tree (view only —
-    // failures surface but never break the run). The R10 gate is held across
-    // the barrier + projections and released before the action runs.
-    if let Some(data_dir) = db_path.parent() {
-        let engine = crate::reply::ReplyEngine {
-            tree: crate::tree::TimersTree::new(data_dir),
-            data_dir: data_dir.to_path_buf(),
-            pickup_grace: app_cfg.pickup_grace(),
-            watchdog_factor: app_cfg.watchdog_factor,
-            anchors: opts
-                .anchors
-                .clone()
-                .unwrap_or_else(crate::reply::new_anchors),
-        };
-        if let Some(log) = runner.event_log_mut() {
-            let gate = crate::reply::gate::acquire(&engine.data_dir, timer.id).ok();
-            if let Err(e) = crate::tree::project_run_started(
-                &engine.tree,
-                store,
-                &timer,
-                &claim,
-                &ctx.kind,
-                log,
-                Some(&engine),
-                Utc::now(),
-            ) {
-                eprintln!("bellman: timer tree fire projection failed: {e}");
-            }
-            drop(gate);
-        }
-    }
 
     let action_res = runner.on_fire(&ctx);
     let message = runner
@@ -186,6 +181,13 @@ pub fn run_now(
         store
             .fail_run(claim.run_id)
             .map_err(RunNowError::Store)?;
+    }
+
+    // Best-effort outbox drain: a one-shot CLI run cannot rely on a GUI
+    // publisher tick — if this process can take the lease, it publishes its
+    // own rows (fdatasync + mark) before exiting.
+    if let Some(data_dir) = db_path.parent() {
+        crate::events::EventPublisher::drain_best_effort(data_dir, store);
     }
 
     if let Err(e) = action_res {

@@ -44,6 +44,8 @@ pub struct SchedulerConfig {
     pub watchdog_factor: f64,
     /// Monotonic duration anchors shared with the reply watcher (IK3).
     pub anchors: crate::reply::SharedAnchors,
+    /// Monotonic deadline book shared with the reply watcher (IK3).
+    pub deadlines: crate::reply::SharedDeadlines,
 }
 
 impl Default for SchedulerConfig {
@@ -75,6 +77,7 @@ impl SchedulerConfig {
             pickup_grace: cfg.pickup_grace(),
             watchdog_factor: cfg.watchdog_factor,
             anchors: crate::reply::new_anchors(),
+            deadlines: crate::reply::new_deadlines(),
         }
     }
 
@@ -116,6 +119,12 @@ impl SchedulerConfig {
         self
     }
 
+    /// Share the monotonic deadline book with the reply watcher (IK3).
+    pub fn with_deadlines(mut self, deadlines: crate::reply::SharedDeadlines) -> Self {
+        self.deadlines = deadlines;
+        self
+    }
+
     /// Build the IK3 reply engine for this configuration (None when no data
     /// dir is set — unit tests keep a pure store).
     pub fn reply_engine(&self) -> Option<crate::reply::ReplyEngine> {
@@ -126,6 +135,7 @@ impl SchedulerConfig {
             pickup_grace: self.pickup_grace,
             watchdog_factor: self.watchdog_factor,
             anchors: self.anchors.clone(),
+            deadlines: self.deadlines.clone(),
         })
     }
 }

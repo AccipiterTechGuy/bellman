@@ -46,13 +46,8 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         let Some(engine) = self.config.reply_engine() else {
             return;
         };
-        match crate::events::EventLog::open_under_configured(&engine.data_dir) {
-            Ok(mut log) => {
-                let now = self.clock.wall_now();
-                crate::reply::startup_scan(&engine, &self.store, &mut log, now);
-            }
-            Err(e) => eprintln!("bellman: reply startup scan (log open) failed: {e}"),
-        }
+        let now = self.clock.wall_now();
+        crate::reply::startup_scan(&engine, &self.store, now);
     }
 
     /// Ensure `system.prune`, catch-up prune if due, Jan-1 pass if needed.
