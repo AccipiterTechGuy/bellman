@@ -24,6 +24,22 @@ Design documents:
 | **IK4** | Lightbulb app + "connect your own application" docs | IK1–IK3 |
 | **IK5** | Live run state in the GUI — no new tab | IK3 |
 
+## Scheduler internals
+
+| card | scope | depends on |
+|---|---|---|
+| **SCH1** | In-memory fire dispatcher + bounded action lanes. A slow launch currently stalls the whole heap | — (independent of IK1–IK5) |
+
+### Deferred — worth doing, not now
+
+**Local IPC transport** (Unix socket / named pipe / local HTTP) as an *additional* way for an
+app to talk to Bellman. Genuinely better for interactive apps: live progress with no watcher
+latency, and no file to parse. But it is a second transport, not a replacement — the file
+channel's whole value is that `echo '{...}' > reply.json` works from bash, cron or a one-line
+Python script with no client library, and an app that was not running when the timer fired
+finds its reply waiting rather than needing a reconnect-and-request-pending-fires handshake.
+Files stay canonical. Revisit after IK4 ships and a real integration exists to measure.
+
 ### Decided against — do not re-propose
 
 **One shared `output.json` per timer, guarded by a `.output.lock`.** Reviewed 2026-07-30 and
