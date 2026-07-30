@@ -327,6 +327,16 @@ pub fn run_prune(
     Ok(report)
 }
 
+/// Event-log config for prune/startup writers: ALL retention and rotation
+/// knobs come from the [`PruneConfig`] (itself built from `config.json`), so
+/// no production writer silently falls back to the 64 MiB / 1 GiB defaults.
+fn event_log_config(data_dir: &Path, config: &PruneConfig) -> EventLogConfig {
+    EventLogConfig::new(data_dir.join("logs"))
+        .with_retention(config.retention)
+        .with_max_current_bytes(config.max_current_bytes)
+        .with_budget_bytes(config.budget_bytes)
+}
+
 /// Open an event log under `data_dir` with the given retention and run prune.
 pub fn run_prune_under(
     store: &mut Store,
@@ -335,13 +345,8 @@ pub fn run_prune_under(
     now: DateTime<Utc>,
     force: bool,
 ) -> PruneResult<PruneReport> {
-    let mut log = EventLog::open(
-        EventLogConfig::new(data_dir.join("logs"))
-            .with_retention(config.retention)
-            .with_max_current_bytes(config.max_current_bytes)
-            .with_budget_bytes(config.budget_bytes),
-    )
-    .map_err(|e| PruneError::EventLog(e.to_string()))?;
+    let mut log = EventLog::open(event_log_config(data_dir, config))
+        .map_err(|e| PruneError::EventLog(e.to_string()))?;
     let tree = crate::tree::TimersTree::new(data_dir);
     run_prune(store, &mut log, config, now, force, Some(&tree))
 }
@@ -441,10 +446,8 @@ pub fn startup_maintenance(
     }
 
     if needs_year_recalibration(store, now)? {
-        let mut log = EventLog::open(
-            EventLogConfig::new(data_dir.join("logs")).with_retention(prune_config.retention),
-        )
-        .map_err(|e| PruneError::EventLog(e.to_string()))?;
+        let mut log = EventLog::open(event_log_config(data_dir, prune_config))
+            .map_err(|e| PruneError::EventLog(e.to_string()))?;
         let yr = run_year_recalibration(store, Some(&mut log), now)?;
         notes.push(format!(
             "year_recalibrate: checked={} updated={}",

@@ -379,6 +379,69 @@ fn year_recalibrate_is_idempotent_within_year() {
 }
 
 #[test]
+fn startup_year_recalibration_honors_configured_log_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path();
+    let mut store = Store::open_with(data.join("timers.db"), OpenOptions {
+        refuse_network_fs: false,
+        ..OpenOptions::default()
+    })
+    .unwrap();
+    store
+        .create_timer(NewTimer::new(
+            "d",
+            Occurrence::new(
+                OccurrenceKind::Daily {
+                    at: NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+                },
+                "UTC",
+            )
+            .unwrap(),
+        ))
+        .unwrap();
+    // Prune ran recently (no catch-up); recalibration is due.
+    store.set_last_prune(Utc::now()).unwrap();
+
+    // Pre-fill the live log just under a small configured cap so the
+    // year_recalibrate event crosses it — rotation must honor the CONFIGURED
+    // cap, not the 64 MiB default.
+    let cap = 4096u64;
+    let cfg = PruneConfig {
+        max_current_bytes: cap,
+        ..PruneConfig::default()
+    };
+    let mut seed = EventLog::open(
+        EventLogConfig::new(data.join("logs")).with_max_current_bytes(cap),
+    )
+    .unwrap();
+    while std::fs::metadata(seed.current_path()).unwrap().len() < cap - 300 {
+        seed.emit(EventRecord::new(RunState::Fired).with_message("x".repeat(200)))
+            .unwrap();
+    }
+    let before = std::fs::metadata(seed.current_path()).unwrap().len();
+    assert!(before < cap && before > cap - 300);
+    drop(seed);
+
+    startup_maintenance(&mut store, data, &cfg, Utc::now()).unwrap();
+
+    // The recalibration append crossed the configured cap and rotated.
+    let archive = data.join("logs/archive");
+    let archives: Vec<_> = std::fs::read_dir(&archive)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.to_string_lossy().ends_with(".jsonl.gz"))
+        .collect();
+    assert_eq!(archives.len(), 1, "configured cap must trigger rotation");
+    // The year_recalibrate event survives across archive/current.
+    let (recs, _) = crate::service::log_query::read_log_history(&data.join("logs")).unwrap();
+    assert!(
+        recs.iter().any(|r| r.kind == RunState::YearRecalibrate),
+        "year_recalibrate event must be retained"
+    );
+}
+
+#[test]
 fn startup_catchup_when_last_prune_stale() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path();
