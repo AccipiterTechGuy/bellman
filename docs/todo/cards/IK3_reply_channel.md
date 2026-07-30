@@ -414,22 +414,23 @@ written **after** it commits.
 | crash point | result |
 |---|---|
 | before the commit | the previous firing is still current — nothing was half-started |
-| after the commit, before the file write | startup rebuilds both files from the database |
+| after the commit, before the file write | startup rebuilds `status.json` from the database and creates the missing stub **create-only** (`O_EXCL`) — if an app already wrote a real reply at that path, the create loses and the reply wins |
 | after the file write | the database already holds the right generation; nothing to do |
 
-Rebuilding is safe here precisely because `status.json` is Bellman's alone — regenerating it
-cannot destroy anything an app said. That is a property the split buys and a shared file
-would not.
+Rebuilding `status.json` is safe precisely because it is Bellman's alone — regenerating it
+cannot destroy anything an app said. The reply file has no such property, which is why its
+recovery is create-only, never a rebuild.
 
 Scheduling arithmetic does not change. This is persistence around a fire, not a new policy.
 
 ### At startup: read replies before firing anything
 
-An app can answer while Bellman is stopped. If the scheduler runs first, the next fire
-overwrites that reply and it is gone — **silently**, with nothing in the log to say a reply
-ever existed. So before delivery starts:
+An app can answer while Bellman is stopped. If the scheduler runs first, that run is
+superseded before its reply was ever read — the reply file survives (per-run names, nothing
+overwrites it) but arrives as a rejected `superseded`, its outcome recorded unknown with
+nothing in the log to say a valid answer was sitting there. So before delivery starts:
 
-1. Scan every `reply.json` under `timers/`.
+1. Scan every `reply-*.json` under `timers/`.
 2. Fold in each one that is valid and whose `run_id` is still the current run.
 3. Emit the transitions that were missed, using the app's own timestamps.
 4. Rebuild stale or missing `status.json` from the database; recreate missing stubs
