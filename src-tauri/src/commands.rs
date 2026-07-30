@@ -749,6 +749,8 @@ pub fn delete_timer(state: State<'_, AppState>, id: String) -> Result<bool, Stri
     let id = Uuid::from_str(&id).map_err(|e| format!("invalid id: {e}"))?;
     let mut store = state.store.lock();
     // IK2: any unresolved run is logged `cancelled` BEFORE the folder goes.
+    // R10: deletion shares the per-timer gate with reply ingest.
+    let _gate = bellman_core::reply::gate::acquire(&state.data_dir, id).ok();
     let timer = store.get_timer(id).map_err(|e| e.to_string())?;
     if let Some(timer) = &timer {
         if let Ok(mut log) = bellman_core::EventLog::open_under_configured(&state.data_dir) {

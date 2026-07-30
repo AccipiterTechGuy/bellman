@@ -449,6 +449,11 @@ pub fn rm(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> {
     })?;
     let timer = resolve_timer(&store, name_or_id).map_err(|e| e.with_command(CMD))?;
     // IK2: any unresolved run is logged `cancelled` BEFORE the folder goes.
+    // R10: deletion is a lifecycle mutator — it shares the per-timer gate
+    // with reply ingest and deadline transitions.
+    let _gate = db
+        .parent()
+        .and_then(|d| bellman_core::reply::gate::acquire(d, timer.id).ok());
     if let Ok(mut log) = open_event_log(db) {
         if let Err(e) = bellman_core::log_cancelled_for_open_runs(&store, &timer, &mut log) {
             eprintln!("bellman: cancelled-run logging failed: {e}");

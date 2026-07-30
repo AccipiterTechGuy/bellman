@@ -388,6 +388,9 @@ impl SlotService {
                             tree.root().parent().map(|p| p.to_path_buf()),
                         ) {
                             // Cancel open runs FIRST, then drop the folder.
+                            // R10: deletion shares the per-timer gate.
+                            let _gate =
+                                crate::reply::gate::acquire(&data_dir, timer.id).ok();
                             match crate::events::EventLog::open_under_configured(&data_dir) {
                                 Ok(mut log) => {
                                     if let Err(e) = crate::tree::log_cancelled_for_open_runs(
