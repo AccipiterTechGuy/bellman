@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-31 — shipped; card bellman-ik3-reply-json-outcome-reporting-opt-in-watchdog, run 2026-07-30_0004, merge 5bd1769.
+
 # IK3 — The reply channel: `reply.json`
 
 Repo: `~/bellman`. Design: **`docs/todo/json_normalization.md`** R5, R7–R9 and the run
