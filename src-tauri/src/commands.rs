@@ -107,6 +107,7 @@ pub fn run_now(
     let opts = RunNowOptions {
         notify_sink: Some(state.notify_sink.clone()),
         anchors: Some(state.reply_anchors.clone()),
+        deadlines: Some(state.reply_deadlines.clone()),
         ..Default::default()
     };
     let mut store = state.store.lock();
@@ -676,13 +677,16 @@ pub(crate) fn do_create_timer(state: &AppState, input: CreateTimerInput) -> Resu
         store.create_timer(new).map_err(|e| e.to_string())?
     };
 
-    // Lifecycle: emit Registered event (analogous to the CLI)
-    if let Ok(mut log) = bellman_core::EventLog::open_under_configured(&state.data_dir) {
-        let _ = log.emit(
-            bellman_core::events::EventRecord::new(bellman_core::events::RunState::Registered)
+    // Lifecycle: enqueue the Registered event (R11; the publisher appends).
+    {
+        let store = state.store.lock();
+        if let Err(e) = store.enqueue_event(
+            &bellman_core::events::EventRecord::new(bellman_core::events::RunState::Registered)
                 .with_timer(timer.id, timer.name.clone())
                 .with_message("gui create"),
-        );
+        ) {
+            log::warn!("bellman: registered enqueue failed: {e}");
+        }
     }
 
     // IK2: project the per-timer folder (README + timer.json). View-only.
@@ -753,10 +757,8 @@ pub fn delete_timer(state: State<'_, AppState>, id: String) -> Result<bool, Stri
     let _gate = bellman_core::reply::gate::acquire(&state.data_dir, id).ok();
     let timer = store.get_timer(id).map_err(|e| e.to_string())?;
     if let Some(timer) = &timer {
-        if let Ok(mut log) = bellman_core::EventLog::open_under_configured(&state.data_dir) {
-            if let Err(e) = bellman_core::log_cancelled_for_open_runs(&store, timer, &mut log) {
-                log::warn!("bellman: cancelled-run logging failed: {e}");
-            }
+        if let Err(e) = bellman_core::log_cancelled_for_open_runs(&store, timer) {
+            log::warn!("bellman: cancelled-run logging failed: {e}");
         }
     }
     let n = store.delete_timer(id).map_err(|e| e.to_string())?;

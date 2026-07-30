@@ -1,10 +1,10 @@
 //! Action acceptance: launch timeout kill, retry/FAILED path, write-slot, notify.
 
 use super::*;
-use crate::events::{read_events, RunState, EventLog, EventLogConfig};
+use crate::events::{read_events, EventLogConfig, EventPublisher, EventRecord, RunState};
 use crate::occurrence::{Occurrence, OccurrenceKind};
 use crate::scheduler::{FireAction, FireContext, FireKind};
-use crate::store::{Action, OverlapPolicy, RetryPolicy, Timer};
+use crate::store::{Action, OpenOptions, OverlapPolicy, RetryPolicy, Store, Timer};
 use chrono::Utc;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -56,6 +56,24 @@ fn ctx<'a>(timer: &'a Timer, run_id: Uuid) -> FireContext<'a> {
         kind: FireKind::OnTime,
         claimed_at: Utc::now(),
     }
+}
+
+/// Open the outbox store the runner enqueues into (tempdir db).
+fn open_sink(dir: &std::path::Path) -> Store {
+    Store::open_with(dir.join("timers.db"), OpenOptions {
+        refuse_network_fs: false,
+        ..OpenOptions::default()
+    })
+    .unwrap()
+}
+
+/// Drain the runner's outbox through the elected publisher, then read the log.
+fn read_emitted(dir: &std::path::Path) -> (Vec<EventRecord>, crate::events::ReadStats) {
+    let store = open_sink(dir);
+    let mut publisher =
+        EventPublisher::with_config(EventLogConfig::new(dir.join("logs"))).unwrap();
+    publisher.publish_cycle(&store);
+    read_events(publisher.current_path()).unwrap()
 }
 
 #[test]
@@ -124,13 +142,12 @@ fn launch_no_shell_metacharacters() {
 #[test]
 fn retry_then_failed_event() {
     let dir = tempfile::tempdir().unwrap();
-    let log = EventLog::open(EventLogConfig::new(dir.path().join("logs"))).unwrap();
     let mut runner = ActionRunner::new(ActionRunnerConfig {
         skip_retry_sleep: true,
         launch_timeout: Duration::from_secs(5),
         ..Default::default()
     })
-    .with_event_log(log);
+    .with_event_sink(open_sink(dir.path()));
 
     // Command that always fails.
     let timer = sample_timer(
@@ -149,13 +166,13 @@ fn retry_then_failed_event() {
     let err = runner.on_fire(&c).expect_err("must fail after retry");
     assert!(err.contains("FAILED"), "err={err}");
 
-    let log = runner.take_event_log().unwrap();
-    let (recs, stats) = read_events(log.current_path()).unwrap();
+    let (recs, stats) = read_emitted(dir.path());
     assert_eq!(stats.skipped, 0);
     let kinds: Vec<_> = recs.iter().map(|r| r.kind).collect();
+    // `fired` commits with the R10 fire transaction — the runner never emits it.
     assert!(
-        kinds.contains(&RunState::Fired),
-        "expected fired event, got {kinds:?}"
+        !kinds.contains(&RunState::Fired),
+        "runner must not emit fired, got {kinds:?}"
     );
     assert!(
         kinds.contains(&RunState::WakeFailed),
@@ -174,8 +191,8 @@ fn retry_then_failed_event() {
 #[test]
 fn launch_success_emits_wake_delivered() {
     let dir = tempfile::tempdir().unwrap();
-    let log = EventLog::open(EventLogConfig::new(dir.path().join("logs"))).unwrap();
-    let mut runner = ActionRunner::new(ActionRunnerConfig::default()).with_event_log(log);
+    let mut runner =
+        ActionRunner::new(ActionRunnerConfig::default()).with_event_sink(open_sink(dir.path()));
     let timer = sample_timer(
         Action::Launch {
             command: "true".into(),
@@ -186,8 +203,7 @@ fn launch_success_emits_wake_delivered() {
     );
     let c = ctx(&timer, Uuid::new_v4());
     runner.on_fire(&c).expect("true must succeed");
-    let log = runner.take_event_log().unwrap();
-    let (recs, _) = read_events(log.current_path()).unwrap();
+    let (recs, _) = read_emitted(dir.path());
     assert!(recs.iter().any(|r| r.kind == RunState::WakeDelivered));
 }
 
@@ -273,13 +289,12 @@ fn launch_also_writes_output_slot_when_configured() {
 fn failed_launch_with_multibyte_output_returns_failed_not_panic() {
     let _g = test_lock();
     let dir = tempfile::tempdir().unwrap();
-    let log = EventLog::open(EventLogConfig::new(dir.path().join("logs"))).unwrap();
     let mut runner = ActionRunner::new(ActionRunnerConfig {
         skip_retry_sleep: true,
         launch_timeout: Duration::from_secs(5),
         ..Default::default()
     })
-    .with_event_log(log);
+    .with_event_sink(open_sink(dir.path()));
     // Print 100 euro signs then exit 1 — captured output crosses a multi-byte
     // boundary at byte 200; truncate must not panic.
     let timer = sample_timer(
@@ -299,8 +314,7 @@ fn failed_launch_with_multibyte_output_returns_failed_not_panic() {
     let c = ctx(&timer, Uuid::new_v4());
     let err = runner.on_fire(&c).expect_err("must fail after retry");
     assert!(err.contains("FAILED"), "err={err}");
-    let log = runner.take_event_log().unwrap();
-    let (recs, _) = read_events(log.current_path()).unwrap();
+    let (recs, _) = read_emitted(dir.path());
     assert!(recs.iter().any(|r| r.kind == RunState::WakeFailed));
 }
 

@@ -3,7 +3,7 @@
 use crate::output;
 use crate::parse;
 use crate::resolve::{resolve_timer, ResolveError};
-use bellman_core::events::{RunState, EventLog, EventLogConfig, EventRecord};
+use bellman_core::events::{EventRecord, RunState};
 use bellman_core::slots::{
     SlotConfig, SlotRequest, SlotService, SlotStatus, SCHEMA_V1,
 };
@@ -16,18 +16,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-/// Open the JSONL event log honoring config.json rotation/retention knobs.
-fn open_event_log(db: &Path) -> Result<EventLog, bellman_core::events::EventLogError> {
-    let app_cfg = db
-        .parent()
-        .map(|d| bellman_core::AppConfig::load(d).unwrap_or_default())
-        .unwrap_or_default();
-    EventLog::open(
-        EventLogConfig::new(resolve_logs_dir(db))
-            .with_retention(app_cfg.retention())
-            .with_max_current_bytes(app_cfg.log_rotation_max_bytes)
-            .with_budget_bytes(app_cfg.log_retention_budget_bytes),
-    )
+/// Enqueue an event (R11) and best-effort drain: a CLI-only invocation
+/// takes the lease itself when no GUI publisher holds it.
+fn emit_and_drain(store: &Store, db: &Path, rec: &EventRecord) {
+    if let Err(e) = store.enqueue_event(rec) {
+        eprintln!("bellman: event enqueue failed: {e}");
+        return;
+    }
+    if let Some(data_dir) = db.parent() {
+        bellman_core::events::EventPublisher::drain_best_effort(data_dir, store);
+    }
 }
 
 // ── Result types ────────────────────────────────────────────────────────
@@ -331,14 +329,14 @@ pub fn add(db: &Path, args: AddArgs) -> Result<CommandPayload, CliError> {
         .create_timer(new)
         .map_err(|e| e.with_command(CMD))?;
 
-    // Lifecycle: every successful registration appends a `registered` line.
-    if let Ok(mut log) = open_event_log(db) {
-        let _ = log.emit(
-            EventRecord::new(RunState::Registered)
-                .with_timer(timer.id, timer.name.clone())
-                .with_message("cli add"),
-        );
-    }
+    // Lifecycle: every successful registration enqueues a `registered` line.
+    emit_and_drain(
+        &store,
+        db,
+        &EventRecord::new(RunState::Registered)
+            .with_timer(timer.id, timer.name.clone())
+            .with_message("cli add"),
+    );
 
     // IK2: project the per-timer folder (README + timer.json). View-only.
     if let Some(data_dir) = db.parent() {
@@ -454,10 +452,8 @@ pub fn rm(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> {
     let _gate = db
         .parent()
         .and_then(|d| bellman_core::reply::gate::acquire(d, timer.id).ok());
-    if let Ok(mut log) = open_event_log(db) {
-        if let Err(e) = bellman_core::log_cancelled_for_open_runs(&store, &timer, &mut log) {
-            eprintln!("bellman: cancelled-run logging failed: {e}");
-        }
+    if let Err(e) = bellman_core::log_cancelled_for_open_runs(&store, &timer) {
+        eprintln!("bellman: cancelled-run logging failed: {e}");
     }
     let deleted = store
         .delete_timer(timer.id)
@@ -725,19 +721,19 @@ pub fn slot_submit(
     // Log registration when a timer was created/updated successfully.
     if response.status == SlotStatus::Ok {
         if let Some(tid) = timer_id {
-            if let Ok(mut log) = open_event_log(db) {
-                let name = store
-                    .get_timer(tid)
-                    .ok()
-                    .flatten()
-                    .map(|t| t.name)
-                    .unwrap_or_default();
-                let _ = log.emit(
-                    EventRecord::new(RunState::Registered)
-                        .with_timer(tid, name)
-                        .with_message(format!("slot-submit {request_id}")),
-                );
-            }
+            let name = store
+                .get_timer(tid)
+                .ok()
+                .flatten()
+                .map(|t| t.name)
+                .unwrap_or_default();
+            emit_and_drain(
+                &store,
+                db,
+                &EventRecord::new(RunState::Registered)
+                    .with_timer(tid, name)
+                    .with_message(format!("slot-submit {request_id}")),
+            );
         }
     }
 
@@ -752,13 +748,4 @@ pub fn slot_submit(
         processed,
         response: response_val,
     })
-}
-
-fn resolve_logs_dir(db: &Path) -> PathBuf {
-    if let Ok(p) = std::env::var("BELLMAN_LOGS") {
-        if !p.is_empty() {
-            return PathBuf::from(p);
-        }
-    }
-    db.parent().map_or_else(|| PathBuf::from("logs"), |p| p.join("logs"))
 }

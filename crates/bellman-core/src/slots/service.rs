@@ -242,19 +242,21 @@ impl SlotService {
             pickup_grace: app_cfg.pickup_grace(),
             watchdog_factor: app_cfg.watchdog_factor,
             anchors: crate::reply::new_anchors(),
+            deadlines: crate::reply::new_deadlines(),
         };
         let Ok(_gate) = crate::reply::gate::acquire(data_dir, timer_id) else {
             return;
         };
-        match crate::events::EventLog::open_under_configured(data_dir) {
-            Ok(mut log) => {
-                if let Err(e) =
-                    engine.on_ack_through(store, &mut log, &timer, through, Utc::now())
-                {
-                    eprintln!("bellman: ack_through reply hook failed: {e}");
+        match engine.on_ack_through(store, &timer, through, Utc::now()) {
+            Ok(true) => {
+                if let Some(row) = store.current_run_state(timer_id).ok().flatten() {
+                    if let Err(e) = engine.project_status(store, &timer, &row.run_id) {
+                        eprintln!("bellman: ack_through status projection failed: {e}");
+                    }
                 }
             }
-            Err(e) => eprintln!("bellman: ack_through reply hook (log open) failed: {e}"),
+            Ok(false) => {}
+            Err(e) => eprintln!("bellman: ack_through reply hook failed: {e}"),
         }
     }
 
@@ -391,15 +393,10 @@ impl SlotService {
                             // R10: deletion shares the per-timer gate.
                             let _gate =
                                 crate::reply::gate::acquire(&data_dir, timer.id).ok();
-                            match crate::events::EventLog::open_under_configured(&data_dir) {
-                                Ok(mut log) => {
-                                    if let Err(e) = crate::tree::log_cancelled_for_open_runs(
-                                        store, timer, &mut log,
-                                    ) {
-                                        eprintln!("bellman: cancelled-run logging failed: {e}");
-                                    }
-                                }
-                                Err(e) => eprintln!("bellman: event log open failed: {e}"),
+                            if let Err(e) =
+                                crate::tree::log_cancelled_for_open_runs(store, timer)
+                            {
+                                eprintln!("bellman: cancelled-run logging failed: {e}");
                             }
                             if let Err(e) = tree.remove_for(timer.id) {
                                 eprintln!("bellman: timer folder removal failed: {e}");

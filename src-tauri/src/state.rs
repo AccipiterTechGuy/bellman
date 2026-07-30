@@ -47,10 +47,13 @@ pub struct AppState {
     /// Single-next-wake bridge (RTC arm / capability probe).
     pub wake: SingleNextWake,
     /// IK3 reply watcher thread handle (set after `start_scheduler`).
-    pub reply_watcher: Mutex<Option<bellman_core::reply::ReplyWatcherStop>>,
+    pub reply_watcher: Mutex<Option<bellman_core::slots::WatchStop>>,
     /// IK3 duration anchors shared by the scheduler, `run_now` and the reply
     /// watcher so `duration_ms` stays monotonic across threads.
     pub reply_anchors: bellman_core::reply::SharedAnchors,
+    /// IK3 monotonic deadline book shared by the scheduler, `run_now` and
+    /// the watcher (persisted wall deadlines are only the restart fallback).
+    pub reply_deadlines: bellman_core::reply::SharedDeadlines,
 }
 
 impl AppState {
@@ -73,6 +76,7 @@ impl AppState {
             wake,
             reply_watcher: Mutex::new(None),
             reply_anchors: bellman_core::reply::new_anchors(),
+            reply_deadlines: bellman_core::reply::new_deadlines(),
         }
     }
 
@@ -126,14 +130,16 @@ impl AppState {
     }
 
     fn emit_wake_capability_line(&self, line: &str) {
-        if let Ok(mut log) = bellman_core::EventLog::open_under_configured(&self.data_dir) {
-            let _ = log.emit(
-                bellman_core::events::EventRecord::new(
-                    bellman_core::events::RunState::WakeCapability,
-                )
-                .with_message(line),
-            );
+        let store = self.store.lock();
+        if let Err(e) = store.enqueue_event(
+            &bellman_core::events::EventRecord::new(
+                bellman_core::events::RunState::WakeCapability,
+            )
+            .with_message(line),
+        ) {
+            log::warn!("bellman: wake_capability enqueue failed: {e}");
         }
+        drop(store);
         log::info!("bellman: {line}");
     }
 
@@ -219,35 +225,23 @@ impl AppState {
         // (scheduler thread, run_now) and the reply watcher thread, so
         // `duration_ms` stays monotonic across both.
         let anchors = self.reply_anchors.clone();
+        let deadlines = self.reply_deadlines.clone();
         let cfg = SchedulerConfig::from_app_config(&app_cfg)
             .with_data_dir(self.data_dir.clone())
-            .with_anchors(anchors.clone());
-        // Open the JSONL event log once and hand it to the runner so
-        // scheduled fires (not just run-now) land in events.current.jsonl.
-        // Without this, the per-timer "live log tail" panel in the GUI
-        // would only see events from manual run-now invocations, and the
-        // docs/QA_P3.md "window close leaves engine firing" check would
-        // be unprovable.
-        let event_log = match bellman_core::EventLog::open(
-            bellman_core::EventLogConfig::new(self.data_dir.join("logs"))
-                .with_retention(app_cfg.retention())
-                .with_max_current_bytes(app_cfg.log_rotation_max_bytes)
-                .with_budget_bytes(app_cfg.log_retention_budget_bytes),
-        ) {
-            Ok(log) => Some(log),
-            Err(e) => {
-                log::error!("bellman: could not open event log under {}: {e}", self.data_dir.display());
-                None
-            }
-        };
+            .with_anchors(anchors.clone())
+            .with_deadlines(deadlines.clone());
+        // R11: the runner enqueues into the outbox (its own store
+        // connection); the elected publisher appends, so scheduled fires
+        // land in events.current.jsonl exactly like run-now events.
         let runner_cfg = ActionRunnerConfig {
             max_concurrent_actions: app_cfg.max_concurrent_actions,
             ..ActionRunnerConfig::default()
         };
         let mut runner = ActionRunner::new(runner_cfg)
             .with_notify_sink(self.notify_sink.clone());
-        if let Some(log) = event_log {
-            runner = runner.with_event_log(log);
+        match bellman_core::open_store(&self.data_dir.join("timers.db")) {
+            Ok(sink) => runner = runner.with_event_sink(sink),
+            Err(e) => log::error!("bellman: could not open runner event sink: {e}"),
         }
         // Same db path: the scheduler opens its own connection on a clone.
         // (SQLite is happy with multiple readers + one writer; WAL mode is
@@ -265,8 +259,9 @@ impl AppState {
         let handle = sched.control_handle();
         *self.control_handle.lock() = Some(handle);
 
-        // IK3: the reply watcher — ingests `reply-<run_id>.json` files,
-        // drives pickup/watchdog deadlines and the folder reconciler.
+        // IK3: the ONE background watcher — slot channel, reply channel
+        // (ingest, monotonic deadlines, reconciler) and the R11 publisher
+        // safety tick on a single thread.
         {
             let engine = bellman_core::reply::ReplyEngine {
                 tree: bellman_core::TimersTree::new(&self.data_dir),
@@ -274,15 +269,17 @@ impl AppState {
                 pickup_grace: app_cfg.pickup_grace(),
                 watchdog_factor: app_cfg.watchdog_factor,
                 anchors,
+                deadlines,
             };
-            match bellman_core::reply::spawn_reply_thread(
-                self.data_dir.clone(),
-                self.data_dir.join("timers.db"),
-                engine,
-                bellman_core::reply::DEFAULT_POLL_INTERVAL,
-            ) {
+            match bellman_core::slots::spawn_watch_thread(bellman_core::slots::WatchConfig {
+                slots_root: self.data_dir.join("slots"),
+                data_dir: self.data_dir.clone(),
+                db_path: self.data_dir.join("timers.db"),
+                reply_engine: Some(engine),
+                poll_interval: bellman_core::reply::DEFAULT_POLL_INTERVAL,
+            }) {
                 Ok(stop) => *self.reply_watcher.lock() = Some(stop),
-                Err(e) => log::error!("bellman: reply watcher spawn failed: {e}"),
+                Err(e) => log::error!("bellman: watcher spawn failed: {e}"),
             }
         }
         drop(store); // release the AppState lock for the thread

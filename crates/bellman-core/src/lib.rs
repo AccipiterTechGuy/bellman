@@ -74,7 +74,7 @@ pub use reply::{
     ReplyResult, SharedAnchors, REPLY_SCHEMA_V1,
 };
 pub use tree::{
-    folder_name, log_cancelled_for_open_runs, project_run_started, reconcile_folders,
+    folder_name, log_cancelled_for_open_runs, project_fire, reconcile_folders,
     reply_file_name, short_id, slugify, RunStatus, TimersTree, TreeError, TreeResult,
     README_FILE_NAME, RUN_SCHEMA_V1, STATUS_FILE_NAME, TIMER_FILE_NAME, TIMER_SCHEMA_V1,
     TREE_DIR_NAME,

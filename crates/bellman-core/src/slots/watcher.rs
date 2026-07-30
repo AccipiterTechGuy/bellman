@@ -7,13 +7,14 @@
 use super::error::{SlotError, SlotResult};
 use super::service::SlotService;
 use crate::store::Store;
+use chrono::Utc;
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{
     new_debouncer, DebounceEventResult, Debouncer, RecommendedCache,
 };
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Default debounce window for notify hints (latency sugar, not truth).
 pub const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(200);
@@ -153,6 +154,157 @@ pub fn spawn_slot_thread(
 }
 
 type SlotDebouncer = Debouncer<RecommendedWatcher, RecommendedCache>;
+
+// ── The ONE background watcher (IK3) ────────────────────────────────────
+//
+// One thread, one debouncer, one store connection, one event publisher.
+// The same loop drives: the slot channel poll, the reply-channel scan and
+// monotonic deadline pass, the folder reconciler, and the R11 publisher
+// safety tick. Anything file-shaped is a latency hint; the periodic full
+// rescan is truth. No second watcher exists — the reply channel reuses
+// this mechanism.
+
+/// Configuration for [`spawn_watch_thread`].
+#[derive(Clone)]
+pub struct WatchConfig {
+    /// Slot channel root (`<data_dir>/slots`).
+    pub slots_root: PathBuf,
+    /// Data root (reply tree, logs, locks).
+    pub data_dir: PathBuf,
+    /// SQLite database path (the thread opens its own connection).
+    pub db_path: PathBuf,
+    /// The reply engine; `None` runs the slot channel only.
+    pub reply_engine: Option<crate::reply::ReplyEngine>,
+    /// Periodic rescan cadence — also the deadline granularity and the
+    /// publisher safety tick (R11 requires no slower than 1 s).
+    pub poll_interval: Duration,
+}
+
+/// Handle to stop the background watcher thread (joins on drop-stop).
+pub struct WatchStop {
+    tx: Sender<()>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl WatchStop {
+    /// Signal shutdown and join the thread.
+    pub fn stop(mut self) {
+        let _ = self.tx.send(());
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+/// Spawn the ONE background watcher: slot channel + reply channel +
+/// publisher tick on a single thread with a single debouncer.
+pub fn spawn_watch_thread(cfg: WatchConfig) -> SlotResult<WatchStop> {
+    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    let handle = std::thread::Builder::new()
+        .name("bellman-watch".into())
+        .spawn(move || {
+            if let Err(e) = run_watch_loop(cfg, stop_rx) {
+                eprintln!("bellman: watcher exited: {e}");
+            }
+        })
+        .map_err(|e| SlotError::Io(format!("spawn watch thread: {e}")))?;
+    Ok(WatchStop {
+        tx: stop_tx,
+        handle: Some(handle),
+    })
+}
+
+fn run_watch_loop(cfg: WatchConfig, stop_rx: mpsc::Receiver<()>) -> SlotResult<()> {
+    let mut store = Store::open_with(
+        &cfg.db_path,
+        crate::store::OpenOptions {
+            refuse_network_fs: false,
+            ..Default::default()
+        },
+    )
+    .map_err(|e| SlotError::Io(format!("watcher store open: {e}")))?;
+    let service = SlotService::open(&cfg.slots_root, Default::default())?
+        .with_timers_tree(crate::tree::TimersTree::new(&cfg.data_dir));
+    let mut publisher = crate::events::EventPublisher::open(&cfg.data_dir)
+        .map_err(|e| SlotError::Io(format!("watcher publisher: {e}")))?;
+    let mut tracker = crate::reply::InvalidTracker::default();
+
+    let (hint_tx, hint_rx) = mpsc::channel::<SlotWake>();
+    let mut debouncer = build_debouncer(hint_tx, DEFAULT_DEBOUNCE)?;
+    debouncer
+        .watch(service.layout().free_dir(), RecursiveMode::NonRecursive)
+        .map_err(|e| SlotError::Io(format!("watch free/: {e}")))?;
+    debouncer
+        .watch(service.layout().work_dir(), RecursiveMode::NonRecursive)
+        .map_err(|e| SlotError::Io(format!("watch work/: {e}")))?;
+    if let Some(engine) = &cfg.reply_engine {
+        debouncer
+            .watch(engine.tree.root(), RecursiveMode::Recursive)
+            .map_err(|e| SlotError::Io(format!("watch timers/: {e}")))?;
+    }
+
+    // Initial full pass (truth on startup), then the loop.
+    let _ = service.poll(&mut store);
+    if let Some(engine) = &cfg.reply_engine {
+        let stats = crate::reply::poll_once(
+            engine,
+            &store,
+            Utc::now(),
+            Instant::now(),
+            &mut tracker,
+        );
+        if stats.errors > 0 {
+            eprintln!("bellman: watcher: initial reply pass: {} error(s)", stats.errors);
+        }
+        crate::reply::reconcile(engine, &store);
+    }
+    publisher.publish_cycle(&store);
+
+    let mut polls: u32 = 0;
+    loop {
+        if stop_rx.try_recv().is_ok() {
+            break;
+        }
+        match hint_rx.recv_timeout(cfg.poll_interval) {
+            Ok(_) | Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+        // Coalesce bursty debounced hints into one pass.
+        while hint_rx.try_recv().is_ok() {}
+        if stop_rx.try_recv().is_ok() {
+            break;
+        }
+
+        // Slot channel.
+        if let Err(e) = service.poll(&mut store) {
+            eprintln!("bellman: watcher: slot poll: {e}");
+        }
+        // Reply channel + monotonic deadlines.
+        if let Some(engine) = &cfg.reply_engine {
+            let stats = crate::reply::poll_once(
+                engine,
+                &store,
+                Utc::now(),
+                Instant::now(),
+                &mut tracker,
+            );
+            if stats.errors > 0 {
+                eprintln!("bellman: watcher: reply pass: {} error(s)", stats.errors);
+            }
+            polls += 1;
+            if polls.is_multiple_of(crate::reply::RECONCILE_EVERY_POLLS) {
+                crate::reply::reconcile(engine, &store);
+            }
+        }
+        // R11 publisher safety tick: a row committed by ANY process (CLI
+        // enqueue, this loop's own transitions) is drained within one tick,
+        // with no in-process signal required.
+        publisher.publish_cycle(&store);
+    }
+    drop(debouncer);
+    Ok(())
+}
+
 
 fn build_debouncer(hint_tx: Sender<SlotWake>, debounce: Duration) -> SlotResult<SlotDebouncer> {
     new_debouncer(debounce, None, move |res: DebounceEventResult| match res {
