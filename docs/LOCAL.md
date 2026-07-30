@@ -17,8 +17,8 @@ in the git tree:
 ```
 <data dir>/
 ├─ timers.db (+ -wal, -shm)   your timers, runs, claim ledger
-├─ logs/events.current.jsonl  what actually happened
-├─ logs/archive/*.jsonl       rotated history
+├─ logs/events.current.jsonl  what actually happened (rotates weekly or past 64 MB)
+├─ logs/archive/*.jsonl.gz    30-day history (configurable), gzip-compressed
 ├─ slots/{free,work,done,bad} the JSON slot IPC channel
 └─ config.json                horizon, retention, concurrency cap, wake settings
 ```

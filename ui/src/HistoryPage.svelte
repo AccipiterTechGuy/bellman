@@ -71,6 +71,7 @@
   <span class="subtitle-meta">
     {log.totalRecords} record{log.totalRecords === 1 ? '' : 's'}
     {log.skipped ? `, ${log.skipped} skipped` : ''}
+    — 30-day history (configurable)
   </span>
 </section>
 
