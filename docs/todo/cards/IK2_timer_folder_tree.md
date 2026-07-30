@@ -14,7 +14,7 @@ CLI, no log parsing.
 ├── bulb-test-3f1a/
 │   ├── timer.json           what the timer IS
 │   ├── status.json          the CURRENT run
-│   └── reply-<run8>.json    where the app answers — per-run filename   (IK3)
+│   └── reply-<run_id>.json    where the app answers — per-run filename   (IK3)
 ```
 
 **The folder holds the current run only.** There is no `runs/` directory and no history here:
@@ -31,7 +31,7 @@ request/response **channel**. Two trees, two jobs.
 
 ## Scope
 
-- `timers/<slug>-<short-id>/` with `timer.json`, `status.json`, `reply-<run8>.json` (IK3) and a `README.txt`
+- `timers/<slug>-<short-id>/` with `timer.json`, `status.json`, `reply-<run_id>.json` (IK3) and a `README.txt`
   at the root explaining the layout to whoever opens it. The README must state which file
   answers the question: **`status.json` is the truth; the reply file is only the app's side.**
   They diverge whenever Bellman judged a run (`no_ack`, watchdog expiry) and the app did not

@@ -9,9 +9,10 @@ A deliberately tiny app whose only job is to demonstrate the loop end to end, an
 example a third party copies.
 
 1. A timer fires. Bellman writes `status.json` with `state: "fired"`.
-2. The app writes `reply.json` — `acknowledged`, `app_name: "lightbulb"`, `expected_secs: 15`.
+2. The app writes the reply file at the notification's `reply_path` — `acknowledged`,
+   `app_name: "lightbulb"`, `expected_secs: 15`.
 3. The bulb turns **on** — visibly, on screen — and stays on for **15 seconds**.
-4. The app overwrites `reply.json` — `completed`, with the measured on-duration.
+4. The app overwrites its reply file — `completed`, with the measured on-duration.
 5. Bellman validates, folds it into `status.json` and closes the run.
 
 Keep it small and readable. It is documentation that happens to compile, and it must be
@@ -24,17 +25,20 @@ more than roughly this, something in IK3 is wrong and should be fixed rather tha
 here:
 
 ```python
-r = json.load(open(f"{d}/reply.json"))     # schema, run_id, app_name already filled in
+reply_path = fire["reply_path"]            # from the fire notification — never construct it
+r = json.load(open(reply_path))            # schema, run_id, app_name already filled in
 do_the_work()
 r["state"] = "completed"
 r["completed_at"] = now_utc()
-tmp = f"{d}/.reply.{uuid.uuid4()}"
-json.dump(r, open(tmp, "w")); os.replace(tmp, f"{d}/reply.json")
+tmp = reply_path + ".tmp"
+json.dump(r, open(tmp, "w")); os.replace(tmp, reply_path)
 ```
 
 One read, one atomic write, one file. The app never opens `status.json`, never composes a
 document from scratch, and never carries `run_id` or `app_name` in its own code — Bellman
-pre-filled them.
+pre-filled them. **The path comes from the notification's `reply_path`** (the filename is
+per-run, IK3); a client with `reply.json` hardcoded is wrong under this protocol and the
+docs must never show one.
 
 ## Documentation
 
@@ -42,7 +46,7 @@ A **"connect your own application"** section in `docs/INTEGRATION.md`:
 
 - where the timer's folder is and what the three files are
 - how to notice a fire
-- what to write into `reply.json`, and the states an app may use
+- what to write into the reply file, and the states an app may use
 - the 60s pickup grace, and that completion has no timeout unless you opt in
 - `error_detection` + `expected_secs`, and that a heartbeat extends the deadline
 - what happens to a malformed reply

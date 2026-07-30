@@ -58,11 +58,14 @@ Bellman-side exception is rebuilding a **missing** stub, and even that must be c
 (`O_EXCL` / create-new semantics), never a replace: a "restore" that overwrites can always
 race a valid reply the app wrote between Bellman's check and its write.
 
-### The filename is per-run: `reply-<run8>.json`
+### The filename is per-run: `reply-<run_id>.json`
 
-`reply-` + first 8 hex of the `run_id` (`reply-9f2c1d77.json`), carried verbatim in the fire
-notification as `reply_path` — the app never constructs it. This is what makes the
-no-overwrite rule *possible* rather than aspirational.
+`reply-` + the **full** `run_id` (`reply-9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08.json`), carried
+verbatim in the fire notification as `reply_path` — the app never constructs it. This is what
+makes the no-overwrite rule *possible* rather than aspirational. **Full id, not a prefix**: a
+truncated 8-hex name is 32 bits, and a colliding reuse would hand a new run the exact path a
+still-alive old app is holding — quietly rebuilding the clobber this filename exists to kill.
+The full id makes collision impossible rather than improbable, and costs a longer filename.
 
 With one fixed `reply.json` across generations, two unfixable races exist:
 
@@ -73,12 +76,12 @@ With one fixed `reply.json` across generations, two unfixable races exist:
   reverting the run to `state: null` and letting it rot into `no_ack`. A database ordering
   cannot fix a filesystem race; only not sharing the path fixes it.
 
-Per-run names dissolve both structurally. App A's late write lands in `reply-<runA8>.json`,
+Per-run names dissolve both structurally. App A's late write lands in run A's own file,
 touching nothing of run B's: Bellman ingests it under the previous-run rule (`superseded`),
 then **deletes the stale file**, so the folder normally holds exactly one `reply-*.json` —
 the current one. Nothing is ever restored because nothing is ever lost.
 
-(Everywhere below, "`reply.json`" means the current run's `reply-<run8>.json`.)
+(Everywhere below, "`reply.json`" means the current run's `reply-<run_id>.json`.)
 
 ### The app edits; it does not reconstruct
 
@@ -427,7 +430,9 @@ ever existed. So before delivery starts:
 1. Scan every `reply.json` under `timers/`.
 2. Fold in each one that is valid and whose `run_id` is still the current run.
 3. Emit the transitions that were missed, using the app's own timestamps.
-4. Rebuild stale or missing `status.json` / stub files from the database.
+4. Rebuild stale or missing `status.json` from the database; recreate missing stubs
+   **create-only** (`O_EXCL`) — startup must obey the same never-overwrite law as the
+   watcher, because an app can be writing at this exact moment.
 5. Flush pending event-log lines.
 6. **Then** start the scheduler.
 
@@ -447,15 +452,25 @@ handled differently:
 
 Never quarantine on the first unparseable read. Never debounce a semantic rejection.
 
-If the file is deleted or permanently corrupt: the database still identifies the current run,
-Bellman reports the channel as missing, and the next fire (or startup) replaces it. A
-hand-edited `run_id` is never trusted.
+**Missing vs corrupt — different responses, one shared law: never write over a file that
+exists.**
+
+- **Missing** (deleted): the database still identifies the current run; Bellman recreates the
+  stub **create-only** (`O_EXCL`) — if the create loses a race to an app writing a real
+  reply, the create fails and the reply wins, which is the correct outcome.
+- **Permanently corrupt** (stable invalid bytes past the debounce): `reply_rejected`, and the
+  file is **left in place** — replacing it in-place is the same check-then-write race as the
+  banned restore, and the app may be about to overwrite it with a valid reply anyway. The
+  next fire opens a fresh per-run file regardless; the corrupt one is cleaned up then, as a
+  stale file.
+
+A hand-edited `run_id` is never trusted.
 
 **A `run_id` that is not the current run has exactly two cases — one rule each, stated once:**
 
 | the `run_id` is… | it means | Bellman does |
 |---|---|---|
-| a **previous run of this timer** | a slow app finished after the timer fired again — expected, meaningful | log `superseded` (duplicates no-op), do **not** apply it, restore the current stub |
+| a **previous run of this timer** | a slow app finished after the timer fired again — expected, meaningful | log `superseded` (duplicates no-op), do **not** apply it, **delete the stale file** — the current run's own file is never touched |
 | **unknown entirely** | garbage, tampering, or a hand edit | `reply_rejected` + quarantine to `bad/` |
 
 Everything else:

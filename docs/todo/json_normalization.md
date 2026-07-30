@@ -43,6 +43,8 @@ everything about one timer. Both present on every message where they apply.
 | `failed` | **the app** | yes |
 | `no_ack` | Bellman — **no acknowledgement was received** (a filesystem read leaves no trace, so "nobody read it" is unknowable — say what was observed) | **revisable** — a late valid reply supersedes it while the run is still current |
 | `cancelled` | Bellman — the timer was deleted while its run was open | yes |
+| `failed` (`failure_kind: "timed_out"`) | Bellman — only if the app set `error_detection` | **revisable** — a late app reply supersedes it |
+| `skipped_misfire`, `coalesced`, `pruned`, `wake_*`, `year_recalibrate` | Bellman | as today |
 
 **What counts as pickup:** any valid reply state (`acknowledged` / `running` / `completed` /
 `failed`) **or** the existing slot-feed cursor (`ack_through`) advancing past this run's
@@ -51,16 +53,18 @@ event. The slot feed is a real, durable acknowledgement path that predates the r
 records. The pickup deadline is its own persisted deadline; the existing `ack_grace` constant
 may seed its default, but the two jobs (pickup timeout vs pruning grace) stay separately
 named and separately configurable.
-| `failed` (`failure_kind: "timed_out"`) | Bellman — only if the app set `error_detection` | **revisable** — a late app reply supersedes it |
-| `skipped_misfire`, `coalesced`, `pruned`, `wake_*`, `year_recalibrate` | Bellman | as today |
 
 **R6 — readers stay tolerant.** Unknown fields ignored, never `deny_unknown_fields`
 (BUILD_PLAN rule 7). This is what lets the shape grow without breaking old consumers.
 
-**R7 — grace on pickup, never on completion.**
+**R7 — a deadline on pickup, never on completion.**
 
-- **Pickup** has a grace window (`ack_grace`, default 60s). Bellman wrote a file; asking
-  whether anything read it is a fair question with a knowable answer. Lapsed ⇒ `no_ack`.
+- **Pickup** has a deadline (default 60s, its own persisted setting — `ack_grace` may seed
+  the default, but pickup timeout and pruning grace are different jobs with separate names).
+  Pickup is satisfied by any valid reply state **or** the slot-feed `ack_through` advancing
+  past this run — see the pickup definition under R5. Whether a file was merely *read* is
+  not knowable and is never claimed. Lapsed ⇒ `no_ack` ("no acknowledgement was received"),
+  revisable by a late valid reply while the run is still current.
 - **Completion has no timeout, ever.** How long the other program takes is unknowable —
   seconds, minutes, hours. A run stays open until the app closes it. **Nothing ever
   auto-completes.**
@@ -173,8 +177,13 @@ The shape that fixes it:
   `actions/runner.rs:128`) — under this rule a failed append leaves the outbox row in place
   for retry and is never silently dropped.
 
-A line is durable when it is flushed, not when it is created: enqueue, append, flush, then
-mark published, and retry after a failed write or a restart.
+A line is durable when it is **synced, not flushed**: enqueue, append, flush, **fdatasync
+(`sync_data`)**, then mark published, and retry after a failed write or a restart. A flush
+moves bytes into the OS cache and survives a process crash only; a machine crash after
+flush-but-before-sync loses the line while the outbox row is already cleared. Events are
+low-rate, so the sync cost is irrelevant — and if it ever is not, batch the sync, never skip
+it. If a platform cannot sync, the guarantee is explicitly downgraded to process-crash-only
+and documented as such, not silently assumed.
 
 **Delivery is at-least-once, and the file is honest about it.** A crash between flush and
 mark-published means the retry appends the same event **again** — `event_id` identifies the
@@ -221,6 +230,13 @@ publishing the fire to **ingesting** the terminal reply. App timestamps are neve
 a negative or absurd duration. One anchor pair, computed by Bellman, clamped at zero, present
 on the terminal event only. (`fired → completed` directly, no ack: same formula, no special
 case.)
+
+A monotonic anchor **does not survive a restart**. When Bellman restarts mid-run, the
+original anchor is gone; the fallback is Bellman's own **wall-clock** stamps — ingest wall
+time minus `fired_at` (both Bellman's, still no app arithmetic), clamped at zero, and the
+event carries `duration_source: "wall_clock"` so a jumped clock's number is identifiable as
+the estimate it is. Same-process runs carry no marker — monotonic is the default, the
+fallback is the exception.
 
 **Archives are compressed.** `events.current.jsonl` stays plain text — grep-ability of the
 live log is a feature. Rotated archives are compressed on rotation; JSONL compresses hard
@@ -301,11 +317,11 @@ Mid-run it reads `"state": "running"` with no `completed_at`. If the app dies it
 that way and ages — it never becomes `completed`, and it is not `failed` unless the app said
 so or a watchdog the app opted into expired.
 
-### `reply-<run8>.json` — `bellman-reply/1`
+### `reply-<run_id>.json` — `bellman-reply/1`
 
 **The only file an integrating app writes.** Overwritten at each step; never read back.
 
-**The filename is per-run** — `reply-` + the first 8 hex of the `run_id` (`reply-9f2c1d77.json`).
+**The filename is per-run** — `reply-` + the first 8 hex of the `run_id` (`reply-9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08.json`).
 One fixed name shared across generations would let a slow previous app atomically replace the
 next run's channel, and any "restore" by Bellman would race the current app's own writes —
 a read-check-write on a single path can always overwrite a valid reply written in between.
@@ -373,7 +389,7 @@ Changes from today: gains `schema`, and `ts` becomes `logged_at`.
   "scheduled_for": "2026-07-30T05:00:00Z",
   "fired_at": "2026-07-30T05:00:00Z",
   "status_path": "~/.bellman/timers/bulb-test-3f1a/status.json",
-  "reply_path": "~/.bellman/timers/bulb-test-3f1a/reply-9f2c1d77.json"
+  "reply_path": "~/.bellman/timers/bulb-test-3f1a/reply-9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08.json"
 }
 ```
 
@@ -402,7 +418,7 @@ no CLI, no log parsing.
 ├── bulb-test-3f1a/
 │   ├── timer.json           what the timer IS        (Bellman writes, you read)
 │   ├── status.json          the CURRENT run          (Bellman writes, everyone reads)
-│   └── reply-9f2c1d77.json  where the app answers    (the app writes, Bellman reads)
+│   └── reply-9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08.json  where the app answers    (the app writes, Bellman reads)
 └── morning-backup-7b22/
 ```
 
