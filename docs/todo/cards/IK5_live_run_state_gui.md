@@ -40,9 +40,25 @@ An app that sends no `heartbeat_at` or `progress` is a normal app and most are; 
 `running` and an elapsed time, and nothing else. Absence is not a state and must not look
 like one.
 
-**3. `overdue` is a label, not an ending.** Shown once the app's own
-`expected_secs × factor` has passed. Computed **at render time** by comparing two numbers —
-no timer, no wakeup, no background task. The run is still `running` and may still complete.
+**3. `overdue` is a label, not an ending.** Shown once the app's own plain `expected_secs`
+has passed — **1×, not the watchdog's `× factor`**. Computed **at render time** by comparing
+two numbers: no timer, no wakeup, no background task. The run is still `running` and may
+still complete.
+
+The two thresholds are deliberately different, and that is the whole value of the label:
+
+| when | what happens | who sees it |
+|---|---|---|
+| `expected_secs` (15 min) | row reads `overdue` | a human, if looking |
+| `expected_secs × factor` (30 min) | state becomes `failed` / `timed_out` | recorded, logged |
+
+Firing the label at `× factor` too would make it land on the same second as the verdict, so
+it would tell nobody anything they were not about to be told anyway. At 1× it is an early
+warning; at 2× it is a judgement. **The label never fires an event** — no log line, no state
+change, nothing but pixels.
+
+For an app that never opted in, only the label exists. That is R8's advisory case, unchanged:
+"running, overdue — 47m elapsed, expected 10m", and Bellman never acts on it.
 
 **4. Open runs pinned to the top of `Run history`.** "What is happening" above "what
 happened" reads naturally, and the page already exists (`ui/src/HistoryPage.svelte`).
@@ -76,8 +92,15 @@ Bellman's design point is a small resident footprint (`docs/PERF.md`).
   app writes `progress`.
 - An app that sends **no** heartbeat and **no** progress shows `running` plus elapsed time and
   **no placeholder text anywhere** — asserted, since a stray "never" is the obvious slip.
-- `overdue` appears after the app's own deadline passes, and the run can still reach
-  `completed` afterwards, with the row updating to match.
+- **`overdue` at 1×, `failed` at `× factor`** — a run with `expected_secs: 900` and a 2×
+  factor reads `overdue` at 15 minutes while still `running`, and only becomes
+  `failed`/`timed_out` at 30. Asserted at both thresholds; using one number for both is the
+  obvious-looking wrong move.
+- Crossing into `overdue` writes **nothing** — no event, no log line, no state change.
+  Asserted by counting log lines across the boundary.
+- An app with no `error_detection` shows `overdue` and is **never** failed for it, however
+  long it runs.
+- The run can still reach `completed` after `overdue`, with the row updating to match.
 - `completed`, `failed:reported`, `failed:timed_out`, `no_ack` and `superseded` are each
   visually distinguishable — screenshot-reviewed on WebKitGTK first.
 - Open runs appear at the top of `Run history`; past runs still list below them.
