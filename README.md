@@ -140,9 +140,7 @@ Apps that prefer a socket can speak the same messages over local IPC instead.
 Start here: **[docs/INTEGRATION.md → Connect your own
 application](docs/INTEGRATION.md#connect-your-own-application)** — the protocol,
 what each file contains, and copy-paste clients in Python, bash, PowerShell and
-Node. Then run [`testing_apps/lightbulb/`](testing_apps/lightbulb/), a ~130-line
-stdlib-only reference app that does the whole loop end to end: a timer fires,
-the bulb lights visibly for 15 seconds, the app reports `completed`.
+Node. Two reference apps in [`testing_apps/`](testing_apps/) demonstrate the full loop: copy [`testing_apps/lightbulb/`](testing_apps/lightbulb/) (~130 lines, terminal only) into your own code, or run [`testing_apps/lightbulb_gui/`](testing_apps/lightbulb_gui/) to watch the interactive window set a time, light the golden bulb, and drive the four-step handshake.
 
 ## Your data stays yours
 

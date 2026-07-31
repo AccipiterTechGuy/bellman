@@ -7,6 +7,8 @@ the full loop — a timer fires, the app acknowledges, the bulb lights
 through the reply file. See `docs/INTEGRATION.md` → *Connect your own
 application* for the protocol this implements.
 
+*(Looking for a graphical demo to watch rather than code to copy? See [`testing_apps/lightbulb_gui/`](../lightbulb_gui/).)*
+
 ## Run the demo
 
 You need a Bellman with the scheduler running (the desktop app, or any

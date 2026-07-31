@@ -11,7 +11,7 @@ does not document, the protocol is wrong — not the app.
 | app | audience | what it demonstrates |
 |---|---|---|
 | [`lightbulb/`](lightbulb/) | developers | the thing you **copy**: ~130 lines of stdlib Python, terminal only, whose six-line `reply()` is the whole contract |
-| `lightbulb_gui/` *(planned — DEMO1)* | everyone else | the thing you **watch**: set a time in a window, see the bulb light, see the four-state handshake |
+| [`lightbulb_gui/`](lightbulb_gui/) | everyone else | the thing you **watch**: set a time in a window, see the bulb light, see the four-state handshake |
 
 Both stay. They serve different people: one is a snippet you lift into your
 own application, the other is a demonstration you show someone who has never
