@@ -53,6 +53,29 @@ watches. See `testing_apps/README.md`.
 Optional sugar only — the raw protocol must stay documented well enough that any language
 speaks it without a library, exactly like the file protocol.
 
+### 🔒 Standing decision — the output protocol is frozen by design
+
+**The JSON output protocol and the small Python connector are not open for
+redesign.** Owner decision, and it outranks any argument for elegance.
+
+Protected: one writer per file (Bellman owns `timer.json` / `status.json`, the
+app owns its per-run `reply-<run_id>.json`); the wire shapes `bellman-slot/1`,
+`bellman-reply/1`, `bellman-run/1`, `bellman-event/1`; and a client that stays
+one read, one atomic write, one file — about ten lines in any language.
+
+Rejected in advance: a shared `output.json` with a lock file, a generated
+`adapter.py` or any generated importable file, a **required** SDK / client
+library / schema layer / code generator / build step, and extra handshakes,
+negotiation or registration in the reply path.
+
+The product claim is that a shell script is a valid client. Anything eroding
+that is a downgrade wearing an improvement's clothes.
+
+This freezes the **design**, not its defects: implementation bugs, inaccurate
+docs, missing error handling, and genuine expressiveness gaps are all still
+wanted. An **optional** convenience wrapper is fine — it is on the deferred
+list — provided the raw protocol stays fully documented and usable without it.
+
 ### Decided against — do not re-propose
 
 **One shared `output.json` per timer, guarded by a `.output.lock`.** Reviewed 2026-07-30 and
