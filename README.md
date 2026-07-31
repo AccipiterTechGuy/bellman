@@ -27,8 +27,25 @@ actually exists today.**
 - **JSON slot-pair integration layer**: external apps register, modify, or
   delete their own wake-up timers by writing one JSON file; ≥5 empty slot pairs
   are always kept ready and auto-replenished.
+- **Two-way app integration**: a woken app reports back — acknowledged,
+  progress, completed or failed — over JSON files or a local socket, with an
+  opt-in watchdog for apps that go quiet.
 - JSONL event log with weekly pruning; memory-smart core — only near-horizon
   timers stay resident (min-heap window).
+
+## Connect your own application
+
+Any app, in any language, can be woken by a Bellman timer and report the
+outcome back — **three JSON files and one rule: one writer per file.** No SDK,
+no shared library, nothing to link against; a shell script is a valid client.
+Apps that prefer a socket can speak the same messages over local IPC instead.
+
+Start here: **[docs/INTEGRATION.md → Connect your own
+application](docs/INTEGRATION.md#connect-your-own-application)** — the protocol,
+what each file contains, and copy-paste clients in Python, bash, PowerShell and
+Node. Then run [`examples/lightbulb/`](examples/lightbulb/), a ~130-line
+stdlib-only reference app that does the whole loop end to end: a timer fires,
+the bulb lights visibly for 15 seconds, the app reports `completed`.
 
 ## Your data stays yours
 
@@ -39,21 +56,45 @@ keeping private integrations out of git.
 
 ## Status — what actually exists today
 
+**Everything below is built except the last line.** The scheduling core and the
+app-integration surface are complete; what remains before a release is
+validating the whole thing on real hardware.
+
+**Core — timers, firing, history**
+
 | phase | state |
 |---|---|
 | Occurrence engine (once/interval/daily/weekly/monthly/yearly/cron, DST + clamp policies) | ✅ built |
 | SQLite store — timers / runs / claim ledger, WAL | ✅ built |
 | Scheduler — horizon heap, chunked sleeps, clock-jump detector, misfire pass | ✅ built |
+| Fire dispatcher — publication decoupled from action execution, bounded action lanes | ✅ built |
+| JSONL event log — single durable publisher, `fdatasync` before publish, gzip weekly/size rotation, 30-day retention | ✅ built |
+| Pruner, hardening, perf gates | ✅ built |
+
+**App integration — waking other applications**
+
+| phase | state |
+|---|---|
+| Slot channel — apps create / modify / delete their own timers by writing one JSON file | ✅ built |
+| Per-timer folder tree — `timer.json`, `status.json`, human-browsable, rebuildable | ✅ built |
+| Reply channel — per-run reply file, at-least-once delivery, pickup grace, late-reply revision | ✅ built |
+| Opt-in silence watchdog — `error_detection` + `expected_secs`, heartbeats extend the deadline | ✅ built |
+| Local IPC transport — Unix socket / Windows named pipe, chosen per firing, same validation as files | ✅ built |
+| Reference app + protocol docs (`examples/lightbulb/`, [docs/INTEGRATION.md](docs/INTEGRATION.md)) | ✅ built |
+
+**Desktop, CLI, platform**
+
+| phase | state |
+|---|---|
 | CLI (timer CRUD/run-now, slots, machine scan/task control, calendar/agenda; `--json`) | ✅ built |
-| Slot IPC layer + JSONL event log | ✅ built |
 | Tauri shell + tray | ✅ built |
 | Calendar UI (week / month) | ✅ built |
-| Pruner, hardening, perf gates | ✅ built |
-| Packaging — deb / AppImage (Linux); NSIS, MSI, dmg unsigned in CI | ✅ built |
+| Live run state in the GUI — running / progress / overdue label / terminal outcomes | ✅ built |
 | Wake-from-sleep (RTC) + Settings + first-run wizard | ✅ P7 (`platform::wake` + Settings + wizard) |
 | Visible Scheduler (`bellman scan` / `task`) — machine-wide schedule inventory | ✅ built (Linux) |
 | Calendar Snapshot (`bellman calendar` / `agenda`) — headless SVG/PNG/JSON | ✅ built |
-| Full-system validation | ⬜ not started |
+| Packaging — deb / AppImage (Linux); NSIS, MSI, dmg unsigned in CI | ✅ built |
+| **Full-system validation** — real Windows / macOS hardware, suspend-resume QA, long-run soak | ⬜ **not started — the one thing between here and a release** |
 
 Linux `.deb` and `.AppImage` build and install today: the deb puts **Bellman** in
 the app launcher and the `bellman` CLI on `PATH`. Windows (NSIS + MSI) and macOS

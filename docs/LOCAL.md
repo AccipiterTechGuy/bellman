@@ -19,9 +19,23 @@ in the git tree:
 ├─ timers.db (+ -wal, -shm)   your timers, runs, claim ledger
 ├─ logs/events.current.jsonl  what actually happened (rotates weekly or past 64 MB)
 ├─ logs/archive/*.jsonl.gz    30-day history (configurable), gzip-compressed
-├─ slots/{free,work,done,bad} the JSON slot IPC channel
+├─ slots/                     the JSON slot channel
+│  ├─ free/ work/ done/ bad/  requests apps make of Bellman, and its answers
+│  └─ fires/fire-<run_id>.json  notifications Bellman makes of apps
+├─ timers/                    human-browsable view of state, one folder per timer
+│  ├─ README.txt              explains the folder to whoever opens it
+│  ├─ <name>-<id>/
+│  │  ├─ timer.json           what the timer IS (readable, not authoritative)
+│  │  ├─ status.json          the CURRENT run — the truth, right now
+│  │  └─ reply-<run_id>.json  where an integrated app answers (owned timers only)
+│  └─ bad/                    quarantined copies of rejected replies
 └─ config.json                horizon, retention, concurrency cap, wake settings
 ```
+
+The `timers/` tree is a **projection**, not a source of truth: the database
+owns timers and the event log owns history, so it can be deleted or rebuilt
+without losing either. Apps integrate against it — see
+[INTEGRATION.md](INTEGRATION.md#connect-your-own-application).
 
 So: the commands your timers launch, when they run, what they produced, and any app
 integrating over the slot channel — none of it is in this repository, and cloning the

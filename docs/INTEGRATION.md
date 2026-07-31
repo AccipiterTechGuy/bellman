@@ -5,8 +5,24 @@ no socket, no shared library. Publish a complete request via temp-file + atomic
 rename into `free/`; Bellman claims it into `work/`, applies the operation to
 the timer store, and writes the answer into `done/`.
 
-Default slots root (Linux): `~/.bellman/slots/`  
-Layout: `slots/{free,work,done,bad}/`
+Slots root: `<data dir>/slots/` — the data dir is `~/.bellman/` on Linux,
+`~/Library/Application Support/bellman/` on macOS, `%APPDATA%\bellman\` on
+Windows (the desktop app uses its own app-data dir instead, Linux
+`~/.local/share/io.bellman.desktop`). Full layout in
+[LOCAL.md](LOCAL.md).
+
+Layout: `slots/{free,work,done,bad,fires}/` — `free`/`work`/`done`/`bad`
+carry **requests you make of Bellman**; `fires/` carries **notifications
+Bellman makes of you** (see *Connect your own application*).
+
+**Two directions, and most apps only need one:**
+
+| you want to… | read |
+|---|---|
+| create / modify / delete timers from your app | *Protocol* + *Copy-paste clients*, below |
+| **be woken by a timer and report the outcome** | **[Connect your own application](#connect-your-own-application)** |
+| do that over a socket instead of files | [Talking over the local socket](#talking-over-the-local-socket-ipc) |
+| just see it work first | `examples/lightbulb/` — a ~130-line reference app |
 
 CLI helper (one-shot, no daemon):
 
@@ -340,6 +356,64 @@ but a human browsing the folder sees:
 | `timer.json` | Bellman | everyone | what the timer IS; hand edits are ignored, the database wins |
 | `status.json` | Bellman | everyone | the current run — **the truth, right now** (read this for "did it work?") |
 | `reply-<run_id>.json` | **your app** | Bellman | the app's answer; a fresh file per run |
+
+#### `status.json` — the mirror (`bellman-run/1`)
+
+The current run, and the only place Bellman's view and your app's reports
+are merged. Read it to answer *"did it work?"* without parsing the log.
+Every fire notification carries its absolute path as `status_path`. It is
+**Bellman-written and app-readable**; your app never writes it.
+
+```json
+{
+  "schema": "bellman-run/1",
+  "state": "completed",
+  "run_id": "9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08",
+  "timer_id": "3f1a2b9c-…",
+  "timer_name": "demo-wake",
+  "occurrence_kind": "interval",
+  "scheduled_for": "2026-07-28T08:00:00Z",
+  "fired_at": "2026-07-28T08:00:01Z",
+  "app_name": "demo-app",
+  "acknowledged_at": "2026-07-28T08:00:02Z",
+  "expected_secs": 15,
+  "completed_at": "2026-07-28T08:00:17Z",
+  "result": {"ok": true},
+  "transport": "json"
+}
+```
+
+| field | always? | written from | notes |
+|---|---|---|---|
+| `schema` | yes | Bellman | `bellman-run/1` |
+| `state` | yes | both | the R5 vocabulary — `fired`, `fired_late`, `coalesced`, `no_ack`, `superseded`, `cancelled` are Bellman's; `acknowledged`, `running`, `completed`, `failed` are your app's |
+| `run_id`, `timer_id`, `timer_name` | yes | Bellman | identity; `run_id` matches the log and the reply filename |
+| `occurrence_kind` | yes | Bellman | the **recurrence type**: `once`, `interval`, `daily`, `weekly`, `monthly`, `yearly`, `cron` |
+| `scheduled_for`, `fired_at` | yes | Bellman | intended time, actual fire time |
+| `app_name` | owned runs | Bellman | the integration owner snapshotted at fire; absent on unowned timers |
+| `acknowledged_at`, `expected_secs`, `error_detection` | if reported | your app | pickup and the estimate driving the GUI label + opt-in watchdog |
+| `heartbeat_at`, `progress` | if reported | your app | liveness; **never** in the event log — here is the only place they exist |
+| `completed_at`, `result`, `result_truncated` | on success | your app | `result` is any JSON, capped at 32 KB here (`result_truncated: true` when trimmed) |
+| `failed_at`, `reason`, `failure_kind` | on failure | both | `failure_kind` is `reported` (your app said so) or `timed_out` (watchdog expiry) |
+| `no_ack_at` | on silence | Bellman | pickup grace lapsed with no valid reply |
+| `transport` | yes | Bellman | `json`, `ipc` or `ipc_fallback` — how this run was delivered |
+
+Optional fields are **omitted, not null** — absence means "not reported",
+and fields accumulate across replies rather than being retracted. A run
+that is still open simply has fewer keys.
+
+> ⚠️ **`occurrence_kind` means two different things in two documents.** In
+> `status.json` (above) it is the *recurrence type* — `interval`, `daily`,
+> `cron`. In the **fire notification** it is the *timing of this
+> particular firing* — `on_time`, `late`, `coalesced`, `catch_up_<n>`.
+> Same key, different vocabularies; read it against the document you got
+> it from.
+
+`timer.json` beside it is the timer's definition (`bellman-timer/1`:
+`timer_id`, `name`, `enabled`, `tz`, `occurrence`, `action`, `transport`,
+`next_fire_at`, plus `integration.app_name` and `ipc.socket` when they
+apply). It carries a `note` field saying what it is: readable, **not
+authoritative** — hand edits are ignored and the database wins.
 
 ### Step 0 — own the timer
 
