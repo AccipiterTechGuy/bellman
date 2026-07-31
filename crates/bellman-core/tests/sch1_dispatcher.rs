@@ -23,6 +23,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+/// These are wall-clock integration tests with real worker threads, real
+/// `sleep` children and many SQLite connections; run them one at a time so
+/// a loaded host cannot starve a pump tick past a timeout (the assertions
+/// themselves stay wall-clock strict).
+fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap()
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 struct Env {
@@ -176,6 +185,7 @@ fn launch(command: &str, args: &[&str]) -> Action {
 /// This fails on the pre-SCH1 synchronous loop.
 #[test]
 fn slow_action_does_not_delay_the_next_timer() {
+    let _g = test_lock();
     let e = env();
     let mut st = store(&e);
     // A: due now, action takes 4 s. B: due 400 ms later, instant action.
@@ -275,6 +285,7 @@ fn slow_action_does_not_delay_the_next_timer() {
 /// exceeds it (LimiterStats already reports this).
 #[test]
 fn mass_fire_peak_reaches_cap_never_exceeds() {
+    let _g = test_lock();
     let e = env();
     let mut st = store(&e);
     let mut claims = Vec::new();
@@ -303,6 +314,7 @@ fn mass_fire_peak_reaches_cap_never_exceeds() {
 /// without a restart (the pending claim is dispatched by the pump).
 #[test]
 fn full_queue_drains_without_restart() {
+    let _g = test_lock();
     let e = env();
     let mut st = store(&e);
     let mut claims = Vec::new();
@@ -332,6 +344,7 @@ fn full_queue_drains_without_restart() {
 /// every policy's outcome matches the state at each fire commit.
 #[test]
 fn overlap_decisions_happen_at_fire_commit_not_dequeue() {
+    let _g = test_lock();
     let e = env();
     let mut st = store(&e);
     let _held = spawn_dispatcher(&e, 2); // never begin_startup: queue held.
@@ -422,6 +435,7 @@ fn overlap_decisions_happen_at_fire_commit_not_dequeue() {
 /// concurrently; the retained QueueOne follow-up executes exactly once.
 #[test]
 fn serial_lane_executes_in_order_never_concurrent() {
+    let _g = test_lock();
     let e = env();
     let marker = e.data.join("order.log");
     let mut st = store(&e);
@@ -451,6 +465,7 @@ fn serial_lane_executes_in_order_never_concurrent() {
 /// never three (asserted), inside the global cap.
 #[test]
 fn parallel_cap_two_concurrent_never_three() {
+    let _g = test_lock();
     let e = env();
     let mut st = store(&e);
     let t = interval_timer(
@@ -495,6 +510,7 @@ fn parallel_cap_two_concurrent_never_three() {
 /// replacement starts only after the predecessor stopped.
 #[test]
 fn replace_interrupts_running_action_then_runs_new() {
+    let _g = test_lock();
     let e = env();
     let started = e.data.join("started.log");
     let cmd = format!("echo $BELLMAN_RUN_ID >> '{}'; sleep 5", started.display());
@@ -548,6 +564,7 @@ fn replace_interrupts_running_action_then_runs_new() {
 /// run_id; a `finished` claim never executes again.
 #[test]
 fn restart_requeues_unfinished_same_run_id_finished_never_reruns() {
+    let _g = test_lock();
     let e = env();
     let marker = e.data.join("runs.log");
     let cmd = format!("echo $BELLMAN_RUN_ID >> '{}'", marker.display());
@@ -586,6 +603,7 @@ fn restart_requeues_unfinished_same_run_id_finished_never_reruns() {
 /// finishes exactly once. The boundary is explicit, never exactly-once.
 #[test]
 fn active_claim_requeued_may_execute_twice_finishes_once() {
+    let _g = test_lock();
     let e = env();
     let marker = e.data.join("twice.log");
     let cmd = format!("echo $BELLMAN_RUN_ID >> '{}'; sleep 2", marker.display());
@@ -625,6 +643,7 @@ fn active_claim_requeued_may_execute_twice_finishes_once() {
 /// timer concurrently. Regression test for the dual-process QueueOne race.
 #[test]
 fn follower_dispatcher_never_pumps_beside_the_owner() {
+    let _g = test_lock();
     let e = env();
     let marker = e.data.join("follower.log");
     let cmd = format!(
@@ -683,6 +702,7 @@ fn follower_dispatcher_never_pumps_beside_the_owner() {
 /// before exit — nothing is truncated.
 #[test]
 fn shutdown_drains_busy_lanes_and_outbox() {
+    let _g = test_lock();
     let e = env();
     let marker = e.data.join("drain.log");
     let cmd = format!("echo done >> '{}'", marker.display());
@@ -721,6 +741,116 @@ fn shutdown_drains_busy_lanes_and_outbox() {
     );
 }
 
+/// The OTHER SQLite commit order: the worker commits success BEFORE the
+/// `Replace` fire transaction — there is nothing left to cancel, so the
+/// predecessor keeps its truthful `wake_delivered` and the replacement
+/// still runs (after it, never overlapping).
+#[test]
+fn replace_after_worker_committed_success_keeps_truthful_wake_delivered() {
+    let _g = test_lock();
+    let e = env();
+    let mut st = store(&e);
+    let t = interval_timer(&mut st, "replwin", launch("true", &[]), OverlapPolicy::Replace);
+
+    let disp = spawn_dispatcher(&e, 2);
+    disp.begin_startup();
+
+    let c1 = fire(&e, &mut st, &t);
+    let f1 = wait_finished(&st, c1.run_id, Duration::from_secs(15));
+    assert_eq!(f1.outcome, Some(RunOutcome::WakeDelivered));
+
+    // The Replace fire commits only now — after the worker's success commit.
+    let c2 = fire(&e, &mut st, &t);
+    disp.submit(c2.run_id);
+    let f2 = wait_finished(&st, c2.run_id, Duration::from_secs(15));
+    assert_eq!(f2.outcome, Some(RunOutcome::WakeDelivered));
+
+    // The predecessor is untouched: no cancel request, no replace reason,
+    // no overlap_replace_before_start event for it.
+    let c1_after = st.get_run(c1.run_id).unwrap().unwrap();
+    assert_eq!(c1_after.outcome, Some(RunOutcome::WakeDelivered));
+    assert!(!c1_after.cancel_requested);
+    assert!(
+        !c1_after
+            .outcome_reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("overlap_replace"),
+        "predecessor reason must not be rewritten: {:?}",
+        c1_after.outcome_reason
+    );
+    let events = st.pending_events(64).unwrap();
+    assert!(
+        !events.iter().any(|(_, p)| p.contains("overlap_replace")
+            && p.contains(&c1.run_id.to_string())),
+        "no replace event may name the already-delivered predecessor"
+    );
+
+    // Never overlapped: the replacement finished strictly after.
+    assert!(f2.completed_at.unwrap() >= f1.completed_at.unwrap());
+    disp.shutdown_drain();
+}
+
+// ── Crash windows ───────────────────────────────────────────────────────
+
+/// Crash after the completion transaction but before JSONL publication:
+/// the claim is already `finished` with its R11 outbox row committed, so a
+/// restart drains the event to the log without rerunning the action.
+#[test]
+fn crash_after_completion_tx_drains_event_without_rerunning_action() {
+    let _g = test_lock();
+    let e = env();
+    let marker = e.data.join("crashwin.log");
+    let cmd = format!("echo $BELLMAN_RUN_ID >> '{}'", marker.display());
+    let mut st = store(&e);
+    let t = interval_timer(&mut st, "crashwin", launch("sh", &["-c", &cmd]), OverlapPolicy::Skip);
+    let c = st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(1)).unwrap();
+
+    let disp = spawn_dispatcher_inmem(&e, 1);
+    disp.begin_startup();
+    let f = wait_finished(&st, c.run_id, Duration::from_secs(15));
+    assert_eq!(f.outcome, Some(RunOutcome::WakeDelivered));
+    assert_eq!(
+        std::fs::read_to_string(&marker).unwrap().lines().count(),
+        1,
+        "action ran exactly once before the crash"
+    );
+    assert_eq!(
+        st.count_pending_events().unwrap(),
+        1,
+        "the result event sits unpublished in the outbox at the crash window"
+    );
+
+    // CRASH: the process dies here — no shutdown drain, no publish.
+    drop(disp); // (threads keep the leaked inner alive; nothing drains)
+
+    // RESTART: the elected publisher drains the outbox row; a fresh
+    // dispatcher must never re-queue the finished claim.
+    let st2 = store(&e);
+    let mut publisher = bellman_core::events::EventPublisher::with_config(
+        bellman_core::events::EventLogConfig::new(e.data.join("logs")),
+    )
+    .unwrap();
+    publisher.publish_cycle(&st2);
+    assert_eq!(st2.count_pending_events().unwrap(), 0, "outbox drained");
+    let content = std::fs::read_to_string(e.data.join("logs").join("events.current.jsonl")).unwrap();
+    let hits: Vec<&str> = content
+        .lines()
+        .filter(|l| l.contains("wake_delivered") && l.contains(&c.run_id.to_string()))
+        .collect();
+    assert_eq!(hits.len(), 1, "the event reached the log exactly once");
+
+    let disp2 = spawn_dispatcher_inmem(&e, 1);
+    disp2.begin_startup();
+    std::thread::sleep(Duration::from_millis(400));
+    assert_eq!(
+        std::fs::read_to_string(&marker).unwrap().lines().count(),
+        1,
+        "a finished claim is never re-run after the restart"
+    );
+    disp2.shutdown_drain();
+}
+
 // ── run_now through the same dispatch service ───────────────────────────
 
 /// Standalone path: no process owns the dispatcher lock — `run_now` spins up
@@ -728,6 +858,7 @@ fn shutdown_drains_busy_lanes_and_outbox() {
 /// result. No second ActionRunner, no slot overlay.
 #[test]
 fn run_now_standalone_executes_and_returns_durable_result() {
+    let _g = test_lock();
     let e = env();
     let mut st = store(&e);
     let marker = e.data.join("runnow.log");
@@ -759,6 +890,7 @@ fn run_now_standalone_executes_and_returns_durable_result() {
 /// other timers.
 #[test]
 fn run_now_with_live_dispatcher_waits_for_the_claim_result() {
+    let _g = test_lock();
     let e = env();
     let mut st = store(&e);
     let marker = e.data.join("live.log");
@@ -782,6 +914,7 @@ fn run_now_with_live_dispatcher_waits_for_the_claim_result() {
 /// while the first action runs is an overlap skip, decided at commit.
 #[test]
 fn run_now_second_fire_obeys_overlap_lane() {
+    let _g = test_lock();
     let e = env();
     let mut st = store(&e);
     let t = interval_timer(&mut st, "rn-skip", launch("sleep", &["3"]), OverlapPolicy::Skip);

@@ -613,16 +613,18 @@ fn run_job(inner: &Arc<Inner>, store: &mut Store, run_id: Uuid) {
     };
 
     // The worker supervisor: a panic returns the unfinished claim to
-    // `pending` (at-least-once) and wakes the pump.
+    // `pending` (at-least-once) and wakes the pump. The worker thread keeps
+    // serving the pool — a panicking action must not shrink the lanes.
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         inner.executor.execute(&timer, run_id, &token)
     }));
     let outcome = match outcome {
         Ok(o) => o,
-        Err(payload) => {
+        Err(_) => {
+            eprintln!("bellman: action worker panicked on {run_id}; claim re-queued");
             let _ = store.repend_run(run_id);
             finish_lane(inner, timer_id, run_id);
-            std::panic::resume_unwind(payload);
+            return;
         }
     };
 

@@ -805,10 +805,13 @@ pub fn project_fire(
                 prev_superseded = Some(prev.run_id);
             }
         }
-        // The new claim (UNIQUE guard) + SCH1 overlap disposition + lifecycle
-        // row + fired event. The disposition is decided HERE, at fire commit,
-        // from the older executable claims — never later at dequeue.
+        // The new claim (UNIQUE guard) + fired event + SCH1 overlap
+        // disposition + lifecycle row. The fired event commits FIRST so the
+        // log never reads backwards for a skipped run; the disposition is
+        // decided HERE, at fire commit, from the older executable claims —
+        // never later at dequeue.
         let claim = claim_run_conn(&tx, timer.id, scheduled_for)?;
+        tx.enqueue_event(&fire_event(kind, timer, &claim))?;
         let claim = apply_overlap_disposition(&tx, timer, claim)?;
         if let Some(app_name) = owner.as_deref() {
             let deadline = now
@@ -824,7 +827,6 @@ pub fn project_fire(
             );
             insert_run_state_conn(&tx, &row)?;
         }
-        tx.enqueue_event(&fire_event(kind, timer, &claim))?;
         // SCH1: the durable transport projection for the fire notification
         // (routing/retry state for this run; the fixed-target cursor advances
         // in the same commit).
@@ -969,7 +971,8 @@ fn apply_overlap_disposition(
 }
 
 /// The `fired` event for the fire transaction (mirrors the fire kind).
-fn fire_event(kind: &FireKind, timer: &Timer, claim: &RunClaim) -> EventRecord {    let base = || {
+fn fire_event(kind: &FireKind, timer: &Timer, claim: &RunClaim) -> EventRecord {
+    let base = || {
         EventRecord::new(RunState::Fired)
             .with_timer(timer.id, timer.name.clone())
             .with_run(claim.run_id)

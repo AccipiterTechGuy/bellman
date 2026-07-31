@@ -403,6 +403,175 @@ fn second_fire_publishes_immediately_while_first_action_runs() {
     );
 }
 
+/// Startup ordering (SCH1): while Bellman is stopped, a valid reply for the
+/// first firing lands. The reply scan must complete BEFORE any pump runs —
+/// otherwise the publication pump replays the old notification. Demonstrated
+/// both ways, then asserted in the real boot sequence.
+#[test]
+fn startup_reply_scan_precedes_publication_replay() {
+    let e = env();
+    let mut st = store(&e);
+    let t = owned_timer(&mut st, "order1", launch("true", &[]), OverlapPolicy::Skip);
+    let c1 = fire(&e, &mut st, &t, None);
+    let file = fires_file(&e, c1.run_id);
+    assert!(file.exists());
+
+    // While "stopped": the app answers `completed`, and the notification is
+    // consumed (crash window — the projection is pending again).
+    let folder = timer_folder(&e, t.id);
+    std::fs::write(
+        folder.join(format!("reply-{}.json", c1.run_id)),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "schema": bellman_core::reply::REPLY_SCHEMA_V1,
+            "run_id": c1.run_id,
+            "app_name": "testapp",
+            "state": "completed",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::remove_file(&file).unwrap();
+    st.requeue_transport_projection(c1.run_id).unwrap();
+
+    // BROKEN ORDER (demonstration, not the boot path): if the publication
+    // pump ran before the reply scan, the old notification would be replayed.
+    publication::pump(&e.data, &st, 8);
+    assert!(
+        file.exists(),
+        "pump-first replays the stale notification — this is what the boot order prevents"
+    );
+
+    // Reset the window: consumed again, projection pending again.
+    std::fs::remove_file(&file).unwrap();
+    st.requeue_transport_projection(c1.run_id).unwrap();
+
+    // REAL BOOT SEQUENCE: the reply scan runs FIRST (drive.rs boot order).
+    let eng = engine(&e, None);
+    bellman_core::reply::startup_scan(&eng, &st, Utc::now());
+    assert_eq!(
+        st.get_run_state(c1.run_id).unwrap().unwrap().state,
+        "completed",
+        "the reply is ingested before any pump runs"
+    );
+
+    // Only now the pumps run: pickup is already recorded, so the projection
+    // is consumed — the stale notification is never replayed.
+    publication::pump(&e.data, &st, 8);
+    assert_eq!(
+        st.transport_projection(c1.run_id).unwrap().unwrap().state,
+        TransportProjection::PICKED_UP
+    );
+    assert!(
+        !file.exists(),
+        "scan-first: the old notification is never replayed"
+    );
+}
+
+/// Startup ordering end-to-end: a reply written while stopped is ingested
+/// before the boot can publish the second firing — the first run is never
+/// superseded, and its `completed` event precedes the second firing's
+/// `fired` event in the drained log.
+#[test]
+fn boot_ingests_stopped_reply_before_second_firing_publishes() {
+    let e = env();
+    let mut st = store(&e);
+    let t = owned_timer(&mut st, "order2", launch("true", &[]), OverlapPolicy::Skip);
+    let c1 = fire(&e, &mut st, &t, None);
+
+    // While "stopped": the app answers, and the timer becomes due again.
+    let folder = timer_folder(&e, t.id);
+    std::fs::write(
+        folder.join(format!("reply-{}.json", c1.run_id)),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "schema": bellman_core::reply::REPLY_SCHEMA_V1,
+            "run_id": c1.run_id,
+            "app_name": "testapp",
+            "state": "completed",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let fresh = st.get_timer(t.id).unwrap().unwrap();
+    st.update_timer(bellman_core::store::TimerUpdate {
+        id: t.id,
+        expected_revision: fresh.revision,
+        patch: bellman_core::store::TimerPatch {
+            last_fired: Some(Some(Utc::now() - ChronoDuration::hours(1))),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+
+    // Restart: scheduler + dispatcher boot (the real boot path).
+    let disp = bellman_core::actions::Dispatcher::spawn(bellman_core::actions::DispatcherConfig {
+        db_path: e.db.clone(),
+        data_dir: Some(e.data.clone()),
+        max_concurrent_actions: 2,
+        notify_sink: std::sync::Arc::new(bellman_core::actions::StubNotifySink),
+        executor: bellman_core::actions::ExecutorConfig::default(),
+        tick: Duration::from_millis(50),
+    })
+    .unwrap();
+    let cfg = bellman_core::scheduler::SchedulerConfig::default().with_data_dir(e.data.clone());
+    let mut sched = bellman_core::scheduler::Scheduler::new(
+        store(&e),
+        bellman_core::scheduler::SystemClock::new(),
+        disp.clone(),
+        cfg,
+    );
+    let boot_fires = sched.boot().unwrap();
+
+    // The first run was ingested as completed — never superseded.
+    assert_eq!(
+        st.get_run_state(c1.run_id).unwrap().unwrap().state,
+        "completed"
+    );
+    let pending = st.pending_events(64).unwrap();
+    assert!(
+        !pending
+            .iter()
+            .any(|(_, p)| p.contains("superseded") && p.contains(&c1.run_id.to_string())),
+        "the first run must not be superseded once its reply was read"
+    );
+
+    // The second firing was published during boot (after the ingest).
+    let runs = st.runs_for_timer(t.id).unwrap();
+    let c2 = runs.last().unwrap().clone();
+    assert_ne!(c2.run_id, c1.run_id, "the due timer fired again at boot");
+    assert!(
+        boot_fires.iter().any(|f| f.run_id == c2.run_id),
+        "the second firing was delivered by boot"
+    );
+    assert!(
+        fires_file(&e, c2.run_id).exists(),
+        "the second firing's notification was published"
+    );
+
+    // The completed transition for run1 precedes the second firing's fired
+    // event in the drained log.
+    let mut publisher = bellman_core::events::EventPublisher::with_config(
+        bellman_core::events::EventLogConfig::new(e.data.join("logs")),
+    )
+    .unwrap();
+    publisher.publish_cycle(&st);
+    let content = std::fs::read_to_string(e.data.join("logs").join("events.current.jsonl")).unwrap();
+    let pos_completed = content
+        .lines()
+        .position(|l| l.contains("\"completed\"") && l.contains(&c1.run_id.to_string()))
+        .expect("completed event for run1");
+    let pos_fired2 = content
+        .lines()
+        .position(|l| l.contains("\"fired\"") && l.contains(&c2.run_id.to_string()))
+        .expect("fired event for run2");
+    assert!(
+        pos_completed < pos_fired2,
+        "the reply ingest commits before the second firing publishes:\n{content}"
+    );
+    sched.action().shutdown_drain();
+}
+
+/// `completed`, the worker later finishes `wake_delivered`, and
+/// `status.json` stays the app's `completed`.
 /// Worker completion never regresses the app lifecycle: the app reports
 /// `completed`, the worker later finishes `wake_delivered`, and
 /// `status.json` stays the app's `completed`.
