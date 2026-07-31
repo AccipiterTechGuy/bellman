@@ -123,10 +123,15 @@ request for that timer with `payload.ack_through` set to the highest
 ## Copy-paste clients (< 10 lines each)
 
 Each example publishes an **interval 60 s** timer named `demo-wake` for app
-`demo-app`. Set `BELLMAN_SLOTS` to the slots root. `BELLMAN_DB` is optional —
-when unset, Bellman uses `~/.bellman/timers.db` (CLI default).
-`bellman slot-submit` opens/replenishes free stubs, so a pre-running daemon is
-not required.
+`demo-app` — and then answers its fires. Set `BELLMAN_SLOTS` to the slots
+root. `BELLMAN_DB` is optional — when unset, Bellman uses
+`~/.bellman/timers.db` (CLI default). `bellman slot-submit` opens/replenishes
+free stubs, so a pre-running daemon is not required.
+
+The `app_name` on the add request becomes the timer's **integration owner**:
+every firing publishes a notification under `fires/` and a pre-filled reply
+stub, and only a reply carrying that same `app_name` is accepted. See
+*Connect your own application* below for the full contract.
 
 ### Python 3
 
@@ -140,6 +145,29 @@ pathlib.Path("/tmp/bellman-req.json").write_text(json.dumps(req))
 cmd = ["bellman","slot-submit","/tmp/bellman-req.json","--slots",root]
 if db: cmd += ["--db", db]
 subprocess.check_call(cmd)
+```
+
+Answer its fires (scan once at startup, then keep rescanning — `run_id`
+dedup makes redelivery safe):
+
+```python
+import json, os, time, pathlib
+from datetime import datetime, timezone
+fires, seen = pathlib.Path(os.environ["BELLMAN_SLOTS"]) / "fires", set()
+while True:
+    for f in sorted(fires.glob("fire-*.json")):
+        fire = json.load(open(f))
+        if fire.get("app_name") != "demo-app" or fire["run_id"] in seen: continue
+        seen.add(fire["run_id"])
+        p = fire["reply_path"]                    # absolute native path — open verbatim, never construct
+        r = json.load(open(p))                    # stub: schema/run_id/app_name pre-filled by Bellman
+        now = lambda: datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        r.update(state="acknowledged", acknowledged_at=now())
+        json.dump(r, open(p + ".tmp", "w")); os.replace(p + ".tmp", p)
+        do_the_work()                             # your job here
+        r.update(state="completed", completed_at=now())
+        json.dump(r, open(p + ".tmp", "w")); os.replace(p + ".tmp", p)
+    time.sleep(1)
 ```
 
 ### Shell (bash)
@@ -156,6 +184,27 @@ args=(slot-submit "$REQ" --slots "${BELLMAN_SLOTS}")
 bellman "${args[@]}"
 ```
 
+Answer its fires (no jq — the stub is JSON, edited with sed; write to a
+temp file and rename, never edit in place):
+
+```bash
+declare -A seen
+while :; do
+  for f in "${BELLMAN_SLOTS}"/fires/fire-*.json; do
+    [[ -e $f ]] || continue
+    app=$(sed -n 's/.*"app_name": *"\([^"]*\)".*/\1/p' "$f" | head -1)
+    run=$(sed -n 's/.*"run_id": *"\([^"]*\)".*/\1/p' "$f" | head -1)
+    [[ $app == demo-app && -n $run && -z ${seen[$run]:-} ]] || continue
+    seen[$run]=1
+    p=$(sed -n 's/.*"reply_path": *"\([^"]*\)".*/\1/p' "$f" | head -1)  # absolute — open verbatim
+    sed "s/\"state\": null/\"state\": \"acknowledged\", \"acknowledged_at\": \"$(date -u +%FT%TZ)\"/" "$p" > "$p.tmp" && mv "$p.tmp" "$p"
+    do_the_work
+    sed "s/\"state\": \"acknowledged\"/\"state\": \"completed\", \"completed_at\": \"$(date -u +%FT%TZ)\"/" "$p" > "$p.tmp" && mv "$p.tmp" "$p"
+  done
+  sleep 1
+done
+```
+
 ### PowerShell
 
 ```powershell
@@ -166,6 +215,28 @@ $f = Join-Path $env:TEMP "bellman-req.json"; Set-Content $f $req
 $args = @("slot-submit", $f, "--slots", $env:BELLMAN_SLOTS)
 if ($env:BELLMAN_DB) { $args += @("--db", $env:BELLMAN_DB) }
 bellman @args
+```
+
+Answer its fires:
+
+```powershell
+$seen = @{}
+while ($true) {
+  Get-ChildItem (Join-Path $env:BELLMAN_SLOTS "fires") -Filter "fire-*.json" | ForEach-Object {
+    $fire = Get-Content $_.FullName | ConvertFrom-Json
+    if ($fire.app_name -ne "demo-app" -or $seen[$fire.run_id]) { return }
+    $seen[$fire.run_id] = $true
+    $p = $fire.reply_path                     # absolute native path — open verbatim, never construct
+    $r = Get-Content $p | ConvertFrom-Json    # stub: schema/run_id/app_name pre-filled by Bellman
+    $now = { (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") }
+    $r.state = "acknowledged"; $r | Add-Member -Force acknowledged_at (& $now)
+    ($r | ConvertTo-Json -Depth 8) | Set-Content "$p.tmp"; Move-Item "$p.tmp" $p -Force
+    Do-TheWork                                # your job here
+    $r.state = "completed"; $r | Add-Member -Force completed_at (& $now)
+    ($r | ConvertTo-Json -Depth 8) | Set-Content "$p.tmp"; Move-Item "$p.tmp" $p -Force
+  }
+  Start-Sleep 1
+}
 ```
 
 ### Node.js
@@ -179,6 +250,28 @@ fs.writeFileSync(f, JSON.stringify({schema:"bellman-slot/1", request_id:randomUU
 const args = ["slot-submit", f, "--slots", process.env.BELLMAN_SLOTS];
 if (process.env.BELLMAN_DB) args.push("--db", process.env.BELLMAN_DB);
 execFileSync("bellman", args, {stdio:"inherit"});
+```
+
+Answer its fires:
+
+```javascript
+const fs = require("fs"), path = require("path");
+const fires = path.join(process.env.BELLMAN_SLOTS, "fires"), seen = new Set();
+setInterval(() => {
+  for (const n of fs.readdirSync(fires).filter(n => n.startsWith("fire-"))) {
+    const fire = JSON.parse(fs.readFileSync(path.join(fires, n)));
+    if (fire.app_name !== "demo-app" || seen.has(fire.run_id)) continue;
+    seen.add(fire.run_id);
+    const p = fire.reply_path;                // absolute native path — open verbatim, never construct
+    const r = JSON.parse(fs.readFileSync(p)); // stub: schema/run_id/app_name pre-filled by Bellman
+    const now = () => new Date().toISOString();
+    Object.assign(r, {state: "acknowledged", acknowledged_at: now()});
+    fs.writeFileSync(p + ".tmp", JSON.stringify(r, null, 2)); fs.renameSync(p + ".tmp", p);
+    doTheWork();                              // your job here
+    Object.assign(r, {state: "completed", completed_at: now()});
+    fs.writeFileSync(p + ".tmp", JSON.stringify(r, null, 2)); fs.renameSync(p + ".tmp", p);
+  }
+}, 1000);
 ```
 
 ---
@@ -223,3 +316,161 @@ Wake actions: **launch** (arg array, no shell, `BELLMAN_RUN_ID` env, timeout
 kill, output cap), **write-output-slot**, **desktop notification** (stub until
 the GUI lands). Overlap default **skip**; failed wakes retry **1× after 30 s**,
 then log `wake_failed` with message `FAILED`.
+
+---
+
+## Connect your own application
+
+Everything an app needs is three JSON files and one rule: **one writer per
+file**. Bellman writes its files, your app writes exactly one — the reply
+file — and neither side ever touches the other's. The reference
+implementation is `examples/lightbulb/` in the repo: a stdlib-only terminal
+app (~130 lines) whose reply logic is the six-line `reply()` function.
+
+### The timer's folder
+
+Each owned timer has a folder under `timers/` next to the database
+(`~/.bellman/timers/<name>-<id>/` for the CLI default; the desktop app uses
+its per-OS app-data dir, `~/.local/share/io.bellman.desktop` on Linux). You
+never need to construct these paths — the fire notification carries them —
+but a human browsing the folder sees:
+
+| file | writer | reader | contents |
+|---|---|---|---|
+| `timer.json` | Bellman | everyone | what the timer IS; hand edits are ignored, the database wins |
+| `status.json` | Bellman | everyone | the current run — **the truth, right now** (read this for "did it work?") |
+| `reply-<run_id>.json` | **your app** | Bellman | the app's answer; a fresh file per run |
+
+### Step 0 — own the timer
+
+Set `payload.app_name` on the slot `add` request (any of the clients above).
+That name becomes the timer's **integration owner**: it is snapshotted onto
+every run, pre-filled into every reply stub and fire notification, and it is
+the only `app_name` whose replies are accepted. An owner change applies to
+the next firing; the run already in flight keeps its snapshot.
+
+A timer created by a human (GUI or `bellman add`) has **no owner**, and
+Bellman creates it no reply stub, no fire notification, no pickup deadline —
+it never goes `no_ack`; its action simply runs and the result stays in the
+event log. There is no null-owner stub anywhere, so two apps watching the
+same directory can never both "claim" a timer by writing first. To give a
+timer a reply channel, create it through the slot protocol with your
+`app_name`.
+
+### Step 1 — notice a fire
+
+When the timer fires, Bellman writes `fires/fire-<run_id>.json` under the
+slots root (atomically, after `status.json` and the reply stub exist):
+
+```json
+{"schema":"bellman-slot/1","kind":"fired","occurrence_kind":"on_time",
+ "timer_id":"…","timer_name":"demo-wake","app_name":"demo-app",
+ "run_id":"9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08",
+ "scheduled_for":"2026-07-28T08:00:00Z","fired_at":"2026-07-28T08:00:01Z",
+ "status_path":"/home/you/.bellman/timers/demo-wake-3f1a/status.json",
+ "reply_path":"/home/you/.bellman/timers/demo-wake-3f1a/reply-9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08.json"}
+```
+
+- **Accept only your own `app_name`.** Other apps' notifications are not
+  your work; two apps may watch the same directory safely.
+- `slots/done/slot-<id>.json` is a **request response** (the answer to your
+  add/modify/delete), not a fire notification. The two namespaces never
+  overlap: fires live only under `fires/`, responses only under `done/`.
+- **Scan `fires/` once at startup** and handle whatever is already there
+  (a fire can arrive while your app is down), **then watch it**. Filesystem
+  watch events are latency hints only — a plain rescan every second or so
+  is a complete implementation, because `run_id` deduplication (below)
+  makes any rescan or redelivery safe.
+
+### Step 2 — answer
+
+The reply file is **per-run**: take its exact path from the notification's
+`reply_path` and open it **verbatim** — Bellman sends an absolute native
+path, never `~` or an environment-variable expression, so no sample needs
+shell expansion. Never construct or hardcode a filename.
+
+Bellman pre-filled the stub with `schema`, `run_id`, `app_name` and
+`state: null`. Read it, set what changed, write it back **atomically**
+(temp file + rename onto the same path):
+
+```json
+{"schema":"bellman-reply/1","run_id":"9f2c1d77-…","app_name":"demo-app",
+ "state":"acknowledged","acknowledged_at":"2026-07-28T08:00:02Z","expected_secs":15}
+```
+
+States an app may write: **`acknowledged` → `running` → `completed` |
+`failed`** (shorter paths are fine — straight to `completed` is normal).
+Never write `fired`, `no_ack` or `cancelled`; those are Bellman's.
+
+| the app sets | when |
+|---|---|
+| `state` | always — the only required field |
+| `acknowledged_at`, `expected_secs` | on pickup; the estimate powers the GUI label and the opt-in watchdog |
+| `error_detection` | opt the run into the silence watchdog (below) |
+| `heartbeat_at`, `progress` | optional liveness; each new value extends an armed watchdog |
+| `completed_at` + `result` | success; `result` is any JSON value (size caps below) |
+| `failed_at` + `reason` | the app itself decided it failed |
+
+Only `state` is required. If you compose instead of editing the stub, the
+minimal valid reply is `schema` + `run_id` + `app_name` + `state` — copy the
+three identity fields from the stub or the notification; `{"state":"…"}`
+alone cannot be matched to a run and is rejected. Fields set earlier are
+never retracted by a later write that omits them — Bellman accumulates.
+
+### Step 3 — deduplicate by `run_id`
+
+Delivery is **at-least-once**: Bellman may republish the same notification
+before your pickup is recorded, and your rescan sees the same file many
+times. The same `run_id` seen twice is the same firing — **act once, reply
+normally**. This is required of every app and it is cheap: remember the
+last `run_id`(s) you handled.
+
+### What Bellman does with your reply
+
+Every accepted state transition is validated, appended to
+`logs/events.current.jsonl` under the run's `run_id` (one line per
+transition; heartbeats and progress are never logged), and folded into
+`status.json` — the mirror that always shows the current truth, including
+everything your app has reported so far.
+
+- **Pickup grace: 60 s** (configurable). If by then no valid reply arrived
+  and the slot-feed cursor did not ack the run, Bellman records `no_ack`.
+  While the run is still current, a late reply **revises** the state —
+  `completed` after `no_ack` (or after a watchdog `failed`) moves the state
+  to `completed`; the append-only log keeps the whole story. Once the timer
+  has fired again, the old run is over: its reply is logged `superseded`
+  and not applied.
+- **Completion never auto-times out.** An app that acknowledged but never
+  reports an ending stays `running` forever — an unfinished run is the
+  truth, not a failure. **Nothing auto-completes**; `completed` and
+  `failed` are things only your app says.
+- **The silence watchdog is opt-in and separate.** Set
+  `error_detection: true` together with a positive `expected_secs` and the
+  run is held to a deadline of `expected_secs × factor` (factor default
+  2.0, configurable), counted on Bellman's clock from receipt of your
+  latest distinct reply — every new heartbeat, progress change, state
+  advance or new estimate **extends the deadline**. Expiry records
+  `failed` / `timed_out` in `status.json` and the log (your reply file is
+  left byte-identical — Bellman never puts words in the app's mouth, and
+  marking is not killing: your process is never terminated). An explicit
+  `error_detection: false` cancels the watchdog. `true` without any
+  positive `expected_secs` is rejected.
+- **Malformed replies.** A file caught mid-write is re-read after a short
+  debounce, never condemned on sight. Stable invalid bytes, a wrong
+  `app_name`, an unknown `run_id` or a reserved state are logged
+  `reply_rejected` and a copy is quarantined under `timers/bad/`; the live
+  file stays in place so your next write can fix it.
+- **Size caps.** Whole reply file **64 KB** — over it the body is rejected
+  unread. `result` is kept up to **32 KB** in `status.json` and **2 KB** on
+  the log event, free text (`progress`, `reason`) **1 KB** — over those,
+  values are truncated with `result_truncated: true`, never rejected. For
+  big outputs, write the payload to a file your app owns and reply
+  `result: {"summary": "…", "path": "/abs/path", "sha256": "…"}` — Bellman
+  displays the path as text and never opens it.
+- **A reply is data, never a command.** Bellman parses, validates and logs.
+  It will never launch, execute, schedule or modify anything because of
+  something an app wrote.
+
+Run it end to end with `examples/lightbulb/`: its README shows the full
+loop — fire → acknowledge → bulb visibly on for 15 s → completed →
+validated and terminal — against a live Bellman.
