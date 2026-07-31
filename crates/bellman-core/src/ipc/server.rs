@@ -310,6 +310,10 @@ impl IpcServer {
 
     fn shutdown(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
+        // Windows: the accept loop is parked in a blocking ConnectNamedPipe;
+        // a throwaway self-connect wakes it so the join below returns.
+        #[cfg(windows)]
+        win_imp::wake_listener(&self.socket_path);
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
@@ -710,10 +714,11 @@ fn accept_loop(
 mod win_imp {
     use super::*;
     use std::os::windows::io::FromRawHandle;
+    use std::time::Duration;
     use windows::core::{HRESULT, PCWSTR};
     use windows::Win32::Foundation::{
-        CloseHandle, GetLastError, LocalFree, BOOL, ERROR_ALREADY_EXISTS, ERROR_IO_PENDING,
-        ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        CloseHandle, GetLastError, LocalFree, BOOL, ERROR_ALREADY_EXISTS,
+        ERROR_PIPE_CONNECTED, HANDLE, HLOCAL,
     };
     use windows::Win32::Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
@@ -723,18 +728,12 @@ mod win_imp {
         GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TokenUser, TOKEN_QUERY,
         TOKEN_USER,
     };
-    use windows::Win32::Storage::FileSystem::{
-        FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
-    };
-    use windows::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
+    use windows::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
     use windows::Win32::System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
         PIPE_TYPE_BYTE, PIPE_WAIT,
     };
-    use windows::Win32::System::Threading::{
-        CreateEventW, CreateMutexW, GetCurrentProcess, OpenProcessToken, ResetEvent,
-        WaitForSingleObject,
-    };
+    use windows::Win32::System::Threading::{CreateMutexW, GetCurrentProcess, OpenProcessToken};
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -790,6 +789,14 @@ mod win_imp {
         sd: PSECURITY_DESCRIPTOR,
         sa: SECURITY_ATTRIBUTES,
     }
+
+    // The descriptor memory is EXCLUSIVELY owned by this struct (allocated
+    // by ConvertStringSecurityDescriptorToSecurityDescriptorW, freed in
+    // Drop) and after construction it is only READ — passed as `*const
+    // SECURITY_ATTRIBUTES` to CreateNamedPipeW. Moving it onto the accept
+    // thread (which then owns it for the thread's whole lifetime) aliases
+    // nothing, so Send is sound here.
+    unsafe impl Send for PipeSecurity {}
 
     impl PipeSecurity {
         pub(super) fn for_current_user() -> io::Result<Self> {
@@ -856,8 +863,13 @@ mod win_imp {
 
     /// Accept loop: one pipe instance per client (that is how named pipes
     /// multiplex — never a server per timer, but one instance per
-    /// connection), overlapped `ConnectNamedPipe` with a 100 ms wait poll so
-    /// shutdown is never parked inside a blocking connect.
+    /// connection). Instances are SYNCHRONOUS (no FILE_FLAG_OVERLAPPED): the
+    /// client threads then do blocking `std::fs::File` I/O on them, exactly
+    /// like the Unix socket — std's blocking Read/Write on an *overlapped*
+    /// handle can see STATUS_PENDING and abort the process, and two threads
+    /// sharing one overlapped file object can satisfy each other's waits.
+    /// The blocking `ConnectNamedPipe` is unblocked on shutdown by
+    /// [`wake_listener`]'s throwaway self-connect.
     pub(super) fn accept_loop(
         pipe: &str,
         security: &PipeSecurity,
@@ -865,16 +877,13 @@ mod win_imp {
         stop: Arc<AtomicBool>,
     ) -> io::Result<()> {
         let pipe_w = wide(pipe);
+        let mut first = true;
         unsafe {
-            let event = CreateEventW(None, BOOL(1), BOOL(0), PCWSTR::null())
-                .map_err(|e| io::Error::other(format!("CreateEventW: {e}")))?;
-            let mut first = true;
             loop {
                 if stop.load(Ordering::SeqCst) {
-                    let _ = CloseHandle(event);
                     return Ok(());
                 }
-                let mut open_mode = PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED;
+                let mut open_mode = PIPE_ACCESS_DUPLEX;
                 if first {
                     open_mode |= FILE_FLAG_FIRST_PIPE_INSTANCE;
                     first = false;
@@ -891,48 +900,22 @@ mod win_imp {
                 );
                 if hpipe.is_invalid() {
                     let e = windows::core::Error::from_win32();
-                    let _ = CloseHandle(event);
                     return Err(io::Error::other(format!("CreateNamedPipeW: {e}")));
                 }
-                let mut overlapped = OVERLAPPED::default();
-                overlapped.hEvent = event;
-                let _ = ResetEvent(event);
-                let pending = match ConnectNamedPipe(hpipe, Some(&mut overlapped)) {
-                    Ok(()) => false,
-                    // A client connected between create and connect: ready.
-                    Err(e) if e.code() == hr(ERROR_PIPE_CONNECTED.0) => false,
-                    Err(e) if e.code() == hr(ERROR_IO_PENDING.0) => true,
-                    Err(e) => {
+                // Blocking wait for one client (a client that connected
+                // between create and connect reports ERROR_PIPE_CONNECTED —
+                // also ready).
+                if let Err(e) = ConnectNamedPipe(hpipe, None) {
+                    if e.code() != hr(ERROR_PIPE_CONNECTED.0) {
                         eprintln!("bellman: ipc ConnectNamedPipe: {e}");
                         let _ = CloseHandle(hpipe);
                         continue;
                     }
-                };
-                if pending {
-                    loop {
-                        if stop.load(Ordering::SeqCst) {
-                            let _ = CancelIo(hpipe);
-                            let _ = CloseHandle(hpipe);
-                            let _ = CloseHandle(event);
-                            return Ok(());
-                        }
-                        match WaitForSingleObject(event, 100) {
-                            WAIT_OBJECT_0 => {
-                                let mut transferred = 0u32;
-                                if let Err(e) =
-                                    GetOverlappedResult(hpipe, &overlapped, &mut transferred, BOOL(0))
-                                {
-                                    eprintln!("bellman: ipc connect result: {e}");
-                                }
-                                break;
-                            }
-                            WAIT_TIMEOUT => continue,
-                            other => {
-                                eprintln!("bellman: ipc connect wait: {other:?}");
-                                break;
-                            }
-                        }
-                    }
+                }
+                // Woken by the shutdown self-connect: leave quietly.
+                if stop.load(Ordering::SeqCst) {
+                    let _ = CloseHandle(hpipe);
+                    return Ok(());
                 }
                 // Hand the instance to its client thread (usize hop: HANDLE
                 // is not Send; the value is).
@@ -941,6 +924,26 @@ mod win_imp {
                 let _ = std::thread::Builder::new()
                     .name("bellman-ipc-client".into())
                     .spawn(move || client_thread(raw, ctx));
+            }
+        }
+    }
+
+    /// Unblock the accept loop's `ConnectNamedPipe` for shutdown: open one
+    /// throwaway client connection to the pipe. The connect waits briefly
+    /// for a listening instance if the loop is mid-handoff, so retry a few
+    /// times — the loop is never away from `ConnectNamedPipe` for long.
+    pub(super) fn wake_listener(pipe_path: &Path) {
+        for _ in 0..10 {
+            match std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(pipe_path)
+            {
+                Ok(throwaway) => {
+                    drop(throwaway);
+                    return;
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(20)),
             }
         }
     }
