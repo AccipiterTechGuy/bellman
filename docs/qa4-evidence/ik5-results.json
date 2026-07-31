@@ -1,0 +1,275 @@
+{
+  "checks": [
+    {
+      "name": "run_now bulb",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "row shows \u25cf running + progress",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "run-status refetches are event-driven so far",
+      "ok": true,
+      "detail": "counts={'list_run_states': 3, 'run_now': 1, 'list_timers': 2}"
+    },
+    {
+      "name": "no list_run_states polling while a run is open and silent (10s)",
+      "ok": true,
+      "detail": "counts={'list_timers': 2}"
+    },
+    {
+      "name": "counter is alive (pre-existing list_timers poll still observed)",
+      "ok": true,
+      "detail": "counts={'list_timers': 2}"
+    },
+    {
+      "name": "one accepted reply \u21d2 run-status-changed \u21d2 one refetch",
+      "ok": true,
+      "detail": "counts={'list_run_states': 1, 'list_timers': 2}"
+    },
+    {
+      "name": "row updated as the app wrote progress",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "run_now flaky",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "bulb overdue at 1\u00d7 while still running",
+      "ok": true,
+      "detail": "ik5-bulb\n\u25cf running \u00b7 18s \u00b7 bulb on, 12s elapsed \u00b7 overdue (expected ~8s)\ninterval \u2014 every 3600s\tnone\t7/31/2026, 8:43:46 AM 59m 9s\t\u26a0 +4 ik5-flaky, ik5-plain, ik5-quiet, ik5-reported\t\tEdit Log Run now"
+    },
+    {
+      "name": "flaky overdue at 1\u00d7 while still running",
+      "ok": true,
+      "detail": "ik5-flaky\n\u25cf running \u00b7 7s \u00b7 flaky working \u00b7 overdue (expected ~6s)\ninterval \u2014 every 3600s\tnone\t7/31/2026, 8:43:46 AM 59m 9s\t\u26a0 +4 ik5-bulb, ik5-plain, ik5-quiet, ik5-reported\t\tEdit Log Run now"
+    },
+    {
+      "name": "flaky failed \u00b7 timed out at \u00d7 factor",
+      "ok": true,
+      "detail": "ik5-flaky\n\u26a0 failed \u00b7 timed out\ninterval \u2014 every 3600s\tnone\t7/31/2026, 8:43:46 AM 59m 4s\t\u26a0 +4 ik5-bulb, ik5-plain, ik5-quiet, ik5-reported\t\tEdit Log Run now"
+    },
+    {
+      "name": "run_now quiet (1st)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "run_now quiet (2nd)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "quiet shows \u26a0 no ack",
+      "ok": true,
+      "detail": "ik5-quiet\n\u26a0 no ack\ninterval \u2014 every 3600s\tnone\t7/31/2026, 8:43:46 AM 59m 0s\t\u26a0 +4 ik5-bulb, ik5-flaky, ik5-plain, ik5-reported\t\tEdit Log Run now"
+    },
+    {
+      "name": "run_now reporter",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "reporter shows \u26a0 failed \u00b7 reported",
+      "ok": true,
+      "detail": "ik5-reported\n\u26a0 failed \u00b7 reported\ninterval \u2014 every 3600s\tnone\t7/31/2026, 8:43:46 AM 58m 59s\t\u26a0 +4 ik5-bulb, ik5-flaky, ik5-plain, ik5-quiet\t\tEdit Log Run now"
+    },
+    {
+      "name": "run_now plain",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "unowned timer shows no live run state (no \u25cf, no no ack)",
+      "ok": true,
+      "detail": "ik5-plain\tinterval \u2014 every 3600s\tnone\t7/31/2026, 8:43:46 AM 58m 54s\t\u26a0 +4 ik5-bulb, ik5-flaky, ik5-quiet, ik5-reported\t\tEdit Log Run now"
+    },
+    {
+      "name": "no error_detection \u21d2 never failed, however long it runs",
+      "ok": true,
+      "detail": "state=running"
+    },
+    {
+      "name": "bulb completed after overdue",
+      "ok": true,
+      "detail": "ik5-bulb\n\u2713 completed\ninterval \u2014 every 3600s\tnone\t7/31/2026, 8:43:46 AM 58m 53s\t\u26a0 +4 ik5-flaky, ik5-plain, ik5-quiet, ik5-reported\t\tEdit Log Run now"
+    },
+    {
+      "name": "open bulb detail",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "detail shows the current run in full",
+      "ok": true,
+      "detail": "missing=[] panel='CURRENT RUN \u2014 \u2713 COMPLETED\\nRUN_ID\\nd80e1de5-5e33-4751-8fd1-7abf6d51e282\\nAPP\\nlightbulb\\nSTATE\\ncompleted\\nFIRED\\n7/31/2026, 7:44:18 AM (35s elapsed)\\nEXPECTED\\n~8s\\nPROGRESS\\nbulb on, 12s elapsed\\nCOMPLETED\\n7/31/2026, 7:44:52 AM\\nRESULT\\n{\"on_duration_secs\":14.2}\\nEVENT LOG TAIL (MOST RECENT FIRST) \u2014 6 RECORDS\\nClo'"
+    },
+    {
+      "name": "detail shows the result payload",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "run_now bulb (again)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "history pins the live run on top",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "pinned entry names the timer + progress",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "history shows completed distinctly",
+      "ok": true,
+      "detail": "7/31/2026, 7:44:55 AM\nrunning\nik5-bulb @ 7/31/2026, 7:44:55 AM   \n7/31/2026, 7:44:55 AM\nacknowledged\nik5-bulb @ 7/31/2026, 7:44:55 AM   \n7/31/2026, 7:44:55 AM\nwake_delivered\nik5-bulb @ 7/31/2026, 7:44"
+    },
+    {
+      "name": "history shows failed \u00b7 timed out distinctly",
+      "ok": true,
+      "detail": "7/31/2026, 7:44:55 AM\nrunning\nik5-bulb @ 7/31/2026, 7:44:55 AM   \n7/31/2026, 7:44:55 AM\nacknowledged\nik5-bulb @ 7/31/2026, 7:44:55 AM   \n7/31/2026, 7:44:55 AM\nwake_delivered\nik5-bulb @ 7/31/2026, 7:44"
+    },
+    {
+      "name": "history shows failed \u00b7 reported distinctly",
+      "ok": true,
+      "detail": "7/31/2026, 7:44:55 AM\nrunning\nik5-bulb @ 7/31/2026, 7:44:55 AM   \n7/31/2026, 7:44:55 AM\nacknowledged\nik5-bulb @ 7/31/2026, 7:44:55 AM   \n7/31/2026, 7:44:55 AM\nwake_delivered\nik5-bulb @ 7/31/2026, 7:44"
+    },
+    {
+      "name": "history shows no ack distinctly",
+      "ok": true,
+      "detail": "7/31/2026, 7:44:55 AM\nrunning\nik5-bulb @ 7/31/2026, 7:44:55 AM   \n7/31/2026, 7:44:55 AM\nacknowledged\nik5-bulb @ 7/31/2026, 7:44:55 AM   \n7/31/2026, 7:44:55 AM\nwake_delivered\nik5-bulb @ 7/31/2026, 7:44"
+    },
+    {
+      "name": "history shows superseded distinctly",
+      "ok": true,
+      "detail": "7/31/2026, 7:44:55 AM\nrunning\nik5-bulb @ 7/31/2026, 7:44:55 AM   \n7/31/2026, 7:44:55 AM\nacknowledged\nik5-bulb @ 7/31/2026, 7:44:55 AM   \n7/31/2026, 7:44:55 AM\nwake_delivered\nik5-bulb @ 7/31/2026, 7:44"
+    },
+    {
+      "name": "no list_run_states polling with zero non-terminal runs (10s)",
+      "ok": true,
+      "detail": "counts={'list_timers': 2}"
+    }
+  ],
+  "counts": {
+    "open_run_silent_10s": {
+      "list_timers": 2
+    },
+    "all_terminal_10s": {
+      "list_timers": 2
+    }
+  },
+  "detail_panel_text": "CURRENT RUN \u2014 \u2713 COMPLETED\nRUN_ID\nd80e1de5-5e33-4751-8fd1-7abf6d51e282\nAPP\nlightbulb\nSTATE\ncompleted\nFIRED\n7/31/2026, 7:44:18 AM (35s elapsed)\nEXPECTED\n~8s\nPROGRESS\nbulb on, 12s elapsed\nCOMPLETED\n7/31/2026, 7:44:52 AM\nRESULT\n{\"on_duration_secs\":14.2}\nEVENT LOG TAIL (MOST RECENT FIRST) \u2014 6 RECORDS\nClose\n7:44:52 AM\ncompleted\nrun_id=d80e1de5\u2026\n7:44:18 AM\nrunning\nrun_id=d80e1de5\u2026\n7:44:18 AM\nacknowledged\nrun_id=d80e1de5\u2026\n7:44:18 AM\nwake_delivered\naction=none\n7:44:18 AM\nfired\nrun_id=d80e1de5\u2026\n7:43:46 AM\nregistered\nslot-submit 93a53d83-c53c-4ef5-8a44-f9065d2fd255\n",
+  "status_files": {
+    "ik5-bulb": {
+      "schema": "bellman-run/1",
+      "state": "completed",
+      "run_id": "8e9b8bc4-a550-4f24-8b61-fa90d6deb719",
+      "timer_id": "0bf234d9-82b0-41d6-8ad8-043f4fdcc7d3",
+      "timer_name": "ik5-bulb",
+      "occurrence_kind": "interval",
+      "scheduled_for": "2026-07-31T04:44:55.288884718Z",
+      "fired_at": "2026-07-31T04:44:55.290387600Z",
+      "app_name": "lightbulb",
+      "acknowledged_at": "2026-07-31T04:44:55Z",
+      "progress": "second run in flight",
+      "completed_at": "2026-07-31T04:44:58.845313836Z",
+      "result": {
+        "ok": true
+      }
+    },
+    "ik5-flaky": {
+      "schema": "bellman-run/1",
+      "state": "failed",
+      "run_id": "c56c96e9-2e05-4945-b634-a0a8503212f7",
+      "timer_id": "5123f75a-fbdf-44f0-be36-ac70aabd627c",
+      "timer_name": "ik5-flaky",
+      "occurrence_kind": "interval",
+      "scheduled_for": "2026-07-31T04:44:30.138183798Z",
+      "fired_at": "2026-07-31T04:44:30.139619648Z",
+      "app_name": "flaky",
+      "acknowledged_at": "2026-07-31T04:44:30Z",
+      "expected_secs": 6,
+      "error_detection": true,
+      "progress": "flaky working",
+      "failed_at": "2026-07-31T04:44:42.201216170Z",
+      "failure_kind": "timed_out"
+    },
+    "ik5-reported": {
+      "schema": "bellman-run/1",
+      "state": "failed",
+      "run_id": "6e3d8bd7-5181-4add-9f1d-f872d94eecf7",
+      "timer_id": "35ef0374-5254-4c78-a93f-cac66b7751c2",
+      "timer_name": "ik5-reported",
+      "occurrence_kind": "interval",
+      "scheduled_for": "2026-07-31T04:44:46.364043947Z",
+      "fired_at": "2026-07-31T04:44:46.365064374Z",
+      "app_name": "reporter",
+      "failed_at": "2026-07-31T04:44:46.408193120Z",
+      "reason": "GPIO write refused",
+      "failure_kind": "reported"
+    },
+    "ik5-quiet": {
+      "schema": "bellman-run/1",
+      "state": "no_ack",
+      "run_id": "9558ae7c-7d44-45d5-a832-3ec5d50fff7c",
+      "timer_id": "101d0d78-266f-4a0a-ae68-ad1ebc10b504",
+      "timer_name": "ik5-quiet",
+      "occurrence_kind": "interval",
+      "scheduled_for": "2026-07-31T04:44:42.322649895Z",
+      "fired_at": "2026-07-31T04:44:42.324126913Z",
+      "app_name": "quiet",
+      "no_ack_at": "2026-07-31T04:44:46.325193680Z"
+    },
+    "ik5-plain": {
+      "schema": "bellman-run/1",
+      "state": "fired",
+      "run_id": "3aea4eb5-fc84-464f-a192-231f42676a5e",
+      "timer_id": "7fb86e15-c072-4418-89b8-1e578e8e7ca4",
+      "timer_name": "ik5-plain",
+      "occurrence_kind": "interval",
+      "scheduled_for": "2026-07-31T04:44:46.652761185Z",
+      "fired_at": "2026-07-31T04:44:46.654199232Z"
+    }
+  },
+  "event_log_tail": [
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:12.161246032Z\",\"kind\":\"year_recalibrate\",\"event_id\":\"51330568-d904-498f-aa75-73d393a5c29e\",\"count\":6,\"message\":\"year=2026\",\"detail\":{\"timers_checked\":6,\"timers_updated\":0,\"year\":2026,\"year_start\":\"2026-01-01T00:00:00+00:00\"}}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:12.187510608Z\",\"kind\":\"wake_capability\",\"event_id\":\"da1b420a-3e25-4b98-860f-318141278c36\",\"message\":\"Wake from sleep: OFF \u2014 wake from sleep is turned off in Settings\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:18.890366938Z\",\"kind\":\"fired\",\"event_id\":\"591f2958-65c2-4ddf-8aa7-d0b29ae4e36a\",\"timer_id\":\"0bf234d9-82b0-41d6-8ad8-043f4fdcc7d3\",\"run_id\":\"d80e1de5-5e33-4751-8fd1-7abf6d51e282\",\"timer_name\":\"ik5-bulb\",\"scheduled_for\":\"2026-07-31T04:44:18.888791591Z\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:18.898224688Z\",\"kind\":\"wake_delivered\",\"event_id\":\"24fc4ace-fd03-421e-a6a2-54a68fe1fa1c\",\"timer_id\":\"0bf234d9-82b0-41d6-8ad8-043f4fdcc7d3\",\"run_id\":\"d80e1de5-5e33-4751-8fd1-7abf6d51e282\",\"timer_name\":\"ik5-bulb\",\"scheduled_for\":\"2026-07-31T04:44:18.888791591Z\",\"count\":0,\"message\":\"action=none\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:18Z\",\"kind\":\"acknowledged\",\"event_id\":\"52b62bba-570d-4d55-b2f4-ee0496387d34\",\"timer_id\":\"0bf234d9-82b0-41d6-8ad8-043f4fdcc7d3\",\"run_id\":\"d80e1de5-5e33-4751-8fd1-7abf6d51e282\",\"timer_name\":\"ik5-bulb\",\"scheduled_for\":\"2026-07-31T04:44:18.888791591Z\",\"detail\":{\"app_name\":\"lightbulb\",\"expected_secs\":8}}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:18.930034467Z\",\"kind\":\"running\",\"event_id\":\"f2443d33-2033-46f8-b8e0-0a81d7ca64e9\",\"timer_id\":\"0bf234d9-82b0-41d6-8ad8-043f4fdcc7d3\",\"run_id\":\"d80e1de5-5e33-4751-8fd1-7abf6d51e282\",\"timer_name\":\"ik5-bulb\",\"scheduled_for\":\"2026-07-31T04:44:18.888791591Z\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:30.139692150Z\",\"kind\":\"fired\",\"event_id\":\"f3a1d66d-d900-493b-81f3-701bed5bc249\",\"timer_id\":\"5123f75a-fbdf-44f0-be36-ac70aabd627c\",\"run_id\":\"c56c96e9-2e05-4945-b634-a0a8503212f7\",\"timer_name\":\"ik5-flaky\",\"scheduled_for\":\"2026-07-31T04:44:30.138183798Z\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:30.147302012Z\",\"kind\":\"wake_delivered\",\"event_id\":\"ea1a0217-c3c0-4adf-8c38-de27840886a8\",\"timer_id\":\"5123f75a-fbdf-44f0-be36-ac70aabd627c\",\"run_id\":\"c56c96e9-2e05-4945-b634-a0a8503212f7\",\"timer_name\":\"ik5-flaky\",\"scheduled_for\":\"2026-07-31T04:44:30.138183798Z\",\"count\":0,\"message\":\"action=none\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:30Z\",\"kind\":\"acknowledged\",\"event_id\":\"fd11cb0f-b804-4ec0-b0d1-bc76932762af\",\"timer_id\":\"5123f75a-fbdf-44f0-be36-ac70aabd627c\",\"run_id\":\"c56c96e9-2e05-4945-b634-a0a8503212f7\",\"timer_name\":\"ik5-flaky\",\"scheduled_for\":\"2026-07-31T04:44:30.138183798Z\",\"detail\":{\"app_name\":\"flaky\",\"error_detection\":true,\"expected_secs\":6}}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:30.201185824Z\",\"kind\":\"running\",\"event_id\":\"294ee36d-efaf-4721-af38-cea7d35c6a9d\",\"timer_id\":\"5123f75a-fbdf-44f0-be36-ac70aabd627c\",\"run_id\":\"c56c96e9-2e05-4945-b634-a0a8503212f7\",\"timer_name\":\"ik5-flaky\",\"scheduled_for\":\"2026-07-31T04:44:30.138183798Z\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:42.201216170Z\",\"kind\":\"failed\",\"event_id\":\"1bf76e5c-d5e8-4745-afd4-07f35cf65085\",\"timer_id\":\"5123f75a-fbdf-44f0-be36-ac70aabd627c\",\"run_id\":\"c56c96e9-2e05-4945-b634-a0a8503212f7\",\"timer_name\":\"ik5-flaky\",\"scheduled_for\":\"2026-07-31T04:44:30.138183798Z\",\"duration_ms\":12060,\"message\":\"error_detection watchdog expired\",\"detail\":{\"failure_kind\":\"timed_out\"}}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:42.289188517Z\",\"kind\":\"fired\",\"event_id\":\"caabde9e-e5f1-42c9-9037-bfa64e3f4cf8\",\"timer_id\":\"101d0d78-266f-4a0a-ae68-ad1ebc10b504\",\"run_id\":\"c34e2c1a-e075-4874-81bb-b9add6f579b2\",\"timer_name\":\"ik5-quiet\",\"scheduled_for\":\"2026-07-31T04:44:42.287978941Z\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:42.295505609Z\",\"kind\":\"wake_delivered\",\"event_id\":\"27fff07b-def0-4252-9fd6-a74cf92baf63\",\"timer_id\":\"101d0d78-266f-4a0a-ae68-ad1ebc10b504\",\"run_id\":\"c34e2c1a-e075-4874-81bb-b9add6f579b2\",\"timer_name\":\"ik5-quiet\",\"scheduled_for\":\"2026-07-31T04:44:42.287978941Z\",\"count\":0,\"message\":\"action=none\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:42.323946492Z\",\"kind\":\"superseded\",\"event_id\":\"21125e14-397b-48cf-a9ee-12d1e68cb728\",\"timer_id\":\"101d0d78-266f-4a0a-ae68-ad1ebc10b504\",\"run_id\":\"c34e2c1a-e075-4874-81bb-b9add6f579b2\",\"timer_name\":\"ik5-quiet\",\"scheduled_for\":\"2026-07-31T04:44:42.287978941Z\",\"message\":\"superseded by a new firing while still unresolved\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:42.324198923Z\",\"kind\":\"fired\",\"event_id\":\"eed07bb3-51f7-4e71-8656-67ab3faef1e7\",\"timer_id\":\"101d0d78-266f-4a0a-ae68-ad1ebc10b504\",\"run_id\":\"9558ae7c-7d44-45d5-a832-3ec5d50fff7c\",\"timer_name\":\"ik5-quiet\",\"scheduled_for\":\"2026-07-31T04:44:42.322649895Z\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:42.331035081Z\",\"kind\":\"wake_delivered\",\"event_id\":\"af4f0189-e972-42ee-a6a0-15c9cf55b6cb\",\"timer_id\":\"101d0d78-266f-4a0a-ae68-ad1ebc10b504\",\"run_id\":\"9558ae7c-7d44-45d5-a832-3ec5d50fff7c\",\"timer_name\":\"ik5-quiet\",\"scheduled_for\":\"2026-07-31T04:44:42.322649895Z\",\"count\":0,\"message\":\"action=none\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:46.325193680Z\",\"kind\":\"no_ack\",\"event_id\":\"c190cf5c-cf6d-47b6-9cd3-eb6069feacd6\",\"timer_id\":\"101d0d78-266f-4a0a-ae68-ad1ebc10b504\",\"run_id\":\"9558ae7c-7d44-45d5-a832-3ec5d50fff7c\",\"timer_name\":\"ik5-quiet\",\"scheduled_for\":\"2026-07-31T04:44:42.322649895Z\",\"message\":\"no acknowledgement was received\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:46.365148743Z\",\"kind\":\"fired\",\"event_id\":\"b16c65a9-e1ba-4114-bf88-112de0e5a1dc\",\"timer_id\":\"35ef0374-5254-4c78-a93f-cac66b7751c2\",\"run_id\":\"6e3d8bd7-5181-4add-9f1d-f872d94eecf7\",\"timer_name\":\"ik5-reported\",\"scheduled_for\":\"2026-07-31T04:44:46.364043947Z\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:46.371943756Z\",\"kind\":\"wake_delivered\",\"event_id\":\"507e21fc-da1e-4972-a1f2-fa7403f24c34\",\"timer_id\":\"35ef0374-5254-4c78-a93f-cac66b7751c2\",\"run_id\":\"6e3d8bd7-5181-4add-9f1d-f872d94eecf7\",\"timer_name\":\"ik5-reported\",\"scheduled_for\":\"2026-07-31T04:44:46.364043947Z\",\"count\":0,\"message\":\"action=none\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:46.408193120Z\",\"kind\":\"failed\",\"event_id\":\"541e6885-5d73-4161-b103-ed8319f9cb6d\",\"timer_id\":\"35ef0374-5254-4c78-a93f-cac66b7751c2\",\"run_id\":\"6e3d8bd7-5181-4add-9f1d-f872d94eecf7\",\"timer_name\":\"ik5-reported\",\"scheduled_for\":\"2026-07-31T04:44:46.364043947Z\",\"duration_ms\":44,\"message\":\"GPIO write refused\",\"detail\":{\"failure_kind\":\"reported\"}}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:46.654274666Z\",\"kind\":\"fired\",\"event_id\":\"2be66891-d134-4b6f-97cb-864fff1abb4a\",\"timer_id\":\"7fb86e15-c072-4418-89b8-1e578e8e7ca4\",\"run_id\":\"3aea4eb5-fc84-464f-a192-231f42676a5e\",\"timer_name\":\"ik5-plain\",\"scheduled_for\":\"2026-07-31T04:44:46.652761185Z\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:46.659430291Z\",\"kind\":\"wake_delivered\",\"event_id\":\"6abf731d-fc0f-4ff9-a37e-b9fa5229b1cc\",\"timer_id\":\"7fb86e15-c072-4418-89b8-1e578e8e7ca4\",\"run_id\":\"3aea4eb5-fc84-464f-a192-231f42676a5e\",\"timer_name\":\"ik5-plain\",\"scheduled_for\":\"2026-07-31T04:44:46.652761185Z\",\"count\":0,\"message\":\"action=none\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:52.702633437Z\",\"kind\":\"completed\",\"event_id\":\"9a36f26f-354c-4094-831c-ae3a6fbaa479\",\"timer_id\":\"0bf234d9-82b0-41d6-8ad8-043f4fdcc7d3\",\"run_id\":\"d80e1de5-5e33-4751-8fd1-7abf6d51e282\",\"timer_name\":\"ik5-bulb\",\"scheduled_for\":\"2026-07-31T04:44:18.888791591Z\",\"duration_ms\":33811,\"detail\":{\"result\":{\"on_duration_secs\":14.2}}}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:55.290459745Z\",\"kind\":\"fired\",\"event_id\":\"97ff744b-aae4-4db3-9fbc-babe9fea64d7\",\"timer_id\":\"0bf234d9-82b0-41d6-8ad8-043f4fdcc7d3\",\"run_id\":\"8e9b8bc4-a550-4f24-8b61-fa90d6deb719\",\"timer_name\":\"ik5-bulb\",\"scheduled_for\":\"2026-07-31T04:44:55.288884718Z\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:55.297524521Z\",\"kind\":\"wake_delivered\",\"event_id\":\"f7ad2e80-5409-4122-a015-2a867499724f\",\"timer_id\":\"0bf234d9-82b0-41d6-8ad8-043f4fdcc7d3\",\"run_id\":\"8e9b8bc4-a550-4f24-8b61-fa90d6deb719\",\"timer_name\":\"ik5-bulb\",\"scheduled_for\":\"2026-07-31T04:44:55.288884718Z\",\"count\":0,\"message\":\"action=none\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:55Z\",\"kind\":\"acknowledged\",\"event_id\":\"095fda96-a2a3-43d0-a10a-9a0b520bf985\",\"timer_id\":\"0bf234d9-82b0-41d6-8ad8-043f4fdcc7d3\",\"run_id\":\"8e9b8bc4-a550-4f24-8b61-fa90d6deb719\",\"timer_name\":\"ik5-bulb\",\"scheduled_for\":\"2026-07-31T04:44:55.288884718Z\",\"detail\":{\"app_name\":\"lightbulb\"}}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:55.370351519Z\",\"kind\":\"running\",\"event_id\":\"0d257d5d-9886-46cc-b3a2-d4edf5203bf2\",\"timer_id\":\"0bf234d9-82b0-41d6-8ad8-043f4fdcc7d3\",\"run_id\":\"8e9b8bc4-a550-4f24-8b61-fa90d6deb719\",\"timer_name\":\"ik5-bulb\",\"scheduled_for\":\"2026-07-31T04:44:55.288884718Z\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-07-31T04:44:58.845313836Z\",\"kind\":\"completed\",\"event_id\":\"343f5d42-fd62-43a6-9358-301dc671eb32\",\"timer_id\":\"0bf234d9-82b0-41d6-8ad8-043f4fdcc7d3\",\"run_id\":\"8e9b8bc4-a550-4f24-8b61-fa90d6deb719\",\"timer_name\":\"ik5-bulb\",\"scheduled_for\":\"2026-07-31T04:44:55.288884718Z\",\"duration_ms\":3554,\"detail\":{\"result\":{\"ok\":true}}}"
+  ]
+}
