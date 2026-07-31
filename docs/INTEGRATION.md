@@ -539,9 +539,12 @@ the same firing, act once, reply normally.
 - **One socket for all of Bellman** — never a server per timer.
 - Linux: `$XDG_RUNTIME_DIR/bellman/bellman.sock`; without `XDG_RUNTIME_DIR`,
   a user-owned private directory below the OS temp dir. macOS: a private
-  directory below `$TMPDIR`. The directory is **0700**, the socket **0600**
-  — the trust boundary is identical to the file protocol's (same-user
-  processes; the OS is the gate, no credentials, no secrets).
+  directory below `$TMPDIR`. Windows: the named pipe
+  `\\.\pipe\bellman-<username>` with an ACL restricted to you (the pipe
+  name is what goes in `"ipc": {"socket": …}`). The directory is **0700**,
+  the socket **0600** — the trust boundary is identical to the file
+  protocol's (same-user processes; the OS is the gate, no credentials, no
+  secrets).
 - Find the path in `timer.json` (`"ipc": {"socket": "<path>"}`) or in any
   fire message. It is **data, not code** — Bellman never writes an
   `adapter.py` or any other generated, importable file into a timer folder;

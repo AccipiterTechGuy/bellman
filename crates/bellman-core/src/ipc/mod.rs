@@ -28,9 +28,9 @@
 //! the connection then flow through the shared ingest under the R10
 //! per-timer gate, exactly like a reply file the watcher picked up.
 //!
-//! Windows is specified to use a named pipe with an ACL restricted to the
-//! current user; this build implements the Unix socket and returns
-//! `Unsupported` elsewhere.
+//! Windows uses a named pipe (`\\.\pipe\bellman-<user>`) whose DACL —
+//! built from the current user's own token SID — allows exactly that user;
+//! the same same-user trust boundary, no credentials, no secrets.
 
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
@@ -112,8 +112,16 @@ pub fn default_socket_dir() -> PathBuf {
     )
 }
 
-/// The resolved socket path for this process/platform.
+/// The resolved socket path for this process/platform. Windows: the named
+/// pipe `\\.\pipe\bellman-<username>` (a pipe name, not a filesystem path;
+/// its ACL does the gating a 0700 directory does on Unix).
 pub fn default_socket_path() -> PathBuf {
+    #[cfg(windows)]
+    {
+        let user = std::env::var("USERNAME").unwrap_or_else(|_| "user".to_string());
+        return PathBuf::from(format!(r"\\.\pipe\bellman-{user}"));
+    }
+    #[cfg(not(windows))]
     default_socket_dir().join(SOCKET_FILE_NAME)
 }
 
