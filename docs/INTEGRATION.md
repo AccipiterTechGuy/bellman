@@ -471,6 +471,25 @@ everything your app has reported so far.
   It will never launch, execute, schedule or modify anything because of
   something an app wrote.
 
+### What the GUI shows
+
+Because heartbeats and progress are **never logged**, the live view is the
+only place they are ever visible. An integration-owned timer's row in
+**All timers** shows its current run as it happens —
+`● running · 7s · bulb on, 7s elapsed` — and the row updates as the app
+rewrites `progress`. If the run outlives its own `expected_secs` the row
+adds `overdue (expected ~10m)` — a **label, not an ending**, computed at
+render time as `now − fired_at > expected_secs` (1× the estimate, never
+the watchdog's × factor; the run is still `running` and may still
+complete). An app that sends no `heartbeat_at` or `progress` is normal:
+its row shows `running` and an elapsed time, nothing else — absence never
+renders as a placeholder. Current non-terminal runs also pin to the top of
+**Run history** ("Happening now"), and every terminal state renders
+distinctly: `completed`, `failed · reported`, `failed · timed out`,
+`no ack`, `superseded`. A timer without an integration owner shows no live
+run state — its `status.json: fired` is a firing snapshot, not an app
+claiming to work.
+
 Run it end to end with `examples/lightbulb/`: its README shows the full
 loop — fire → acknowledge → bulb visibly on for 15 s → completed →
 validated and terminal — against a live Bellman.
