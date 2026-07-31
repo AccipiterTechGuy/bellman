@@ -22,31 +22,46 @@ people before alarm clocks existed: Bellman's job is waking *applications*.
 Linux is the only platform validated on real hardware today; see
 [Status](#status--what-actually-exists-today).
 
-**1. Prerequisites** (Linux, one time):
+**1. Prerequisites** (one time). Package names below are Debian / Ubuntu —
+on other distributions install the equivalents.
 
 ```sh
-# Rust toolchain
+# Rust toolchain. rustup writes ~/.cargo/env but cannot modify the shell
+# you are in, so source it (or open a new terminal) before using cargo.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
 
 # Tauri v2 system dependencies
 sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
   libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
-# Node 24 (for the UI build) and the Tauri CLI
+# Node 24, for the UI build. Any Node 24 works — a distro package or fnm is
+# fine. Using nvm: it is a shell function rather than a binary, so it has to
+# be installed and sourced before `nvm` exists as a command.
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+source "$HOME/.nvm/nvm.sh"
 nvm install 24
+
+# Tauri CLI
 cargo install tauri-cli --locked
 ```
+
+Verified against rustc 1.97.1, node v24.13.0 and tauri-cli 2.11.4 on Ubuntu
+24.04.
 
 **2. Build the packages:**
 
 ```sh
 git clone https://github.com/AccipiterTechGuy/bellman && cd bellman
-cd ui && npm ci && npm run build && cd ..
-bash scripts/stage_cli_sidecar.sh
+cd ui && npm ci && cd ..
 cargo tauri build --bundles deb,appimage --ci --no-sign
 # → target/release/bundle/deb/Bellman_*.deb
 # → target/release/bundle/appimage/Bellman_*.AppImage
 ```
+
+`npm ci` is the only manual front-end step: `cargo tauri build` runs the UI
+build and stages the `bellman` CLI sidecar itself (`beforeBuildCommand` in
+`src-tauri/tauri.conf.json`), but it never installs dependencies for you.
 
 **3. Install the deb** (or just run the AppImage):
 
