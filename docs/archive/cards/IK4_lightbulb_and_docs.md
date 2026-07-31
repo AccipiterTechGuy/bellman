@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-31 — shipped; card bellman-ik4-lightbulb-app-connect-your-own-app-docs, run 2026-07-31_0002, merge 056e554.
+
 # IK4 — The lightbulb app + "connect your own application"
 
 Repo: `~/bellman`. Depends on **IK1, IK2, IK3 and SCH1**. This card proves the finished thing
