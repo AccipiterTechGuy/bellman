@@ -34,7 +34,7 @@ use crate::scheduler::{FireAction, FireContext};
 use crate::store::{ClaimStatus, OverlapPolicy, RunOutcome, Store, StoreResult, TimerId};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
@@ -100,9 +100,13 @@ struct Inner {
     lanes: Mutex<LaneBook>,
     wake: Arc<(Mutex<()>, Condvar)>,
     state: AtomicU8,
-    owns_lock: bool,
-    /// The dispatcher OS lock guard (held for the process lifetime).
-    _lock: Option<crate::reply::gate::GateGuard>,
+    /// True while this process holds the dispatcher OS lock (or runs
+    /// lock-free without a data dir). A follower re-tries acquisition on its
+    /// pump tick: if the owner dies, the normal `active` recovery rule
+    /// continues the same claims here.
+    owns_lock: AtomicBool,
+    /// The dispatcher OS lock guard (held while `owns_lock` is true).
+    lock: Mutex<Option<crate::reply::gate::GateGuard>>,
     threads: Mutex<Vec<JoinHandle<()>>>,
 }
 
@@ -140,6 +144,27 @@ fn open_store(db_path: &Path) -> StoreResult<Store> {
     )
 }
 
+/// Try to take the dispatcher OS lock (no-op when already held or in
+/// lock-free in-memory mode). Returns true while this process is the owner.
+fn try_take_lock(inner: &Arc<Inner>) -> std::io::Result<bool> {
+    if inner.owns_lock.load(Ordering::SeqCst) {
+        return Ok(true);
+    }
+    let Some(dir) = &inner.cfg.data_dir else {
+        inner.owns_lock.store(true, Ordering::SeqCst);
+        return Ok(true);
+    };
+    match crate::reply::gate::try_acquire_file(&dir.join("locks").join(DISPATCHER_LOCK_NAME))? {
+        Some(guard) => {
+            *inner.lock.lock().unwrap() = Some(guard);
+            inner.owns_lock.store(true, Ordering::SeqCst);
+            eprintln!("bellman: dispatcher lock acquired");
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
 impl Dispatcher {
     /// Spawn the worker pool and the pump thread. Tries to take the
     /// dispatcher OS lock; without it this process is a follower — producers
@@ -153,14 +178,7 @@ impl Dispatcher {
             cfg.notify_sink.clone(),
             Arc::clone(&limiter),
         );
-        let lock = match &cfg.data_dir {
-            Some(dir) => {
-                crate::reply::gate::try_acquire_file(&dir.join("locks").join(DISPATCHER_LOCK_NAME))?
-            }
-            // No data dir: pure-store unit tests run the dispatcher in-memory.
-            None => None,
-        };
-        let owns_lock = cfg.data_dir.is_none() || lock.is_some();
+        let owns_lock = cfg.data_dir.is_none();
         let (tx, rx) = sync_channel::<Uuid>(queue_cap);
         let inner = Arc::new(Inner {
             limiter,
@@ -170,11 +188,14 @@ impl Dispatcher {
             lanes: Mutex::new(LaneBook::default()),
             wake: Arc::new((Mutex::new(()), Condvar::new())),
             state: AtomicU8::new(PRIMED),
-            owns_lock,
-            _lock: lock,
+            owns_lock: AtomicBool::new(owns_lock),
+            lock: Mutex::new(None),
             threads: Mutex::new(Vec::new()),
             cfg,
         });
+        if inner.cfg.data_dir.is_some() {
+            try_take_lock(&inner)?;
+        }
 
         let mut threads = Vec::new();
         for i in 0..workers {
@@ -202,7 +223,7 @@ impl Dispatcher {
     /// Whether this process holds the dispatcher OS lock (or runs lock-free
     /// without a data dir). Only the holder may pump scheduled claims.
     pub fn owns_lock(&self) -> bool {
-        self.inner.owns_lock
+        self.inner.owns_lock.load(Ordering::SeqCst)
     }
 
     /// Number of worker lanes.
@@ -219,8 +240,26 @@ impl Dispatcher {
     /// outbox recovery, folder reconciliation). The lock holder returns the
     /// previous owner's `active` claims to `pending` — acquiring the lock
     /// proves that dispatcher is gone — then the pump starts.
+    ///
+    /// A follower (another process holds the dispatcher OS lock) stays an
+    /// idle PRIMED follower: only the lock holder may pump scheduled claims.
+    /// Its producers still commit claims durably — the owner's periodic pump
+    /// (≤ 1 s) picks them up.
     pub fn begin_startup(&self) {
-        if self.inner.owns_lock && self.inner.cfg.data_dir.is_some() {
+        match try_take_lock(&self.inner) {
+            Ok(true) => {}
+            Ok(false) => {
+                eprintln!(
+                    "bellman: dispatcher lock held by another process; follower stays idle"
+                );
+                return;
+            }
+            Err(e) => {
+                eprintln!("bellman: dispatcher lock acquire: {e}");
+                return;
+            }
+        }
+        if self.inner.cfg.data_dir.is_some() {
             match open_store(&self.inner.cfg.db_path) {
                 Ok(mut store) => match store.repend_all_active() {
                     Ok(n) if n > 0 => {
@@ -291,6 +330,11 @@ impl Dispatcher {
                 crate::events::EventPublisher::drain_best_effort(data_dir, &store);
             }
         }
+        // Release the OS lock: this dispatcher is done, a waiting follower
+        // takes over immediately ("run the bounded dispatcher until the
+        // claim finishes, then release it").
+        self.inner.lock.lock().unwrap().take();
+        self.inner.owns_lock.store(false, Ordering::SeqCst);
     }
 }
 
@@ -323,6 +367,22 @@ fn pump_loop(inner: &Arc<Inner>) {
         if inner.state.load(Ordering::SeqCst) == STOPPING {
             return;
         }
+        // Follower whose owner died: re-try the OS lock on the tick; on
+        // acquisition the normal `active` recovery rule continues the same
+        // claims here (a waiting CLI never strands its run_id).
+        if inner.cfg.data_dir.is_some()
+            && !inner.owns_lock.load(Ordering::SeqCst)
+            && try_take_lock(inner).unwrap_or(false)
+        {
+            let state = inner.state.load(Ordering::SeqCst);
+            if state != STOPPING {
+                // Run the same startup recovery the boot path would have.
+                if let Ok(mut store) = open_store(&inner.cfg.db_path) {
+                    let _ = store.repend_all_active();
+                }
+                inner.state.store(STARTED, Ordering::SeqCst);
+            }
+        }
         if inner.state.load(Ordering::SeqCst) == STARTED {
             drop(guard);
             pump_once(inner);
@@ -337,6 +397,13 @@ fn pump_loop(inner: &Arc<Inner>) {
 /// One pump pass: signal cancellation tokens, dispatch eligible pending
 /// claims in lane order, then run the publication pump.
 fn pump_once(inner: &Arc<Inner>) {
+    // Only the process holding the dispatcher OS lock may pump scheduled
+    // claims (pure in-memory test dispatchers run lock-free). A follower
+    // must never execute beside the owner — SQLite is the handoff, and two
+    // pumps would break per-timer lane serialization.
+    if !inner.owns_lock.load(Ordering::SeqCst) && inner.cfg.data_dir.is_some() {
+        return;
+    }
     let mut store = match open_store(&inner.cfg.db_path) {
         Ok(s) => s,
         Err(e) => {

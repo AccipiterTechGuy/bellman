@@ -619,6 +619,63 @@ fn active_claim_requeued_may_execute_twice_finishes_once() {
     b.shutdown_drain();
 }
 
+/// A follower dispatcher (lost the OS lock) must stay an idle follower:
+/// `begin_startup` does not start its pump, and `pump_once` guards on lock
+/// ownership — so two processes can never execute claims of one serial
+/// timer concurrently. Regression test for the dual-process QueueOne race.
+#[test]
+fn follower_dispatcher_never_pumps_beside_the_owner() {
+    let e = env();
+    let marker = e.data.join("follower.log");
+    let cmd = format!(
+        "echo S:$BELLMAN_RUN_ID >> '{}'; sleep 0.4; echo E:$BELLMAN_RUN_ID >> '{}'",
+        marker.display(),
+        marker.display()
+    );
+    let mut st = store(&e);
+    let t = interval_timer(&mut st, "lane", launch("sh", &["-c", &cmd]), OverlapPolicy::QueueOne);
+    let c1 = st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(2)).unwrap();
+    let c2 = st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(1)).unwrap();
+
+    let owner = spawn_dispatcher(&e, 4);
+    assert!(owner.owns_lock());
+    let follower = spawn_dispatcher(&e, 4);
+    assert!(
+        !follower.owns_lock(),
+        "second dispatcher on one data dir must be a follower"
+    );
+    // Both go through the same boot path.
+    owner.begin_startup();
+    follower.begin_startup();
+    // The follower even gets nudged directly — it must not pump.
+    follower.submit(c1.run_id);
+    follower.submit(c2.run_id);
+
+    let f1 = wait_finished(&st, c1.run_id, Duration::from_secs(20));
+    let f2 = wait_finished(&st, c2.run_id, Duration::from_secs(20));
+    assert_eq!(f1.outcome, Some(RunOutcome::WakeDelivered));
+    assert_eq!(f2.outcome, Some(RunOutcome::WakeDelivered));
+
+    let log = std::fs::read_to_string(&marker).unwrap();
+    assert_eq!(
+        log,
+        format!("S:{}\nE:{}\nS:{}\nE:{}\n", c1.run_id, c1.run_id, c2.run_id, c2.run_id),
+        "serial lane holds even with a second process present: {log:?}"
+    );
+    owner.shutdown_drain();
+
+    // After the owner releases the lock, the follower's tick acquires it and
+    // the normal recovery continues pending claims there.
+    let c3 = st.claim_run(t.id, Utc::now()).unwrap();
+    let f3 = wait_finished(&st, c3.run_id, Duration::from_secs(20));
+    assert_eq!(f3.outcome, Some(RunOutcome::WakeDelivered));
+    assert!(
+        follower.owns_lock(),
+        "follower acquires the lock once the owner is gone"
+    );
+    follower.shutdown_drain();
+}
+
 // ── Shutdown ────────────────────────────────────────────────────────────
 
 /// Shutdown with lanes busy drains: in-flight lanes finish, the claim
