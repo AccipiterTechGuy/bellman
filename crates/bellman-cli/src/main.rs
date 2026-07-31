@@ -89,6 +89,10 @@ enum Commands {
         /// Optional tags (repeatable).
         #[arg(long = "tag", value_name = "TAG")]
         tags: Vec<String>,
+
+        /// Fire-delivery transport (IK6): auto | json | ipc (default json).
+        #[arg(long, value_name = "MODE")]
+        transport: Option<String>,
     },
 
     /// List all timers.
@@ -132,6 +136,10 @@ enum Commands {
         /// Set enabled explicitly (`true` / `false`).
         #[arg(long, value_name = "BOOL")]
         enabled: Option<String>,
+
+        /// Fire-delivery transport (IK6): auto | json | ipc.
+        #[arg(long, value_name = "MODE")]
+        transport: Option<String>,
     },
 
     /// Delete a timer.
@@ -536,6 +544,7 @@ fn main() -> ExitCode {
             month,
             cron,
             tags,
+            transport,
         } => commands::add(
             &db_path,
             commands::AddArgs {
@@ -549,6 +558,7 @@ fn main() -> ExitCode {
                 month,
                 cron,
                 tags,
+                transport,
             },
         ),
         Commands::List => commands::list(&db_path),
@@ -562,6 +572,7 @@ fn main() -> ExitCode {
             day,
             month,
             enabled,
+            transport,
         } => commands::edit(
             &db_path,
             &name_or_id,
@@ -574,6 +585,7 @@ fn main() -> ExitCode {
                 day,
                 month,
                 enabled,
+                transport,
             },
         ),
         Commands::Rm { name_or_id } => commands::rm(&db_path, &name_or_id),

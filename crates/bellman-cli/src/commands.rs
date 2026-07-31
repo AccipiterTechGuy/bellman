@@ -302,6 +302,16 @@ pub struct AddArgs {
     pub month: Option<u8>,
     pub cron: Option<String>,
     pub tags: Vec<String>,
+    pub transport: Option<String>,
+}
+
+/// Parse a `--transport` value (IK6: auto | json | ipc).
+fn parse_transport(raw: Option<String>) -> Result<Option<bellman_core::TransportMode>, String> {
+    raw.map(|s| {
+        bellman_core::TransportMode::from_wire(&s)
+            .ok_or_else(|| format!("invalid transport '{s}' (expected auto | json | ipc)"))
+    })
+    .transpose()
 }
 
 pub fn add(db: &Path, args: AddArgs) -> Result<CommandPayload, CliError> {
@@ -318,8 +328,14 @@ pub fn add(db: &Path, args: AddArgs) -> Result<CommandPayload, CliError> {
     })
     .map_err(|m| CliError::new(CMD, "invalid_args", m))?;
 
+    let transport = parse_transport(args.transport)
+        .map_err(|m| CliError::new(CMD, "invalid_args", m))?;
+
     let mut new = NewTimer::new(args.name, occ);
     new.tags = args.tags;
+    if let Some(t) = transport {
+        new.transport = t;
+    }
 
     let mut store = open_store(db).map_err(|mut e| {
         e.command = CMD;
@@ -375,6 +391,7 @@ pub struct EditArgs {
     pub day: Option<u8>,
     pub month: Option<u8>,
     pub enabled: Option<String>,
+    pub transport: Option<String>,
 }
 
 pub fn edit(db: &Path, name_or_id: &str, args: EditArgs) -> Result<CommandPayload, CliError> {
@@ -403,11 +420,14 @@ pub fn edit(db: &Path, name_or_id: &str, args: EditArgs) -> Result<CommandPayloa
     )
     .map_err(|m| CliError::new(CMD, "invalid_args", m))?;
 
-    if args.name.is_none() && occurrence.is_none() && enabled.is_none() {
+    let transport = parse_transport(args.transport)
+        .map_err(|m| CliError::new(CMD, "invalid_args", m))?;
+
+    if args.name.is_none() && occurrence.is_none() && enabled.is_none() && transport.is_none() {
         return Err(CliError::new(
             CMD,
             "invalid_args",
-            "nothing to edit (pass --name, --time, --enabled, …)",
+            "nothing to edit (pass --name, --time, --enabled, --transport, …)",
         ));
     }
 
@@ -419,6 +439,7 @@ pub fn edit(db: &Path, name_or_id: &str, args: EditArgs) -> Result<CommandPayloa
                 name: args.name,
                 enabled,
                 occurrence,
+                transport,
                 ..Default::default()
             },
         })

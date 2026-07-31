@@ -58,6 +58,7 @@ fn sample_timer() -> Timer {
         jitter_secs: 0,
         accuracy_slack_secs: None,
         wake_machine: false,
+        transport: bellman_core::TransportMode::default(),
     }
 }
 
@@ -137,6 +138,7 @@ fn timer_dto_round_trips_occurrence_and_action() {
         jitter_secs: 0,
         accuracy_slack_secs: None,
         wake_machine: false,
+        transport: bellman_core::TransportMode::default(),
     };
     let dto = TimerDto::from(timer);
     assert_eq!(dto.name, "weekly-mwf");
