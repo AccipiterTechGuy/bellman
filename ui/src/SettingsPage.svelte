@@ -16,7 +16,10 @@
     wakeOpenLoginItems,
     getMisfireDefaults,
     setMisfireDefaults,
+    demoInfo,
+    setDemoOptIn,
   } from './api.js';
+  import DemoPanel from './DemoPanel.svelte';
 
   let { onToast, onRerunWizard } = $props();
 
@@ -29,6 +32,7 @@
   let powercfgCopied = $state(false);
   let misfirePolicy = $state('coalesce');
   let misfireGrace = $state(3600);
+  let demo = $state(null);
 
   async function refresh() {
     try {
@@ -43,6 +47,11 @@
       } catch {
         misfirePolicy = info?.defaultMisfirePolicy ?? 'coalesce';
         misfireGrace = info?.defaultMisfireGraceSecs ?? 3600;
+      }
+      try {
+        demo = await demoInfo();
+      } catch {
+        demo = null;
       }
     } catch (e) {
       status = {
@@ -217,6 +226,21 @@
       onToast?.(String(e), 'err');
     }
   }
+
+  async function toggleDemoOptIn() {
+    if (!demo) return;
+    busy = true;
+    try {
+      const next = !demo.optIn;
+      await setDemoOptIn(next);
+      demo = { ...demo, optIn: next };
+      onToast?.(next ? 'Demo offer will show in the setup wizard' : 'Demo offer hidden from the setup wizard');
+    } catch (e) {
+      onToast?.(String(e), 'err');
+    } finally {
+      busy = false;
+    }
+  }
 </script>
 
 <div class="settings-page">
@@ -362,6 +386,31 @@
       />
       <button class="btn" onclick={saveMaxConcurrent} disabled={busy}>Save</button>
     </div>
+  </section>
+
+  <section class="settings-section" data-testid="settings-demo">
+    <h3>Demo</h3>
+    <p class="hint">
+      Watch a timer wake a real application — the same panel the setup wizard
+      offers, here so you can find it again any time.
+    </p>
+    {#if demo}
+      <div class="settings-row">
+        <label for="s-demo" class="checkbox-label">
+          <input
+            id="s-demo"
+            type="checkbox"
+            checked={!!demo.optIn}
+            disabled={busy || !isTauri()}
+            onchange={toggleDemoOptIn}
+          />
+          <span>Show the demo offer when the setup wizard runs</span>
+        </label>
+      </div>
+      <DemoPanel info={demo} {onToast} />
+    {:else}
+      <p class="hint">Demo information is unavailable (no backend).</p>
+    {/if}
   </section>
 
   <section class="settings-section">

@@ -1500,6 +1500,55 @@ main {
   margin-top: var(--space-5);
 }
 
+/* --- WIZ1 demo panel (wizard completion step + Settings) ------------- */
+.demo-panel {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-3) 0;
+  background: var(--bg-surface);
+}
+
+.demo-panel p {
+  margin: 0 0 var(--space-3);
+  color: var(--fg-secondary);
+  font-size: var(--text-base);
+}
+
+.demo-panel .hint {
+  font-size: var(--text-sm);
+}
+
+.demo-command {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin-bottom: var(--space-3);
+}
+
+.demo-command-input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-elevated);
+  color: var(--fg-primary);
+}
+
+.demo-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.demo-panel .btn {
+  margin-bottom: var(--space-2);
+}
+
+
 /* --- P4e Collision & Neighbour Density Styling -------------------- */
 .name-text {
   overflow: visible;

@@ -245,6 +245,19 @@ export async function wizardSetChoice(choice) {
 export async function wizardReRun() {
   return await invoke('wizard_re_run');
 }
+/* WIZ1 demo panel (wizard completion step + Settings). */
+export async function demoInfo() {
+  return await invoke('demo_info');
+}
+export async function demoLaunch() {
+  return await invoke('demo_launch');
+}
+export async function demoOpenDocs() {
+  return await invoke('demo_open_docs');
+}
+export async function setDemoOptIn(enabled) {
+  return await invoke('set_demo_opt_in', { enabled });
+}
 export async function appInfo() {
   return await invoke('app_info');
 }
