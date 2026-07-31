@@ -16,8 +16,61 @@ Cross-platform (Windows / macOS / Linux) **task scheduler** desktop app — the
 desktop cousin of cron. Named after the bellmen (knocker-uppers) who woke
 people before alarm clocks existed: Bellman's job is waking *applications*.
 
-**This section describes the intended v1 design; the status table below is what
-actually exists today.**
+## Install
+
+**There is no tagged release and no signed build — you build it yourself.**
+Linux is the only platform validated on real hardware today; see
+[Status](#status--what-actually-exists-today).
+
+**1. Prerequisites** (Linux, one time):
+
+```sh
+# Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Tauri v2 system dependencies
+sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+# Node 24 (for the UI build) and the Tauri CLI
+nvm install 24
+cargo install tauri-cli --locked
+```
+
+**2. Build the packages:**
+
+```sh
+git clone https://github.com/AccipiterTechGuy/bellman && cd bellman
+cd ui && npm ci && npm run build && cd ..
+bash scripts/stage_cli_sidecar.sh
+cargo tauri build --bundles deb,appimage --ci --no-sign
+# → target/release/bundle/deb/Bellman_*.deb
+# → target/release/bundle/appimage/Bellman_*.AppImage
+```
+
+**3. Install the deb** (or just run the AppImage):
+
+```sh
+sudo apt install ./target/release/bundle/deb/Bellman_*.deb
+```
+
+You get a **Bellman** entry in the app launcher, the `bellman` CLI on `PATH`,
+and the GUI binary `bellman-app`. Verify with
+`scripts/smoke_install_deb.sh` (add `SMOKE_MODE=docker` to check it in a
+container instead of on the host); the manual VM checklist is in
+[docs/QA_P6.md](docs/QA_P6.md).
+
+**Windows and macOS** packages (NSIS, MSI, dmg) build unsigned in CI and have
+**not** been validated on real hardware — treat them as unfinished.
+
+Working on Bellman itself rather than installing it? See
+[Development](#development).
+
+## What it does
+
+**These bullets describe the intended v1 design; the
+[status table](#status--what-actually-exists-today) is what actually exists
+today.**
 
 - Timers with name, time, and occurrence (once / interval / daily / weekly /
   monthly / yearly), second-level resolution, year-round calendar with automatic
@@ -102,6 +155,11 @@ the app launcher and the `bellman` CLI on `PATH`. Windows (NSIS + MSI) and macOS
 hardware. Wake-from-sleep is implemented (platform probes + Settings + wizard);
 real suspend/resume hardware QA is still part of full-system validation.
 
+## Development
+
+Building the packages is covered under [Install](#install). This section is
+for working *on* Bellman from a checkout.
+
 ### Dev launch (this tree)
 
 ```sh
@@ -128,21 +186,7 @@ stock theme icon), and keeps a single main `Categories=Utility;` so
 Headless selection tests: `./tests/launch_freshness.sh`. Safe worktree metadata
 prune: `scripts/repo_hygiene.sh` (absent worktree records only).
 
-### Quick package (Linux)
-
-```sh
-cd ui && npm ci && npm run build && cd ..
-bash scripts/stage_cli_sidecar.sh
-cargo tauri build --bundles deb,appimage --ci --no-sign
-# → target/release/bundle/deb/Bellman_*.deb
-# → target/release/bundle/appimage/Bellman_*.AppImage
-scripts/smoke_install_deb.sh                  # host (sudo) or:
-SMOKE_MODE=docker scripts/smoke_install_deb.sh
-```
-
-After deb install: launcher entry **Bellman**, CLI `bellman` on PATH, GUI
-binary `bellman-app`. See [docs/QA_P6.md](docs/QA_P6.md) for the install smoke
-and the manual VM checklist.
+### Reference
 
 See [docs/PLAN.md](docs/PLAN.md) for the full specification and decided logic,
 [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md) for the phased build,
