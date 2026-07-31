@@ -146,6 +146,7 @@ pub fn run_now(
             .unwrap_or_else(crate::reply::new_deadlines),
         fire_slot_file: None,
         status_listener: None,
+        ipc: None,
     };
     let claim = crate::tree::project_fire(
         &engine.tree.clone(),
@@ -263,6 +264,7 @@ fn dispatch_and_wait(
                     .unwrap_or_else(|| Arc::new(crate::actions::StubNotifySink)),
                 executor: exec_cfg.clone(),
                 tick: Duration::from_millis(100),
+                ipc: None,
             })
             .map_err(|e| RunNowError::Other(format!("dispatcher spawn: {e}")))?;
             if d.owns_lock() {
@@ -282,6 +284,7 @@ fn dispatch_and_wait(
                             .unwrap_or_else(crate::reply::new_deadlines),
                         fire_slot_file: None,
                         status_listener: None,
+                        ipc: None,
                     };
                     crate::reply::startup_scan(&engine, store, Utc::now());
                 }

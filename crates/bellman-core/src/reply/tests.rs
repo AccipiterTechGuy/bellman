@@ -49,6 +49,7 @@ impl Harness {
             deadlines: new_deadlines(),
             fire_slot_file: None,
             status_listener: None,
+            ipc: None,
         };
         Self {
             dir,
@@ -1146,6 +1147,7 @@ fn a_restart_reconstructs_the_pickup_deadline_from_the_persisted_value() {
         deadlines: new_deadlines(),
         fire_slot_file: None,
         status_listener: None,
+        ipc: None,
     };
 
     // The persisted wall-clock deadline (t0+60) rebuilds the countdown —

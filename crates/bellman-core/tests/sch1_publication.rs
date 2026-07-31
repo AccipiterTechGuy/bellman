@@ -58,6 +58,7 @@ fn engine(e: &Env, fire_slot_file: Option<&str>) -> bellman_core::reply::ReplyEn
         deadlines: bellman_core::reply::new_deadlines(),
         fire_slot_file: fire_slot_file.map(str::to_string),
         status_listener: None,
+        ipc: None,
     }
 }
 
@@ -137,7 +138,10 @@ fn skipped_firing_still_publishes_its_notification() {
     assert_eq!(c2.outcome_reason.as_deref(), Some("overlap_skip"));
     let n2 = read_notification(&fires_file(&e, c2.run_id));
     assert_eq!(n2.run_id, c2.run_id);
-    assert!(n2.reply_path.exists(), "notification carries a real reply stub");
+    assert!(
+        n2.reply_path.as_ref().expect("file transport carries reply_path").exists(),
+        "notification carries a real reply stub"
+    );
     assert!(n2.status_path.exists());
 }
 
@@ -182,7 +186,7 @@ fn fixed_target_newer_wins_and_cursor_blocks_resurface() {
     // The first firing's late completion/retry neither overwrites nor
     // duplicates the second's notification.
     let proj1 = st.transport_projection(c1.run_id).unwrap().unwrap();
-    let outcome = publication::attempt(&e.data, &st, &proj1);
+    let outcome = publication::attempt(&e.data, &st, &proj1, None);
     assert_eq!(outcome, publication::Attempt::Obsolete);
     assert_eq!(std::fs::read(&fixed).unwrap(), after_c2, "byte-identical");
     assert_eq!(
@@ -193,7 +197,7 @@ fn fixed_target_newer_wins_and_cursor_blocks_resurface() {
     // The app consumes the newer file without pickup: the older projection
     // must not resurface (durable target cursor).
     std::fs::remove_file(&fixed).unwrap();
-    let outcome = publication::attempt(&e.data, &st, &proj1);
+    let outcome = publication::attempt(&e.data, &st, &proj1, None);
     assert_eq!(outcome, publication::Attempt::Obsolete);
     assert!(!fixed.exists(), "the cursor keeps the older hint obsolete");
 }
@@ -239,8 +243,8 @@ fn crash_windows_and_consumed_without_pickup_redelivery() {
     // Crash window 2: replace done, pickup never recorded, app deletes the
     // file. The pump re-queues and redelivers.
     std::fs::remove_file(&file).unwrap();
-    publication::pump(&e.data, &st, 8); // sweep: published + missing → pending
-    publication::pump(&e.data, &st, 8); // attempt: rewrite
+    publication::pump(&e.data, &st, 8, None); // sweep: published + missing → pending
+    publication::pump(&e.data, &st, 8, None); // attempt: rewrite
     assert!(file.exists(), "redelivery after silent consumption");
     assert_eq!(read_notification(&file).run_id, c.run_id, "same run_id — one logical firing");
 
@@ -248,14 +252,14 @@ fn crash_windows_and_consumed_without_pickup_redelivery() {
     // missing; the pump writes it.
     std::fs::remove_file(&file).unwrap();
     st.requeue_transport_projection(c.run_id).unwrap();
-    publication::pump(&e.data, &st, 8);
+    publication::pump(&e.data, &st, 8, None);
     assert!(file.exists(), "pending projection is (re)published by the pump");
 
     // Unchanged file suppresses the immediate recovery rewrite but the
     // projection stays eligible until pickup.
     let mtime1 = std::fs::metadata(&file).unwrap().modified().unwrap();
     let proj = st.transport_projection(c.run_id).unwrap().unwrap();
-    let outcome = publication::attempt(&e.data, &st, &proj);
+    let outcome = publication::attempt(&e.data, &st, &proj, None);
     assert_eq!(outcome, publication::Attempt::Deferred, "same run_id suppresses rewrite");
     assert_eq!(
         std::fs::metadata(&file).unwrap().modified().unwrap(),
@@ -265,13 +269,13 @@ fn crash_windows_and_consumed_without_pickup_redelivery() {
 
     // Pickup (ack_through past the firing): retries stop, file cleaned.
     st.ack_run_events(t.id, c.event_sequence).unwrap();
-    publication::pump(&e.data, &st, 8);
+    publication::pump(&e.data, &st, 8, None);
     assert_eq!(
         st.transport_projection(c.run_id).unwrap().unwrap().state,
         TransportProjection::PICKED_UP
     );
     assert!(!file.exists(), "pickup removes the notification");
-    publication::pump(&e.data, &st, 8);
+    publication::pump(&e.data, &st, 8, None);
     assert!(!file.exists(), "no resurrection after pickup");
 }
 
@@ -286,7 +290,7 @@ fn malformed_target_is_replaced() {
     let file = fires_file(&e, c.run_id);
     std::fs::write(&file, b"not json at all").unwrap();
     st.requeue_transport_projection(c.run_id).unwrap();
-    publication::pump(&e.data, &st, 8);
+    publication::pump(&e.data, &st, 8, None);
     assert_eq!(read_notification(&file).run_id, c.run_id);
 }
 
@@ -309,14 +313,14 @@ fn run_files_precede_delivery() {
     std::fs::remove_file(&file).unwrap();
     st.requeue_transport_projection(c.run_id).unwrap();
     let proj = st.transport_projection(c.run_id).unwrap().unwrap();
-    let outcome = publication::attempt(&e.data, &st, &proj);
+    let outcome = publication::attempt(&e.data, &st, &proj, None);
     assert_eq!(outcome, publication::Attempt::Deferred);
     assert!(!file.exists(), "no notification while status.json is missing");
     std::fs::write(&status, &saved_status).unwrap();
 
     // Fail the stub: same.
     std::fs::remove_file(&reply).unwrap();
-    let outcome = publication::attempt(&e.data, &st, &proj);
+    let outcome = publication::attempt(&e.data, &st, &proj, None);
     assert_eq!(outcome, publication::Attempt::Deferred);
     assert!(!file.exists(), "no notification while the reply stub is missing");
 
@@ -324,7 +328,7 @@ fn run_files_precede_delivery() {
     TimersTree::new(&e.data)
         .create_reply_stub(&folder, c.run_id, "testapp")
         .unwrap();
-    let outcome = publication::attempt(&e.data, &st, &proj);
+    let outcome = publication::attempt(&e.data, &st, &proj, None);
     assert_eq!(outcome, publication::Attempt::Published);
     assert!(file.exists());
 }
@@ -436,7 +440,7 @@ fn startup_reply_scan_precedes_publication_replay() {
 
     // BROKEN ORDER (demonstration, not the boot path): if the publication
     // pump ran before the reply scan, the old notification would be replayed.
-    publication::pump(&e.data, &st, 8);
+    publication::pump(&e.data, &st, 8, None);
     assert!(
         file.exists(),
         "pump-first replays the stale notification — this is what the boot order prevents"
@@ -457,7 +461,7 @@ fn startup_reply_scan_precedes_publication_replay() {
 
     // Only now the pumps run: pickup is already recorded, so the projection
     // is consumed — the stale notification is never replayed.
-    publication::pump(&e.data, &st, 8);
+    publication::pump(&e.data, &st, 8, None);
     assert_eq!(
         st.transport_projection(c1.run_id).unwrap().unwrap().state,
         TransportProjection::PICKED_UP
@@ -511,6 +515,7 @@ fn boot_ingests_stopped_reply_before_second_firing_publishes() {
         notify_sink: std::sync::Arc::new(bellman_core::actions::StubNotifySink),
         executor: bellman_core::actions::ExecutorConfig::default(),
         tick: Duration::from_millis(50),
+            ipc: None,
     })
     .unwrap();
     let cfg = bellman_core::scheduler::SchedulerConfig::default().with_data_dir(e.data.clone());
@@ -601,6 +606,7 @@ fn worker_result_does_not_regress_status_json() {
         notify_sink: std::sync::Arc::new(bellman_core::actions::StubNotifySink),
         executor: bellman_core::actions::ExecutorConfig::default(),
         tick: Duration::from_millis(50),
+            ipc: None,
     })
     .unwrap();
     disp.begin_startup();

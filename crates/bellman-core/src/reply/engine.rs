@@ -283,6 +283,11 @@ pub struct ReplyEngine {
     /// IK5: optional invalidation sink notified after every status
     /// projection this engine performs (reply ingest, deadlines, fire).
     pub status_listener: Option<StatusListener>,
+    /// IK6: the IPC transport handle. `Some` while the socket server is up
+    /// (or configured to be): the fire path uses it for per-firing transport
+    /// selection and the publication pump for IPC delivery attempts. `None`
+    /// → every firing resolves to the file transport.
+    pub ipc: Option<crate::ipc::IpcHandle>,
 }
 
 /// What became of one ingested reply.

@@ -151,6 +151,10 @@ pub struct SlotPayload {
     /// (inclusive). Only moves forward; requires ownership of the timer.
     #[serde(default)]
     pub ack_through: Option<u64>,
+    /// IK6 delivery transport: `{ "mode": "auto" | "json" | "ipc" }`
+    /// (a bare `"auto"`-style string is also accepted).
+    #[serde(default)]
+    pub transport: Option<Value>,
 }
 
 impl SlotPayload {

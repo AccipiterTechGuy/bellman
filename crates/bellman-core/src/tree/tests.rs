@@ -33,6 +33,7 @@ fn test_engine(dir: &std::path::Path) -> crate::reply::ReplyEngine {
         deadlines: crate::reply::new_deadlines(),
         fire_slot_file: None,
         status_listener: None,
+        ipc: None,
     }
 }
 

@@ -72,6 +72,7 @@ fn engine(e: &Env) -> bellman_core::reply::ReplyEngine {
         deadlines: bellman_core::reply::new_deadlines(),
         fire_slot_file: None,
         status_listener: None,
+        ipc: None,
     }
 }
 
@@ -122,6 +123,7 @@ fn spawn_dispatcher(e: &Env, max: usize) -> Dispatcher {
         notify_sink: Arc::new(bellman_core::actions::StubNotifySink),
         executor: ExecutorConfig::default(),
         tick: Duration::from_millis(50),
+            ipc: None,
     })
     .unwrap()
 }
@@ -135,6 +137,7 @@ fn spawn_dispatcher_inmem(e: &Env, max: usize) -> Dispatcher {
         notify_sink: Arc::new(bellman_core::actions::StubNotifySink),
         executor: ExecutorConfig::default(),
         tick: Duration::from_millis(50),
+            ipc: None,
     })
     .unwrap()
 }

@@ -43,6 +43,7 @@ fn sample_timer(action: Action, retry: RetryPolicy) -> Timer {
         jitter_secs: 0,
         accuracy_slack_secs: None,
         wake_machine: false,
+        transport: crate::store::TransportMode::default(),
     }
 }
 

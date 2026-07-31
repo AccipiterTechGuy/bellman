@@ -33,9 +33,10 @@ pub use engine::{
 };
 pub use engine::RunDb;
 pub use notification::{
-    fire_notification_name, fires_dir, write_fire_notification, FireNotification,
+    fire_notification_name, fires_dir, write_fire_notification, FireNotification, IpcEndpoint,
     FIRES_DIR_NAME, FIRE_SCHEMA_V1,
 };
+pub use publication::{select_transport, SelectedTransport};
 pub use watcher::{
     barrier_read, poll_once, publish_fire_notification, reconcile, startup_scan, BarrierRead,
     InvalidTracker, PollStats, DEFAULT_DEBOUNCE, DEFAULT_POLL_INTERVAL, RECONCILE_EVERY_POLLS,

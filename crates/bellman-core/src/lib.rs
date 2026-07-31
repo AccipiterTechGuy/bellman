@@ -9,6 +9,7 @@ pub mod actions;
 pub mod app_config;
 pub mod calendar;
 pub mod events;
+pub mod ipc;
 pub mod occurrence;
 pub mod platform;
 pub mod pruner;
@@ -67,7 +68,7 @@ pub use platform::{
 pub use store::{
     Action, ClaimStatus, FailureKind, Meta, MisfirePolicy, NewTimer, OpenOptions, OverlapPolicy,
     RetryPolicy, RunClaim, RunStateRow, SlotRequestRecord, Store, StoreError, StoreResult, Timer,
-    TimerId, TimerPatch, TimerUpdate,
+    TimerId, TimerPatch, TimerUpdate, TransportMode,
 };
 pub mod reply;
 pub use reply::{

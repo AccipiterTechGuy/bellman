@@ -22,6 +22,9 @@ pub fn new_timer_from_payload(payload: &SlotPayload) -> Result<NewTimer, String>
     if let Some(m) = &payload.misfire_policy {
         new.misfire = misfire_from_value(m)?;
     }
+    if let Some(t) = &payload.transport {
+        new.transport = transport_from_value(t)?;
+    }
     Ok(new)
 }
 
@@ -46,7 +49,26 @@ pub fn patch_from_payload(payload: &SlotPayload) -> Result<TimerPatch, String> {
     if let Some(m) = &payload.misfire_policy {
         patch.misfire = Some(misfire_from_value(m)?);
     }
+    if let Some(t) = &payload.transport {
+        patch.transport = Some(transport_from_value(t)?);
+    }
     Ok(patch)
+}
+
+/// IK6: `{ "mode": "auto" }` object or a bare `"auto" | "json" | "ipc"`
+/// string. Unknown modes are rejected, never silently defaulted.
+fn transport_from_value(v: &Value) -> Result<crate::store::TransportMode, String> {
+    let mode = match v {
+        Value::String(s) => s.clone(),
+        Value::Object(o) => o
+            .get("mode")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "payload.transport.mode is required (auto | json | ipc)".to_string())?
+            .to_string(),
+        _ => return Err("payload.transport must be {\"mode\": …} or a string".to_string()),
+    };
+    crate::store::TransportMode::from_wire(&mode)
+        .ok_or_else(|| format!("invalid transport mode '{mode}' (expected auto | json | ipc)"))
 }
 
 fn occurrence_from_payload(payload: &SlotPayload) -> Result<Occurrence, String> {

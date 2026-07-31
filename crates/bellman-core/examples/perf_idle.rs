@@ -104,6 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..ExecutorConfig::default()
         },
         tick: Duration::from_millis(200),
+        ipc: None,
     })?;
 
     let cfg = SchedulerConfig::default()
