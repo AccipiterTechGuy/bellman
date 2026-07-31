@@ -54,6 +54,114 @@ pub fn get_timer(state: State<'_, AppState>, id: String) -> Result<TimerDto, Str
     Ok(TimerDto::from(timer))
 }
 
+/// IK5: the current run of an integration-owned timer, projected from the
+/// `run_states` table — the same truth `status.json` mirrors. Absent
+/// optional fields are omitted entirely (absence is not a state; the GUI
+/// renders nothing for them). camelCase at the IPC boundary.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunStateDto {
+    pub timer_id: String,
+    pub timer_name: String,
+    pub run_id: String,
+    /// R5 wire state (`fired` / `acknowledged` / `running` / `completed` /
+    /// `failed` / `no_ack` / `cancelled`).
+    pub state: String,
+    pub app_name: String,
+    /// The overdue label's anchor: `overdue` ⇔ `now − fired_at >
+    /// expected_secs`, computed by the GUI at render time.
+    pub fired_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub acknowledged_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_detection: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heartbeat_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_at: Option<DateTime<Utc>>,
+    /// `reported` (the app said it) vs `timed_out` (the opt-in watchdog).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub no_ack_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_truncated: Option<bool>,
+}
+
+impl RunStateDto {
+    pub(crate) fn from_row(timer: &bellman_core::Timer, row: &bellman_core::RunStateRow) -> Self {
+        Self {
+            timer_id: timer.id.to_string(),
+            timer_name: timer.name.clone(),
+            run_id: row.run_id.to_string(),
+            state: row.state.clone(),
+            app_name: row.app_name.clone(),
+            fired_at: row.fired_at,
+            acknowledged_at: row.acknowledged_at,
+            expected_secs: row.expected_secs,
+            error_detection: row.error_detection,
+            heartbeat_at: row.heartbeat_at,
+            progress: row.progress.clone(),
+            completed_at: row.completed_at,
+            failed_at: row.failed_at,
+            failure_kind: row.failure_kind.map(|k| k.as_str().to_string()),
+            reason: row.reason.clone(),
+            no_ack_at: row.no_ack_at,
+            result: row.result_json.clone(),
+            result_truncated: row.result_truncated.then_some(true),
+        }
+    }
+}
+
+/// `list_run_states` — IK5: the CURRENT run of every integration-owned timer
+/// (or of one timer when `timer_id` is given — the `run-status-changed`
+/// invalidation refetches only the affected row). Reads the database, never
+/// the event log. Unowned action-only timers have no lifecycle row and never
+/// appear here: their `status.json: fired` is a firing snapshot, not an app
+/// claiming to work.
+#[tauri::command]
+pub fn list_run_states(
+    state: State<'_, AppState>,
+    timer_id: Option<String>,
+) -> Result<Vec<RunStateDto>, String> {
+    let store = state.store.lock();
+    collect_run_states(&store, timer_id.as_deref())
+}
+
+fn collect_run_states(
+    store: &bellman_core::store::Store,
+    timer_id: Option<&str>,
+) -> Result<Vec<RunStateDto>, String> {
+    let timers: Vec<bellman_core::Timer> = match timer_id {
+        None | Some("") => store.list_timers().map_err(|e| e.to_string())?,
+        Some(s) => {
+            let id = Uuid::from_str(s).map_err(|e| format!("invalid timer_id: {e}"))?;
+            store
+                .get_timer(id)
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .collect()
+        }
+    };
+    let mut out = Vec::new();
+    for timer in &timers {
+        if let Some(row) = store.current_run_state(timer.id).map_err(|e| e.to_string())? {
+            out.push(RunStateDto::from_row(timer, &row));
+        }
+    }
+    Ok(out)
+}
+
 /// `set_enabled` — toggle a timer's per-timer enabled flag (NOT the global
 /// pause-all). Optimistic revision check; the caller passes the current
 /// revision (webview already received it via list_timers).
@@ -121,6 +229,9 @@ pub fn run_now(
     // Fire-and-forget UI hint: the webview re-polls list_timers after this
     // returns, so we don't need a separate event.
     let _ = app.emit("timer-fired", &outcome.timer.id.to_string());
+    // IK5: run_now builds its own engine without the status listener (it is
+    // also the CLI path) — emit the live-run invalidation directly.
+    let _ = app.emit("run-status-changed", &outcome.timer.id.to_string());
     Ok(outcome.into())
 }
 
@@ -1164,5 +1275,122 @@ mod tests {
         assert!(recorded
             .iter()
             .all(|e| e.outcome != OutcomeLabel::Delivered));
+    }
+}
+
+#[cfg(test)]
+mod run_states_tests {
+    use super::*;
+    use bellman_core::occurrence::{Occurrence, OccurrenceKind};
+    use bellman_core::store::NewTimer;
+    use bellman_core::NotifySink;
+    use chrono::NaiveTime;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+
+    use crate::config::Config;
+
+    struct DummySink;
+    impl NotifySink for DummySink {
+        fn show(&self, _title: &str, _body: &str) -> bellman_core::NotifyOutcome {
+            bellman_core::NotifyOutcome {
+                title: _title.into(),
+                body: _body.into(),
+                stubbed: true,
+            }
+        }
+    }
+
+    fn make_state(data_dir: std::path::PathBuf) -> AppState {
+        let store = bellman_core::open_store(&data_dir.join("timers.db")).unwrap();
+        AppState::new(store, data_dir, Config::default(), false, Arc::new(DummySink))
+    }
+
+    fn add_timer(state: &AppState, name: &str, owner: Option<&str>) -> bellman_core::Timer {
+        let occ = Occurrence::new(
+            OccurrenceKind::Daily {
+                at: NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            },
+            "UTC",
+        )
+        .unwrap();
+        let mut store = state.store.lock();
+        let timer = store.create_timer(NewTimer::new(name, occ)).unwrap();
+        if let Some(app) = owner {
+            store.set_timer_owner(timer.id, app).unwrap();
+        }
+        timer
+    }
+
+    fn fire_run(state: &AppState, timer: &bellman_core::Timer, app: &str) -> bellman_core::RunStateRow {
+        let mut store = state.store.lock();
+        let claim = store.claim_run(timer.id, Utc::now()).unwrap();
+        let row = bellman_core::RunStateRow::fired(
+            claim.run_id,
+            timer.id,
+            app,
+            "fired",
+            claim.claimed_at,
+            claim.claimed_at + chrono::Duration::seconds(60),
+        );
+        store.insert_run_state(&row).unwrap();
+        row
+    }
+
+    #[test]
+    fn list_run_states_returns_current_owned_runs_only() {
+        let dir = tempdir().unwrap();
+        let state = make_state(dir.path().to_path_buf());
+        let owned = add_timer(&state, "bulb-test", Some("lightbulb"));
+        let unowned = add_timer(&state, "plain-backup", None);
+        let idle = add_timer(&state, "idle-owned", Some("other-app"));
+
+        // No runs yet → nothing to show.
+        {
+            let store = state.store.lock();
+            assert!(collect_run_states(&store, None).unwrap().is_empty());
+        }
+
+        // Unowned timer fires: no lifecycle row is ever created for it.
+        {
+            let mut store = state.store.lock();
+            let claim = store.claim_run(unowned.id, Utc::now()).unwrap();
+            assert!(store.get_run_state(claim.run_id).unwrap().is_none());
+        }
+
+        let mut row = fire_run(&state, &owned, "lightbulb");
+        {
+            let store = state.store.lock();
+            let all = collect_run_states(&store, None).unwrap();
+            assert_eq!(all.len(), 1, "only the owned timer with a run appears");
+            assert_eq!(all[0].timer_id, owned.id.to_string());
+            assert_eq!(all[0].run_id, row.run_id.to_string());
+            assert_eq!(all[0].state, "fired");
+            assert_eq!(all[0].app_name, "lightbulb");
+            assert!(all[0].progress.is_none());
+            // The idle owned timer and the unowned timer are absent.
+            assert!(all.iter().all(|d| d.timer_id != unowned.id.to_string()));
+            assert!(all.iter().all(|d| d.timer_id != idle.id.to_string()));
+            // Single-timer refetch (the run-status-changed path).
+            let one = collect_run_states(&store, Some(&owned.id.to_string())).unwrap();
+            assert_eq!(one.len(), 1);
+            let none = collect_run_states(&store, Some(&unowned.id.to_string())).unwrap();
+            assert!(none.is_empty(), "unowned timer never has a run state");
+        }
+
+        // A second firing supersedes the first: only the LATEST run is current.
+        row.state = "superseded".into();
+        {
+            let mut store = state.store.lock();
+            store.update_run_state(&row).unwrap();
+        }
+        let row2 = fire_run(&state, &owned, "lightbulb");
+        {
+            let store = state.store.lock();
+            let all = collect_run_states(&store, None).unwrap();
+            assert_eq!(all.len(), 1);
+            assert_eq!(all[0].run_id, row2.run_id.to_string(), "latest run wins");
+            assert_eq!(all[0].state, "fired");
+        }
     }
 }

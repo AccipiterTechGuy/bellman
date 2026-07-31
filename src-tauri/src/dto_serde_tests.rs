@@ -1056,3 +1056,61 @@ fn preview_fire_dto_round_trip_keeps_fields() {
     assert!(s.contains("\"localTime\":\"12:00:00\""));
     assert!(s.contains("\"tzName\":\"UTC\""));
 }
+
+/// IK5: the live-run DTO is camelCase at the IPC boundary and omits every
+/// absent optional field — the GUI renders NOTHING for them, so a stray
+/// `null` key would be a wire-contract bug, not a style issue.
+#[test]
+fn run_state_dto_is_camel_case_and_omits_absent_fields() {
+    use crate::commands::RunStateDto;
+    let timer = sample_timer();
+    let fired = Utc.with_ymd_and_hms(2030, 1, 1, 8, 0, 0).unwrap();
+    let row = bellman_core::RunStateRow::fired(
+        uuid::Uuid::nil(),
+        timer.id,
+        "lightbulb",
+        "running",
+        fired,
+        fired + chrono::Duration::seconds(60),
+    );
+    let dto = RunStateDto::from_row(&timer, &row);
+    let s = serde_json::to_string(&dto).unwrap();
+    // camelCase identity fields.
+    assert!(s.contains("\"timerId\":"), "{s}");
+    assert!(s.contains("\"timerName\":\"tick\""), "{s}");
+    assert!(s.contains("\"runId\":"), "{s}");
+    assert!(s.contains("\"appName\":\"lightbulb\""), "{s}");
+    assert!(s.contains("\"firedAt\":"), "{s}");
+    assert!(s.contains("\"state\":\"running\""), "{s}");
+    // No snake_case leak.
+    assert!(!s.contains("timer_id"), "{s}");
+    assert!(!s.contains("app_name"), "{s}");
+    assert!(!s.contains("fired_at"), "{s}");
+    // Absent optional fields are NOT keys at all (no null placeholders).
+    for absent in [
+        "acknowledgedAt",
+        "expectedSecs",
+        "errorDetection",
+        "heartbeatAt",
+        "progress",
+        "completedAt",
+        "failedAt",
+        "failureKind",
+        "reason",
+        "noAckAt",
+        "result",
+        "resultTruncated",
+    ] {
+        assert!(!s.contains(absent), "absent field {absent} serialized: {s}");
+    }
+
+    // Present optional fields serialize camelCase.
+    let mut row2 = row.clone();
+    row2.expected_secs = Some(900);
+    row2.progress = Some("bulb on, 7s elapsed".into());
+    row2.failure_kind = Some(bellman_core::FailureKind::TimedOut);
+    let s2 = serde_json::to_string(&RunStateDto::from_row(&timer, &row2)).unwrap();
+    assert!(s2.contains("\"expectedSecs\":900"), "{s2}");
+    assert!(s2.contains("\"progress\":\"bulb on, 7s elapsed\""), "{s2}");
+    assert!(s2.contains("\"failureKind\":\"timed_out\""), "{s2}");
+}
