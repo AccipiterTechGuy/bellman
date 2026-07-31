@@ -1,8 +1,15 @@
 # WIZ1 — Offer the demo in the first-run wizard
 
-Repo: `~/bellman`. Depends on **DEMO1 shipped** — the wizard cannot point at
-an app that does not exist yet. Touches `ui/src/Wizard.svelte`,
-`src-tauri/src/first_run.rs` / `config.rs`, and the Linux packaging manifest.
+Repo: `~/bellman`. Depends on **DEMO1 shipped** (done) **and SCH2 shipped**
+(not yet). Touches `ui/src/Wizard.svelte`, `src-tauri/src/first_run.rs` /
+`config.rs`, and the Linux packaging manifest.
+
+**SCH2 is a hard blocker, not a nicety.** The demo creates its timer through
+the slot protocol, and until SCH2 lands a slot-created timer never enters a
+running Bellman's scheduler heap — so the bulb never lights. Shipping this
+card first would put a demo that cannot work in front of every new user
+during their first minute with the product, which is worse than offering no
+demo at all.
 
 Design: `docs/INTEGRATION.md` → *Connect your own application*;
 `cards/DEMO1_lightbulb_gui.md`.
@@ -88,8 +95,12 @@ from a dev checkout.
 
 - Two small Python files and two READMEs; a negligible package size cost.
 - The **Run the demo** button appears only when a demo directory was
-  actually resolved *and* `python3` is on `PATH`. Otherwise show the copyable
-  command and a plain note about the `python3` / `python3-tk` requirement.
+  actually resolved *and* the interpreter can actually run the demo. Probe
+  `python3 -c "import tkinter"`, **not** merely `python3` on `PATH` — on
+  Ubuntu 24.04, tkinter is a separate `python3-tk` package, and the machine
+  this card was written on has python3 without it. A `python3`-only check
+  would show a button that fails on a stock desktop. Otherwise show the
+  copyable command and a plain note about the `python3-tk` requirement.
   Never show a button that cannot work.
 - Launching spawns the demo as an ordinary detached child process with the
   correct `--slots` path for this install. Bellman does not supervise it,
@@ -112,8 +123,13 @@ from a dev checkout.
   slots root; the user sets a time in it, the bulb lights, and the run
   reaches `completed` — the full loop from a fresh install, with no terminal.
 - Closing Bellman leaves the demo running; the demo is unaffected.
-- With `python3` absent from `PATH`, the button is not shown and the copyable
-  command plus the requirement note are shown instead.
+- With `python3` present but **tkinter missing** — a stock Ubuntu 24.04
+  desktop without `python3-tk` — the button is not shown, and the copyable
+  command plus the `python3-tk` note appear instead. Asserted with that exact
+  case, since checking only for `python3` passes it wrongly.
+- Pressing **Run the demo** lights the bulb on a timer the demo created
+  itself through the slot protocol, with no `run-now` anywhere — this is the
+  end-to-end proof that SCH2 actually landed, seen from the user's side.
 - The installed `.deb` contains the demo files, and the path the wizard shows
   resolves to a file that exists on that machine — verified on a real deb
   install, not in the source tree.

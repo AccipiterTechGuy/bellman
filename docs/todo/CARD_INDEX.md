@@ -34,7 +34,7 @@ Design documents:
 | card | scope | depends on |
 |---|---|---|
 | **DEMO1** | `testing_apps/lightbulb_gui/` — the lightbulb with a window: set a time, watch the bulb light, watch the four-state handshake. stdlib **tkinter**, neon palette with a **golden** bulb, no Bellman imports. The terminal `lightbulb/` stays as-is | IK4 shipped |
-| **WIZ1** | First-run wizard offers the demo — one tick, an explanation, a **Run the demo** button. Bellman **never creates the demo's timer** (the app claims its own owner); ships the demo files with the package so the path exists on an installed machine | DEMO1 shipped |
+| **WIZ1** | First-run wizard offers the demo — one tick, an explanation, a **Run the demo** button. Bellman **never creates the demo's timer** (the app claims its own owner); ships the demo files with the package so the path exists on an installed machine | DEMO1 + **SCH2** shipped |
 
 Both demos live under `testing_apps/`. They share no code on purpose: the
 terminal one is what a developer copies, the GUI one is what everyone else
