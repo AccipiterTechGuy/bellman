@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-31 — shipped; card ik6-dual-transport-local-ipc-files-chosen-per-firing, run 2026-07-31_0004, merge a1c91cc.
+
 # IK6 — Dual transport: local IPC + JSON files, chosen per firing
 
 Repo: `~/bellman`. Depends on **IK3** and **SCH1** shipped and **IK4** proven — the file
