@@ -2,7 +2,8 @@
 # Fresh-install smoke for the Linux .deb produced by `cargo tauri build`.
 #
 # Modes:
-#   host   (default) — install the deb on this machine with sudo, verify
+#   host   (default) — install the deb on this machine (sudo when not root,
+#                      directly when already root), verify
 #                      launcher entry + CLI on PATH, exercise autostart
 #                      write/remove, then optionally leave installed.
 #   docker           — install inside an ephemeral Ubuntu container (no
@@ -18,6 +19,19 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 MODE="${SMOKE_MODE:-host}"
+
+# Host mode installs with elevated privileges. When already root -- a clean
+# container, a CI image, a root shell -- `sudo` is often not installed at all,
+# so calling it unconditionally fails with "sudo: command not found" rather
+# than doing the obvious thing. Resolve it once: empty when root.
+if [[ "$(id -u)" -eq 0 ]]; then
+  SUDO=""
+elif command -v sudo >/dev/null 2>&1; then
+  SUDO="sudo"
+else
+  echo "smoke_install_deb: not root and sudo is unavailable — cannot install" >&2
+  exit 1
+fi
 KEEP="${SMOKE_KEEP:-0}"
 
 pick_deb() {
@@ -55,7 +69,7 @@ smoke_host() {
   assert_deb_layout "$DEB_ABS"
 
   echo "== install =="
-  sudo dpkg -i "$DEB_ABS" || sudo apt-get install -f -y
+  $SUDO dpkg -i "$DEB_ABS" || $SUDO apt-get install -f -y
 
   echo "== PATH + launcher =="
   command -v bellman
@@ -68,7 +82,7 @@ smoke_host() {
     || ls /usr/share/applications/*[Bb]ellman*.desktop
   # Desktop database refresh (best-effort)
   if command -v update-desktop-database >/dev/null; then
-    sudo update-desktop-database /usr/share/applications || true
+    $SUDO update-desktop-database /usr/share/applications || true
   fi
   echo "launcher entry present"
 
@@ -94,7 +108,7 @@ EOF
   if [[ "$KEEP" != "1" ]]; then
     echo "== cleanup =="
     rm -f "$auto_file"
-    sudo dpkg -r bellman || sudo apt-get remove -y bellman || true
+    $SUDO dpkg -r bellman || $SUDO apt-get remove -y bellman || true
   else
     echo "SMOKE_KEEP=1 — leaving package + autostart entry installed"
   fi

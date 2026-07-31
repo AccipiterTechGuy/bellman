@@ -32,7 +32,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
 # Tauri v2 system dependencies
-sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+sudo apt install -y git libwebkit2gtk-4.1-dev build-essential curl wget file \
   libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
 # Node 24, for the UI build. Any Node 24 works — a distro package or fnm is
@@ -46,8 +46,16 @@ nvm install 24
 cargo install tauri-cli --locked
 ```
 
-Verified against rustc 1.97.1, node v24.13.0 and tauri-cli 2.11.4 on Ubuntu
-24.04.
+Any Node **24.x** works — `nvm install 24` resolves to the newest 24 release,
+so your version will not match anyone else's exactly. Verified on Ubuntu 24.04
+with rustc 1.97.1, tauri-cli 2.11.4, and Node 24.13.0 and 24.18.1.
+
+**This list is sufficient on its own.** It was checked by building both
+bundles from scratch in a clean `ubuntu:24.04` container with nothing else
+installed — no `patchelf`, `fakeroot`, `appstream` or `libfuse2`. Tauri's
+AppImage bundler fetches its own tooling, and `libgtk-3-dev` arrives with
+`libwebkit2gtk-4.1-dev`. (Running an `.AppImage` afterwards is a different
+matter and needs FUSE on the machine that runs it.)
 
 **2. Build the packages:**
 
