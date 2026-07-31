@@ -1,10 +1,8 @@
-//! Action acceptance: launch timeout kill, retry/FAILED path, write-slot, notify.
+//! Action acceptance: launch timeout kill, cancellation, retry outcomes, notify.
 
 use super::*;
-use crate::events::{read_events, EventLogConfig, EventPublisher, EventRecord, RunState};
 use crate::occurrence::{Occurrence, OccurrenceKind};
-use crate::scheduler::{FireAction, FireContext, FireKind};
-use crate::store::{Action, OpenOptions, OverlapPolicy, RetryPolicy, Store, Timer};
+use crate::store::{Action, OverlapPolicy, RetryPolicy, Timer};
 use chrono::Utc;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -48,32 +46,15 @@ fn sample_timer(action: Action, retry: RetryPolicy) -> Timer {
     }
 }
 
-fn ctx<'a>(timer: &'a Timer, run_id: Uuid) -> FireContext<'a> {
-    FireContext {
-        timer,
-        scheduled_for: Utc::now(),
-        run_id,
-        kind: FireKind::OnTime,
-        claimed_at: Utc::now(),
-    }
-}
-
-/// Open the outbox store the runner enqueues into (tempdir db).
-fn open_sink(dir: &std::path::Path) -> Store {
-    Store::open_with(dir.join("timers.db"), OpenOptions {
-        refuse_network_fs: false,
-        ..OpenOptions::default()
-    })
-    .unwrap()
-}
-
-/// Drain the runner's outbox through the elected publisher, then read the log.
-fn read_emitted(dir: &std::path::Path) -> (Vec<EventRecord>, crate::events::ReadStats) {
-    let store = open_sink(dir);
-    let mut publisher =
-        EventPublisher::with_config(EventLogConfig::new(dir.join("logs"))).unwrap();
-    publisher.publish_cycle(&store);
-    read_events(publisher.current_path()).unwrap()
+fn executor(skip_retry_sleep: bool) -> ActionExecutor {
+    ActionExecutor::with_defaults(
+        ExecutorConfig {
+            skip_retry_sleep,
+            launch_timeout: Duration::from_secs(5),
+            ..ExecutorConfig::default()
+        },
+        std::sync::Arc::new(ActionLimiter::new(4)),
+    )
 }
 
 #[test]
@@ -87,6 +68,7 @@ fn launch_timeout_kills_child() {
         timeout: Duration::from_millis(200),
         output_cap: 1024,
         run_id: Uuid::new_v4(),
+        cancel: None,
     };
     let start = std::time::Instant::now();
     let out = run_launch(&cfg).expect("spawn sleep");
@@ -96,6 +78,39 @@ fn launch_timeout_kills_child() {
     assert!(
         elapsed < Duration::from_secs(5),
         "kill must be prompt, took {elapsed:?}"
+    );
+}
+
+#[test]
+fn launch_cancel_token_kills_child() {
+    let _g = test_lock();
+    // SCH1 `Replace`: the token interrupts the 20 ms try_wait loop; the
+    // child is killed and reaped, and the outcome is `cancelled` — distinct
+    // from a timeout kill.
+    let token = CancellationToken::new();
+    let cfg = LaunchConfig {
+        command: "sleep".into(),
+        args: vec!["30".into()],
+        workdir: None,
+        timeout: Duration::from_secs(60),
+        output_cap: 1024,
+        run_id: Uuid::new_v4(),
+        cancel: Some(token.clone()),
+    };
+    let start = std::time::Instant::now();
+    let t2 = token.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(150));
+        t2.cancel();
+    });
+    let out = run_launch(&cfg).expect("spawn sleep");
+    let elapsed = start.elapsed();
+    assert!(out.cancelled, "expected cancelled outcome: {out:?}");
+    assert!(out.killed, "cancelled child must be killed+reaped");
+    assert!(!out.timed_out, "a cancel is not a timeout");
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "cancel must be prompt, took {elapsed:?}"
     );
 }
 
@@ -113,6 +128,7 @@ fn launch_sets_bellman_run_id_env() {
         timeout: Duration::from_secs(5),
         output_cap: 1024,
         run_id,
+        cancel: None,
     };
     let out = run_launch(&cfg).expect("spawn");
     assert!(!out.timed_out);
@@ -134,21 +150,15 @@ fn launch_no_shell_metacharacters() {
         timeout: Duration::from_secs(5),
         output_cap: 1024,
         run_id: Uuid::new_v4(),
+        cancel: None,
     };
     let out = run_launch(&cfg).expect("spawn true");
     assert_eq!(out.exit_code, Some(0));
 }
 
 #[test]
-fn retry_then_failed_event() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut runner = ActionRunner::new(ActionRunnerConfig {
-        skip_retry_sleep: true,
-        launch_timeout: Duration::from_secs(5),
-        ..Default::default()
-    })
-    .with_event_sink(open_sink(dir.path()));
-
+fn retry_then_failed_outcome() {
+    let exec = executor(true);
     // Command that always fails.
     let timer = sample_timer(
         Action::Launch {
@@ -161,38 +171,20 @@ fn retry_then_failed_event() {
             delay_secs: 30, // skipped via skip_retry_sleep
         },
     );
-    let run_id = Uuid::new_v4();
-    let c = ctx(&timer, run_id);
-    let err = runner.on_fire(&c).expect_err("must fail after retry");
-    assert!(err.contains("FAILED"), "err={err}");
-
-    let (recs, stats) = read_emitted(dir.path());
-    assert_eq!(stats.skipped, 0);
-    let kinds: Vec<_> = recs.iter().map(|r| r.kind).collect();
-    // `fired` commits with the R10 fire transaction — the runner never emits it.
-    assert!(
-        !kinds.contains(&RunState::Fired),
-        "runner must not emit fired, got {kinds:?}"
-    );
-    assert!(
-        kinds.contains(&RunState::WakeFailed),
-        "expected wake_failed, got {kinds:?}"
-    );
-    let failed = recs
-        .iter()
-        .find(|r| r.kind == RunState::WakeFailed)
-        .unwrap();
-    assert_eq!(failed.message.as_deref(), Some("FAILED"));
-    assert_eq!(failed.run_id, Some(run_id));
-    // 1 initial + 1 retry ⇒ count records the final attempt index (1).
-    assert_eq!(failed.count, Some(1));
+    let token = CancellationToken::new();
+    match exec.execute(&timer, Uuid::new_v4(), &token) {
+        ExecOutcome::Failed { error, attempts } => {
+            assert!(error.contains("launch exit=1"), "error={error}");
+            // 1 initial + 1 retry ⇒ the final attempt index is 1.
+            assert_eq!(attempts, 1);
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
 }
 
 #[test]
-fn launch_success_emits_wake_delivered() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut runner =
-        ActionRunner::new(ActionRunnerConfig::default()).with_event_sink(open_sink(dir.path()));
+fn launch_success_delivers() {
+    let exec = executor(true);
     let timer = sample_timer(
         Action::Launch {
             command: "true".into(),
@@ -201,15 +193,19 @@ fn launch_success_emits_wake_delivered() {
         },
         RetryPolicy::default(),
     );
-    let c = ctx(&timer, Uuid::new_v4());
-    runner.on_fire(&c).expect("true must succeed");
-    let (recs, _) = read_emitted(dir.path());
-    assert!(recs.iter().any(|r| r.kind == RunState::WakeDelivered));
+    let token = CancellationToken::new();
+    match exec.execute(&timer, Uuid::new_v4(), &token) {
+        ExecOutcome::Delivered { message, attempts } => {
+            assert!(message.contains("launch ok exit=0"), "message={message}");
+            assert_eq!(attempts, 0);
+        }
+        other => panic!("expected Delivered, got {other:?}"),
+    }
 }
 
 #[test]
 fn notify_stub_succeeds() {
-    let mut runner = ActionRunner::new(ActionRunnerConfig::default());
+    let exec = executor(true);
     let timer = sample_timer(
         Action::Notify {
             title: "hello".into(),
@@ -217,84 +213,55 @@ fn notify_stub_succeeds() {
         },
         RetryPolicy::default(),
     );
-    let c = ctx(&timer, Uuid::new_v4());
-    runner.on_fire(&c).expect("notify stub");
-    assert!(
-        runner
-            .last_message
-            .as_deref()
-            .is_some_and(|m| m.contains("notify stub")),
-        "{:?}",
-        runner.last_message
-    );
+    let token = CancellationToken::new();
+    match exec.execute(&timer, Uuid::new_v4(), &token) {
+        ExecOutcome::Delivered { message, .. } => {
+            assert!(message.contains("notify stub"), "message={message}");
+        }
+        other => panic!("expected Delivered, got {other:?}"),
+    }
 }
 
 #[test]
-fn write_output_slot_atomic_json() {
-    let dir = tempfile::tempdir().unwrap();
-    let slot_dir = dir.path().join("out");
-    let mut runner = ActionRunner::new(ActionRunnerConfig {
-        write_slot_dir: Some(slot_dir.clone()),
-        ..Default::default()
-    });
-    let timer = sample_timer(Action::None, RetryPolicy::default());
-    let run_id = Uuid::new_v4();
-    let c = ctx(&timer, run_id);
-    runner.on_fire(&c).expect("write slot");
-    let path = slot_dir.join(format!("run-{run_id}.json"));
-    assert!(path.exists(), "missing {}", path.display());
-    let body: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(body["run_id"], run_id.to_string());
-    assert_eq!(body["timer_name"], "t-action");
-}
-
-#[test]
-fn launch_also_writes_output_slot_when_configured() {
-    let dir = tempfile::tempdir().unwrap();
-    let slot_dir = dir.path().join("done");
-    let mut runner = ActionRunner::new(ActionRunnerConfig {
-        write_slot_dir: Some(slot_dir.clone()),
-        write_slot_file: Some("slot-0001.json".into()),
-        ..Default::default()
-    });
+fn cancel_during_retry_backoff_stops_execution() {
+    let _g = test_lock();
+    // skip_retry_sleep = false so the backoff really runs; the token must
+    // interrupt it before the second attempt.
+    let exec = executor(false);
     let timer = sample_timer(
         Action::Launch {
-            command: "true".into(),
+            command: "false".into(),
             args: vec![],
             workdir: None,
         },
-        RetryPolicy::default(),
+        RetryPolicy {
+            max_retries: 3,
+            delay_secs: 60,
+        },
     );
-    let run_id = Uuid::new_v4();
-    let c = ctx(&timer, run_id);
-    runner.on_fire(&c).expect("launch+write");
-    let path = slot_dir.join("slot-0001.json");
-    assert!(path.exists(), "launch must write output slot");
-    let body: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(body["schema"], "bellman-fire/1");
-    assert_eq!(body["run_id"], run_id.to_string());
+    let token = CancellationToken::new();
+    let t2 = token.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        t2.cancel();
+    });
+    let start = std::time::Instant::now();
+    let outcome = exec.execute(&timer, Uuid::new_v4(), &token);
     assert!(
-        runner
-            .last_message
-            .as_deref()
-            .is_some_and(|m| m.contains("write-output-slot")),
-        "{:?}",
-        runner.last_message
+        matches!(outcome, ExecOutcome::Cancelled),
+        "expected Cancelled, got {outcome:?}"
+    );
+    assert!(
+        start.elapsed() < Duration::from_secs(10),
+        "backoff must be interrupted, took {:?}",
+        start.elapsed()
     );
 }
 
 #[test]
 fn failed_launch_with_multibyte_output_returns_failed_not_panic() {
     let _g = test_lock();
-    let dir = tempfile::tempdir().unwrap();
-    let mut runner = ActionRunner::new(ActionRunnerConfig {
-        skip_retry_sleep: true,
-        launch_timeout: Duration::from_secs(5),
-        ..Default::default()
-    })
-    .with_event_sink(open_sink(dir.path()));
+    let exec = executor(true);
     // Print 100 euro signs then exit 1 — captured output crosses a multi-byte
     // boundary at byte 200; truncate must not panic.
     let timer = sample_timer(
@@ -311,30 +278,11 @@ fn failed_launch_with_multibyte_output_returns_failed_not_panic() {
             delay_secs: 0,
         },
     );
-    let c = ctx(&timer, Uuid::new_v4());
-    let err = runner.on_fire(&c).expect_err("must fail after retry");
-    assert!(err.contains("FAILED"), "err={err}");
-    let (recs, _) = read_emitted(dir.path());
-    assert!(recs.iter().any(|r| r.kind == RunState::WakeFailed));
-}
-
-#[test]
-fn overlap_skip_does_not_double_launch() {
-    let mut runner = ActionRunner::new(ActionRunnerConfig::default());
-    // Manually mark in-flight, then fire with Skip.
-    let timer = sample_timer(
-        Action::Launch {
-            command: "true".into(),
-            args: vec![],
-            workdir: None,
-        },
-        RetryPolicy::default(),
-    );
-    runner.in_flight.insert(timer.id);
-    let c = ctx(&timer, Uuid::new_v4());
-    runner.on_fire(&c).expect("overlap soft-ok");
-    assert_eq!(
-        runner.last_message.as_deref(),
-        Some("overlap policy skip")
-    );
+    let token = CancellationToken::new();
+    match exec.execute(&timer, Uuid::new_v4(), &token) {
+        ExecOutcome::Failed { error, .. } => {
+            assert!(error.contains("launch exit=1"), "error={error}");
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
 }

@@ -47,6 +47,7 @@ impl Harness {
             watchdog_factor,
             anchors: new_anchors(),
             deadlines: new_deadlines(),
+            fire_slot_file: None,
         };
         Self {
             dir,
@@ -394,7 +395,10 @@ fn direct_terminal_without_acknowledged_at_logs_no_invented_acknowledged() {
             .into_iter()
             .filter(|k| *k != RunState::Fired)
             .collect::<Vec<_>>(),
-        vec![RunState::Running]
+        // SCH1: the first claim is still unfinished, so this firing's ACTION
+        // is an overlap skip (Skip is the product default) — the firing's
+        // record and reply lifecycle are unaffected.
+        vec![RunState::SkippedMisfire, RunState::Running]
     );
 
     // But a direct failed — also terminal — logs failed only.
@@ -408,7 +412,8 @@ fn direct_terminal_without_acknowledged_at_logs_no_invented_acknowledged() {
             .into_iter()
             .filter(|k| *k != RunState::Fired)
             .collect::<Vec<_>>(),
-        vec![RunState::Failed]
+        // Leading SCH1 overlap skip (previous claim unfinished at commit).
+        vec![RunState::SkippedMisfire, RunState::Failed]
     );
 }
 
@@ -627,7 +632,9 @@ fn ack_through_counts_as_pickup_and_revises_no_ack_symmetrically() {
             .into_iter()
             .filter(|k| *k != RunState::Fired)
             .collect::<Vec<_>>(),
-        vec![RunState::NoAck, RunState::Acknowledged],
+        // Leading SCH1 overlap skip (the previous claim was unfinished at
+        // this fire's commit) — the lifecycle transitions are unaffected.
+        vec![RunState::SkippedMisfire, RunState::NoAck, RunState::Acknowledged],
         "late cursor revises no_ack to acknowledged — never running/completed"
     );
 }
@@ -1136,6 +1143,7 @@ fn a_restart_reconstructs_the_pickup_deadline_from_the_persisted_value() {
         watchdog_factor: 2.0,
         anchors: new_anchors(),
         deadlines: new_deadlines(),
+        fire_slot_file: None,
     };
 
     // The persisted wall-clock deadline (t0+60) rebuilds the countdown —

@@ -420,7 +420,7 @@ pub fn is_terminal_oneshot(
 
     // In-flight claim → not terminal.
     let runs = store.runs_for_timer(timer.id)?;
-    if runs.iter().any(|r| r.status == crate::store::ClaimStatus::Claimed) {
+    if runs.iter().any(|r| r.is_unfinished()) {
         return Ok(false);
     }
 

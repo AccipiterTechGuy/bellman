@@ -1,33 +1,39 @@
-//! `run_now` service: claim → act → complete → advance.
+//! `run_now` service: pre-fire barrier → claim/commit → publish → dispatch.
 //!
-//! Extracted from `bellman-cli` (C6) so the C7 Tauri shell can call the exact
-//! same path. The optional `write_slot_dir` lets the production GUI mirror
-//! `bellman-cli run-now` semantics (launch + write JSON into `slots/done/`).
+//! A manual fire is a different PRODUCER of the same claim, not a second
+//! executor (SCH1): it keeps today's `FireKind::OnTime`, enters the R10 fire
+//! transaction exactly like a scheduled fire, publishes immediately, and its
+//! action obeys the configured overlap lane — executed by a dispatcher
+//! worker, never inline here.
 //!
-//! The optional [`NotifySink`] injects the real desktop-notification backend
-//! in the Tauri shell; the CLI uses the stub.
+//! - Inside the scheduler process, the caller passes the live [`Dispatcher`]
+//!   and this waits for that claim's durable result while the dispatcher
+//!   keeps serving other timers.
+//! - A standalone CLI never executes the action beside a live GUI
+//!   dispatcher. When no dispatcher owns the OS lock it may acquire it, run
+//!   the same bounded dispatcher until its claim finishes, then release it;
+//!   otherwise it relies on the owner's periodic DB pump and polls for the
+//!   claim result.
 
-use crate::actions::{ActionRunner, ActionRunnerConfig, NotifySink};
-use crate::scheduler::{FireAction, FireContext, FireKind};
+use crate::actions::{Dispatcher, DispatcherConfig, ExecutorConfig, NotifySink};
+use crate::scheduler::FireKind;
 use crate::store::{
-    OpenOptions, SlotRequestRecord, Store, StoreError, Timer, TimerPatch, TimerUpdate,
+    ClaimStatus, OpenOptions, RunOutcome, SlotRequestRecord, Store, StoreError, Timer, TimerPatch,
+    TimerUpdate,
 };
-use crate::slots::SlotResponse;
 use chrono::{DateTime, Utc};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Caller-controlled knobs for [`run_now`].
 #[derive(Default)]
 pub struct RunNowOptions {
-    /// When set, a successful fire also writes a fire-trigger JSON here
-    /// (under the chosen filename). Mirrors `bellman-cli run-now` semantics.
-    pub write_slot_dir: Option<PathBuf>,
-    pub write_slot_file: Option<String>,
     /// When `Some(true)`, skip the retry sleep (test path).
     pub skip_retry_sleep: bool,
-    /// Notification sink to install on the runner. `None` keeps the stub.
+    /// Notification sink for the executor that may run in this process.
+    /// `None` keeps the stub.
     pub notify_sink: Option<Arc<dyn NotifySink>>,
     /// IK3 duration anchors shared with the reply watcher. `None` starts a
     /// fresh registry (CLI one-shots): the terminal event then falls back to
@@ -37,15 +43,17 @@ pub struct RunNowOptions {
     /// starts a fresh book (CLI one-shots; the GUI watcher lazily
     /// reconstructs from the persisted wall deadlines).
     pub deadlines: Option<crate::reply::SharedDeadlines>,
+    /// The live in-process dispatcher (GUI / scheduler process). The claim
+    /// is submitted to it and the wait rides its lanes. Standalone callers
+    /// leave `None`: a bounded dispatcher is spun up if the OS lock is free,
+    /// otherwise the owning process's pump picks the claim up (≤ 1 s).
+    pub dispatcher: Option<Dispatcher>,
 }
 
 impl std::fmt::Debug for RunNowOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RunNowOptions")
-            .field("write_slot_dir", &self.write_slot_dir)
-            .field("write_slot_file", &self.write_slot_file)
             .field("skip_retry_sleep", &self.skip_retry_sleep)
-            // NotifySink is dyn; report its type name only.
             .field(
                 "notify_sink",
                 &self
@@ -53,6 +61,7 @@ impl std::fmt::Debug for RunNowOptions {
                     .as_ref()
                     .map(|s| std::any::type_name_of_val(s.as_ref())),
             )
+            .field("dispatcher", &self.dispatcher.as_ref().map(|d| d.owns_lock()))
             .finish()
     }
 }
@@ -60,12 +69,11 @@ impl std::fmt::Debug for RunNowOptions {
 impl Clone for RunNowOptions {
     fn clone(&self) -> Self {
         Self {
-            write_slot_dir: self.write_slot_dir.clone(),
-            write_slot_file: self.write_slot_file.clone(),
             skip_retry_sleep: self.skip_retry_sleep,
             notify_sink: self.notify_sink.clone(),
             anchors: self.anchors.clone(),
             deadlines: self.deadlines.clone(),
+            dispatcher: self.dispatcher.clone(),
         }
     }
 }
@@ -87,13 +95,17 @@ pub fn slot_record_for_timer(store: &Store, timer_id: Uuid) -> Result<Option<Slo
 
 /// Run the timer action immediately through the real fire path.
 ///
-/// Steps (mirrored from the scheduler's `deliver_one`):
+/// Steps (the one `pre-fire barrier → claim/commit → publish → dispatch`
+/// service, shared with scheduled delivery):
 /// 1. the R10 fire transaction (`project_fire`): gate → barrier → one commit
-///    (supersede + claim + lifecycle row + `fired` event) → projections
-/// 2. `ActionRunner::on_fire` (launch / notify / write-slot)
-/// 3. `complete_run` / `fail_run` (honest wake outcome)
-/// 4. advance `last_fired` + `record_run` so `next_fire` moves past this slot
-/// 5. best-effort outbox drain (a CLI-only run must not wait for a GUI tick)
+///    (supersede + claim + SCH1 overlap disposition + lifecycle row + `fired`
+///    event + transport projection) → `status.json` / reply-stub projections
+///    → immediate fire-notification attempt
+/// 2. advance `last_fired` + `record_run` so `next_fire` moves past this slot
+///    — at fire time, never behind the action
+/// 3. submit the claim to the dispatcher and wait for its durable result
+///    (assembled into `message` — not shared scheduler state)
+/// 4. best-effort outbox drain (a CLI-only run must not wait for a GUI tick)
 pub fn run_now(
     store: &mut Store,
     db_path: &Path,
@@ -114,8 +126,8 @@ pub fn run_now(
         .unwrap_or_default();
 
     // 1. The R10 fire transaction: required gate, pre-fire barrier, one
-    //    atomic commit, then projections. The gate releases before the
-    //    action runs (a long action never blocks the reply watcher).
+    //    atomic commit, then projections. The gate releases before any wait
+    //    (a long action never blocks the reply watcher).
     let engine = crate::reply::ReplyEngine {
         tree: crate::tree::TimersTree::new(db_path.parent().unwrap_or(Path::new("."))),
         data_dir: db_path
@@ -132,6 +144,7 @@ pub fn run_now(
             .deadlines
             .clone()
             .unwrap_or_else(crate::reply::new_deadlines),
+        fire_slot_file: None,
     };
     let claim = crate::tree::project_fire(
         &engine.tree.clone(),
@@ -144,61 +157,8 @@ pub fn run_now(
     )
     .map_err(|e| RunNowError::Other(format!("fire transaction: {e}")))?;
 
-    let mut runner = ActionRunner::new(ActionRunnerConfig {
-        write_slot_dir: opts.write_slot_dir.clone(),
-        write_slot_file: opts.write_slot_file.clone(),
-        skip_retry_sleep: opts.skip_retry_sleep,
-        ..ActionRunnerConfig::default()
-    });
-    if let Ok(sink_store) = crate::store::Store::open_with(db_path, Default::default()) {
-        runner = runner.with_event_sink(sink_store);
-    }
-    if let Some(sink) = opts.notify_sink.as_ref() {
-        runner = runner.with_notify_sink(sink.clone());
-    }
-
-    let ctx = FireContext {
-        timer: &timer,
-        scheduled_for: claim.scheduled_for,
-        run_id: claim.run_id,
-        kind: FireKind::OnTime,
-        claimed_at: claim.claimed_at,
-    };
-
-    let action_res = runner.on_fire(&ctx);
-    let message = runner
-        .last_message
-        .clone()
-        .unwrap_or_else(|| "action completed".into());
-
-    // Close the claim even when the action fails so recovery does not loop
-    // (mirrors scheduler) — recording delivered vs wake-failed honestly.
-    if action_res.is_ok() {
-        store
-            .complete_run(claim.run_id)
-            .map_err(RunNowError::Store)?;
-    } else {
-        store
-            .fail_run(claim.run_id)
-            .map_err(RunNowError::Store)?;
-    }
-
-    // Best-effort outbox drain: a one-shot CLI run cannot rely on a GUI
-    // publisher tick — if this process can take the lease, it publishes its
-    // own rows (fdatasync + mark) before exiting.
-    if let Some(data_dir) = db_path.parent() {
-        crate::events::EventPublisher::drain_best_effort(data_dir, store);
-    }
-
-    if let Err(e) = action_res {
-        // IK2: status.json stays the firing snapshot — the delivery failure is
-        // honest in the claim ledger and the wake_failed event; R5 `failed`
-        // is reserved for app reports (IK3).
-        return Err(RunNowError::Action(e));
-    }
-
-    // Advance last_fired + record_run so next_fire moves past this slot —
-    // same bookkeeping as the scheduler's `mark_fired` path.
+    // 2. Advance last_fired + record_run so next_fire moves past this slot —
+    //    same bookkeeping as the scheduler's `mark_fired` path, at fire time.
     let mut occ = timer.occurrence.clone();
     occ.record_run();
     let timer = store
@@ -215,7 +175,7 @@ pub fn run_now(
 
     // IK2: refresh timer.json with the advanced next_fire. status.json stays
     // the firing snapshot: the R5 `completed` state is an app report (IK3),
-    // and the claim ledger's `Completed` only means wake_delivered.
+    // and the claim ledger's outcome is delivery bookkeeping.
     if let Some(data_dir) = db_path.parent() {
         let tree = crate::tree::TimersTree::new(data_dir);
         let owner = store.get_timer_owner(timer.id).ok().flatten();
@@ -224,11 +184,143 @@ pub fn run_now(
         }
     }
 
+    // 3. Dispatch + wait for the durable result. A claim already `finished`
+    //    was skipped by the overlap policy at fire commit — nothing to run.
+    let message = if claim.status == ClaimStatus::Finished {
+        claim
+            .outcome_reason
+            .clone()
+            .unwrap_or_else(|| "overlap policy skip".into())
+    } else {
+        dispatch_and_wait(store, db_path, &timer, &claim, opts)?
+    };
+
+    // 4. Best-effort outbox drain: a one-shot CLI run cannot rely on a GUI
+    //    publisher tick — if this process can take the lease, it publishes
+    //    its own rows (fdatasync + mark) before exiting.
+    if let Some(data_dir) = db_path.parent() {
+        crate::events::EventPublisher::drain_best_effort(data_dir, store);
+    }
+
+    // A wake-failed action surfaces as an error, as before (the failure is
+    // honest in the claim ledger and the wake_failed event).
+    let final_claim = store.get_run(claim.run_id).map_err(RunNowError::Store)?;
+    if let Some(c) = &final_claim {
+        if c.outcome == Some(RunOutcome::WakeFailed) {
+            return Err(RunNowError::Action(
+                c.outcome_reason.clone().unwrap_or_else(|| "FAILED".into()),
+            ));
+        }
+    }
+
     Ok(RunNowOutcome {
         timer,
         run_id: claim.run_id,
         scheduled_for,
         message,
+    })
+}
+
+/// Submit the claim to a dispatcher and wait for its durable result,
+/// assembling the human message from the outcome (a `run_now` response
+/// concern, not shared scheduler state).
+fn dispatch_and_wait(
+    store: &mut Store,
+    db_path: &Path,
+    timer: &Timer,
+    claim: &crate::store::RunClaim,
+    opts: &RunNowOptions,
+) -> Result<String, RunNowError> {
+    // Generous wait bound: worst-case action time plus margin for lane
+    // queueing and a foreign owner's pump tick.
+    let exec_cfg = ExecutorConfig {
+        skip_retry_sleep: opts.skip_retry_sleep,
+        ..ExecutorConfig::default()
+    };
+    let wait = exec_cfg.launch_timeout.mul_f64((timer.retry.max_retries + 1) as f64)
+        + Duration::from_secs(timer.retry.delay_secs.saturating_mul(u64::from(timer.retry.max_retries)))
+        + Duration::from_secs(60);
+
+    // Standalone CLI: spin up the bounded dispatcher when no process owns
+    // the OS lock. The lock holder must run R10 first (reply scan) before
+    // any pump — same ordering as the scheduler boot.
+    let mut local: Option<Dispatcher> = None;
+    let dispatcher = match &opts.dispatcher {
+        Some(d) => d.clone(),
+        None => {
+            let d = Dispatcher::spawn(DispatcherConfig {
+                db_path: db_path.to_path_buf(),
+                data_dir: db_path.parent().map(Path::to_path_buf),
+                max_concurrent_actions: crate::app_config::AppConfig::load(
+                    db_path.parent().unwrap_or(Path::new(".")),
+                )
+                .unwrap_or_default()
+                .max_concurrent_actions,
+                notify_sink: opts
+                    .notify_sink
+                    .clone()
+                    .unwrap_or_else(|| Arc::new(crate::actions::StubNotifySink)),
+                executor: exec_cfg.clone(),
+                tick: Duration::from_millis(100),
+            })
+            .map_err(|e| RunNowError::Other(format!("dispatcher spawn: {e}")))?;
+            if d.owns_lock() {
+                if let Some(data_dir) = db_path.parent() {
+                    let engine = crate::reply::ReplyEngine {
+                        tree: crate::tree::TimersTree::new(data_dir),
+                        data_dir: data_dir.to_path_buf(),
+                        pickup_grace: Duration::from_secs(60),
+                        watchdog_factor: 2.0,
+                        anchors: opts
+                            .anchors
+                            .clone()
+                            .unwrap_or_else(crate::reply::new_anchors),
+                        deadlines: opts
+                            .deadlines
+                            .clone()
+                            .unwrap_or_else(crate::reply::new_deadlines),
+                        fire_slot_file: None,
+                    };
+                    crate::reply::startup_scan(&engine, store, Utc::now());
+                }
+                d.begin_startup();
+            }
+            local = Some(d);
+            local.as_ref().expect("just set").clone()
+        }
+    };
+
+    dispatcher.submit(claim.run_id);
+    let finished = dispatcher
+        .wait_finished(store, claim.run_id, wait)
+        .map_err(RunNowError::Store)?;
+
+    if let Some(d) = local {
+        // The CLI's bounded dispatcher runs until its claim finished, then
+        // releases the OS lock (drop of the guard) — in-flight lanes drain.
+        d.shutdown_drain();
+    }
+
+    let Some(c) = finished else {
+        return Ok(format!(
+            "dispatched run_id={} (still running; result lands in the claim ledger)",
+            claim.run_id
+        ));
+    };
+    Ok(match c.outcome {
+        Some(RunOutcome::WakeDelivered) => c
+            .outcome_reason
+            .clone()
+            .unwrap_or_else(|| "action completed".into()),
+        Some(RunOutcome::WakeFailed) => format!(
+            "FAILED: {}",
+            c.outcome_reason.clone().unwrap_or_else(|| "unknown".into())
+        ),
+        Some(RunOutcome::SkippedMisfire) => c
+            .outcome_reason
+            .clone()
+            .unwrap_or_else(|| "overlap policy skip".into()),
+        None => "action completed".into(),
     })
 }
 
@@ -267,38 +359,6 @@ pub fn resolve_slots_root_optional(db_path: &Path) -> Option<PathBuf> {
     } else {
         None
     }
-}
-
-/// Re-export the slot-output overlay so the Tauri shell can call it from
-/// `run_now` without pulling `bellman-cli` into the dependency tree.
-pub fn publish_fire_slot_response(
-    store: &Store,
-    slots_root: &Path,
-    timer: &Timer,
-    rec: &SlotRequestRecord,
-) -> Result<(), String> {
-    use crate::slots::{atomic_write_json, SlotRunEvent, SlotStatus, SCHEMA_V1};
-
-    let runs = store
-        .unacked_runs_for_timer(timer.id, 64)
-        .map_err(|e| e.to_string())?;
-    let events: Vec<SlotRunEvent> = runs.iter().map(SlotRunEvent::from_claim).collect();
-
-    let response = SlotResponse {
-        schema: SCHEMA_V1.to_string(),
-        slot_id: rec.slot_id.clone(),
-        request_id: rec.request_id.clone(),
-        status: SlotStatus::Ok,
-        timer_id: Some(timer.id),
-        next_fire_at: timer.next_fire_utc,
-        error: None,
-        events,
-    };
-    let name = format!("slot-{}.json", rec.slot_id);
-    let done = slots_root.join("done");
-    atomic_write_json(&done, &name, &response)
-        .map(|_| ())
-        .map_err(|e| e.to_string())
 }
 
 /// Failure modes surfaced by [`run_now`].

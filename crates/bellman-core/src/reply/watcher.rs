@@ -718,8 +718,16 @@ pub fn reconcile(engine: &ReplyEngine, store: &Store) -> usize {
         }
     };
     for timer in &timers {
-        if let Err(e) = reconcile_timer(engine, store, timer, &mut repaired) {
-            eprintln!("bellman: reply reconciler: timer {}: {e}", timer.id);
+        match reconcile_timer(engine, store, timer, &mut repaired) {
+            Ok(attempt) => {
+                // The gate is released — publication takes the timer shard
+                // itself (flock is per open-file-description; re-acquiring
+                // under our guard would deadlock).
+                if let Some(proj) = attempt {
+                    crate::reply::publication::attempt(&engine.data_dir, store, &proj);
+                }
+            }
+            Err(e) => eprintln!("bellman: reply reconciler: timer {}: {e}", timer.id),
         }
     }
     repaired
@@ -730,16 +738,16 @@ fn reconcile_timer(
     store: &Store,
     timer: &Timer,
     repaired: &mut usize,
-) -> ReplyResult<()> {
+) -> ReplyResult<Option<crate::store::TransportProjection>> {
     let _gate = gate::acquire(&engine.data_dir, timer.id)?;
     let Some(folder) = engine.tree.folder_for(timer.id) else {
-        return Ok(());
+        return Ok(None);
     };
     let Some(claim) = super::engine::current_claim(store, timer.id)? else {
-        return Ok(());
+        return Ok(None);
     };
     let Some(row) = store.get_run_state(claim.run_id)? else {
-        return Ok(());
+        return Ok(None);
     };
     // status.json: re-project from the row just read (inside the gate).
     let status_path = folder.join(STATUS_FILE_NAME);
@@ -762,13 +770,37 @@ fn reconcile_timer(
         *repaired += 1;
     }
     // Fire notification last (never eligible before the two projections).
-    let fire_path =
-        fires_dir(&engine.data_dir.join("slots")).join(fire_notification_name(claim.run_id));
-    if !fire_path.exists() && stub_path.exists() {
-        publish_fire_notification(engine, timer, &claim, &row.state, &folder, &row.app_name)?;
-        *repaired += 1;
+    // SCH1: when the fire transaction stored a transport projection for this
+    // run, publication ownership lies there (cursor/obsolete rules, bounded
+    // retry) — the reconciler returns an eligible projection for the caller
+    // to attempt AFTER the gate drops. Rows that predate SCH1 keep the
+    // legacy idempotent rewrite.
+    match store.transport_projection(claim.run_id) {
+        Ok(Some(proj)) => {
+            if proj.state == crate::store::TransportProjection::PENDING
+                && proj.next_attempt_at <= Utc::now()
+            {
+                return Ok(Some(proj));
+            }
+            // Published but the file vanished without pickup (crash window /
+            // silent consumption): redelivery is allowed.
+            if proj.state == crate::store::TransportProjection::PUBLISHED
+                && !std::path::Path::new(&proj.target_path).exists()
+            {
+                let _ = store.requeue_transport_projection(proj.run_id);
+                return Ok(Some(proj));
+            }
+        }
+        _ => {
+            let fire_path = fires_dir(&engine.data_dir.join("slots"))
+                .join(fire_notification_name(claim.run_id));
+            if !fire_path.exists() && stub_path.exists() {
+                publish_fire_notification(engine, timer, &claim, &row.state, &folder, &row.app_name)?;
+                *repaired += 1;
+            }
+        }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Startup (R10): scan every `reply-*.json` BEFORE the scheduler fires

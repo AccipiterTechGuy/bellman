@@ -25,7 +25,7 @@ use crate::events::{EventRecord, RunState};
 use crate::occurrence::OccurrenceKind;
 use crate::scheduler::FireKind;
 use crate::slots::atomic_write_json;
-use crate::store::{ClaimStatus, RunClaim, Store, Timer, TimerId};
+use crate::store::{RunClaim, Store, Timer, TimerId};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::collections::HashSet;
@@ -653,10 +653,10 @@ pub fn write_status(tree: &TimersTree, timer: &Timer, status: &RunStatus) -> Tre
 /// - **Owned run** (integration owner): the app lifecycle is the reply
 ///   channel. Pre-IK3 nothing records a terminal app state, so the run is
 ///   open until a reply closes it — the claim ledger is delivery bookkeeping
-///   only (`ClaimStatus::Completed` means `wake_delivered`, never that the
+///   only (a `finished` claim with outcome `wake_delivered` never means the
 ///   app finished; see store/models.rs).
 /// - **Unowned run**: unresolved means the action claim is not finished
-///   (`claimed`).
+///   (`pending` / `active`).
 ///
 /// `exclude_run` skips the just-claimed run when called from a fire.
 ///
@@ -690,7 +690,7 @@ fn current_unresolved_run(
                 // No lifecycle row (predates IK3) — an owned run stays open.
                 true
             } else {
-                prev.status == ClaimStatus::Claimed
+                prev.is_unfinished()
             }
         }
     };
@@ -755,6 +755,7 @@ pub fn project_fire(
     // 3. The one fire transaction.
     let mut prev_superseded = None;
     let mut post_quarantine: Option<(PathBuf, Uuid, Vec<u8>, &'static str)> = None;
+    let mut transport: Option<crate::store::TransportProjection> = None;
     let claim = {
         let tx = store.transaction()?;
         // Barrier ingest: fold the previous run's final outcome in FIRST.
@@ -783,7 +784,7 @@ pub fn project_fire(
                     if owner.is_some() {
                         true
                     } else {
-                        prev.status == ClaimStatus::Claimed
+                        prev.is_unfinished()
                     }
                 }
             };
@@ -804,8 +805,11 @@ pub fn project_fire(
                 prev_superseded = Some(prev.run_id);
             }
         }
-        // The new claim (UNIQUE guard) + lifecycle row + fired event.
+        // The new claim (UNIQUE guard) + SCH1 overlap disposition + lifecycle
+        // row + fired event. The disposition is decided HERE, at fire commit,
+        // from the older executable claims — never later at dequeue.
         let claim = claim_run_conn(&tx, timer.id, scheduled_for)?;
+        let claim = apply_overlap_disposition(&tx, timer, claim)?;
         if let Some(app_name) = owner.as_deref() {
             let deadline = now
                 + chrono::Duration::from_std(engine.pickup_grace)
@@ -821,6 +825,25 @@ pub fn project_fire(
             insert_run_state_conn(&tx, &row)?;
         }
         tx.enqueue_event(&fire_event(kind, timer, &claim))?;
+        // SCH1: the durable transport projection for the fire notification
+        // (routing/retry state for this run; the fixed-target cursor advances
+        // in the same commit).
+        if let Some(app_name) = owner.as_deref() {
+            let order = crate::store::next_publication_order_conn(&tx)?;
+            let proj = crate::reply::publication::new_projection(
+                engine,
+                timer,
+                &claim,
+                fire_state(kind),
+                &folder,
+                app_name,
+                order,
+                now,
+            )
+            .map_err(crate::store::StoreError::Internal)?;
+            crate::store::insert_transport_projection_conn(&tx, &proj)?;
+            transport = Some(proj);
+        }
         tx.commit().map_err(|e| TreeError::Io(e.to_string()))?;
         claim
     };
@@ -847,27 +870,106 @@ pub fn project_fire(
         write_status(tree, timer, &status)?;
         if let Some(app_name) = owner.as_deref() {
             tree.create_reply_stub(&folder, claim.run_id, app_name)?;
-            crate::reply::publish_fire_notification(
-                engine,
-                timer,
-                &claim,
-                fire_state(kind),
-                &folder,
-                app_name,
-            )
-            .map_err(|e| TreeError::Io(e.to_string()))?;
         }
         Ok(())
     })();
     if let Err(e) = projection {
         eprintln!("bellman: fire projection failed (reconciler will repair): {e}");
     }
+    // The gate must be released BEFORE the publication attempt: the attempt
+    // takes the timer shard itself (then the target shard — the fixed lock
+    // order), and flock is per open-file-description, so re-acquiring here
+    // would deadlock against our own guard.
+    drop(_gate);
+    // SCH1: the immediate publication attempt — only after R10 projected
+    // `status.json` and the reply stub above (a notification naming missing
+    // run files is a broken notification). A bounded local failure stays
+    // `pending` for the publication pump / startup recovery, never for an
+    // action worker.
+    if let Some(proj) = &transport {
+        crate::reply::publication::attempt(&engine.data_dir, store, proj);
+    }
     Ok(claim)
 }
 
+/// SCH1: the durable overlap admission decision, made inside the fire
+/// transaction — never later at dequeue. Examines the timer's older
+/// executable claims (`pending` or `active`) and applies the policy:
+///
+/// - `Skip`: any older unfinished claim → the new claim finishes
+///   `skipped_misfire(overlap_skip)` immediately.
+/// - `QueueOne`: at most one executable follow-up beyond the oldest
+///   active/pending action; excess finishes `skipped_misfire(overlap_queue_full)`.
+/// - `Parallel { cap }`: admit while fewer than `cap` older claims are
+///   unfinished; excess finishes `skipped_misfire(overlap_parallel_cap)`
+///   (`cap: 0` admits none).
+/// - `Replace`: every older `pending` claim finishes
+///   `wake_failed(overlap_replace_before_start)`, every older `active` claim
+///   is marked `cancel_requested` (the dispatcher signals the worker tokens);
+///   the newest claim stays `pending`, eligible only after the active
+///   predecessors finish, so they never overlap.
+///
+/// Publication is NOT affected: the record of the fire (claim, lifecycle
+/// row, `fired` event, status/notification) commits either way — the policy
+/// governs the action, never the record.
+fn apply_overlap_disposition(
+    tx: &rusqlite::Transaction<'_>,
+    timer: &Timer,
+    claim: RunClaim,
+) -> crate::store::StoreResult<RunClaim> {
+    use crate::store::{
+        finish_run_conn, get_run_conn, pending_claims_for_timer_conn, request_cancel_active_conn,
+        unfinished_claims_count_conn, OverlapPolicy, RunOutcome,
+    };
+    use crate::reply::RunDb;
+
+    let skip_reason: Option<&'static str> = match &timer.overlap {
+        OverlapPolicy::Skip => {
+            (unfinished_claims_count_conn(tx, timer.id, claim.run_id)? >= 1).then_some("overlap_skip")
+        }
+        OverlapPolicy::QueueOne => {
+            (unfinished_claims_count_conn(tx, timer.id, claim.run_id)? >= 2)
+                .then_some("overlap_queue_full")
+        }
+        OverlapPolicy::Parallel { cap } => {
+            (unfinished_claims_count_conn(tx, timer.id, claim.run_id)? >= *cap as usize)
+                .then_some("overlap_parallel_cap")
+        }
+        OverlapPolicy::Replace => {
+            for p in pending_claims_for_timer_conn(tx, timer.id, claim.run_id)? {
+                // Loses the race to a worker that already committed — the
+                // worker's truthful outcome stands, no replace event.
+                if finish_run_conn(tx, p.run_id, RunOutcome::WakeFailed, "overlap_replace_before_start")? {
+                    tx.enqueue_event(
+                        &EventRecord::new(RunState::WakeFailed)
+                            .with_timer(timer.id, timer.name.clone())
+                            .with_run(p.run_id)
+                            .with_scheduled_for(p.scheduled_for)
+                            .with_message("overlap_replace_before_start"),
+                    )?;
+                }
+            }
+            let _ = request_cancel_active_conn(tx, timer.id, claim.run_id)?;
+            None
+        }
+    };
+    let Some(reason) = skip_reason else {
+        return Ok(claim);
+    };
+    let _ = finish_run_conn(tx, claim.run_id, RunOutcome::SkippedMisfire, reason)?;
+    tx.enqueue_event(
+        &EventRecord::new(RunState::SkippedMisfire)
+            .with_timer(timer.id, timer.name.clone())
+            .with_run(claim.run_id)
+            .with_scheduled_for(claim.scheduled_for)
+            .with_message(reason),
+    )?;
+    // Return the finished row (status + outcome) to the caller.
+    Ok(get_run_conn(tx, claim.run_id)?.unwrap_or(claim))
+}
+
 /// The `fired` event for the fire transaction (mirrors the fire kind).
-fn fire_event(kind: &FireKind, timer: &Timer, claim: &RunClaim) -> EventRecord {
-    let base = || {
+fn fire_event(kind: &FireKind, timer: &Timer, claim: &RunClaim) -> EventRecord {    let base = || {
         EventRecord::new(RunState::Fired)
             .with_timer(timer.id, timer.name.clone())
             .with_run(claim.run_id)
@@ -942,7 +1044,7 @@ pub fn delete_timer_lifecycle(store: &mut Store, timer: &Timer) -> TreeResult<(b
                 if owner.is_some() {
                     true
                 } else {
-                    prev.status == ClaimStatus::Claimed
+                    prev.is_unfinished()
                 }
             }
         };
@@ -966,10 +1068,25 @@ pub fn delete_timer_lifecycle(store: &mut Store, timer: &Timer) -> TreeResult<(b
 
     let deleted = Store::delete_timer_in_tx(&tx, timer.id)?;
     crate::store::Store::clear_timer_owner_in_tx(&tx, timer.id)?;
-    // Drop the ack cursor with the timer.
+    // Drop the ack cursor and the SCH1 transport projections with the timer;
+    // target cursors with no remaining projection go too.
     tx.execute(
         "DELETE FROM slot_event_acks WHERE timer_id = ?1",
         rusqlite::params![timer.id.to_string()],
+    )
+    .map_err(crate::store::StoreError::from)?;
+    tx.execute(
+        "DELETE FROM transport_projections WHERE timer_id = ?1",
+        rusqlite::params![timer.id.to_string()],
+    )
+    .map_err(crate::store::StoreError::from)?;
+    tx.execute(
+        "DELETE FROM target_cursors
+         WHERE NOT EXISTS (
+             SELECT 1 FROM transport_projections tp
+             WHERE tp.target_path = target_cursors.target_path
+         )",
+        [],
     )
     .map_err(crate::store::StoreError::from)?;
     tx.commit().map_err(|e| TreeError::Io(e.to_string()))?;

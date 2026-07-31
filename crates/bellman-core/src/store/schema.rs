@@ -4,7 +4,7 @@ use super::error::{StoreError, StoreResult};
 use rusqlite::Connection;
 
 /// Current on-disk schema version (also stored in `PRAGMA user_version` and `meta`).
-pub const SCHEMA_VERSION: i32 = 7;
+pub const SCHEMA_VERSION: i32 = 8;
 
 /// Apply pending migrations. Safe to call on every open.
 pub fn migrate(conn: &Connection) -> StoreResult<()> {
@@ -45,6 +45,9 @@ pub fn migrate(conn: &Connection) -> StoreResult<()> {
     }
     if current < 7 {
         migrate_v7(conn)?;
+    }
+    if current < 8 {
+        migrate_v8(conn)?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
@@ -300,6 +303,84 @@ fn migrate_v7(conn: &Connection) -> StoreResult<()> {
         ",
     )
     .map_err(|e| StoreError::Sqlite(format!("migrate v7: {e}")))?;
+    Ok(())
+}
+
+/// SCH1: dispatch/outcome split on the claim ledger + durable fire-publication
+/// routing state.
+///
+/// `runs.status` moves from `claimed/completed/wake_failed` to
+/// `pending/active/finished`, with the R5 delivery outcome in its own column
+/// (`finished` is no longer success-by-default), a machine reason, and the
+/// durable `cancel_requested` flag a `Replace` fire transaction sets on an
+/// active predecessor so any dispatcher process can signal the worker —
+/// cross-process cancellation without shared memory.
+///
+/// `transport_projections` is the retry/routing state for the existing run's
+/// fire notification (target path, serialized payload, database-wide
+/// `publication_order`); `target_cursors` records, per fixed target path, the
+/// greatest `publication_order` ever assigned while any projection for that
+/// target remains — an older projection below the cursor is permanently
+/// obsolete as a fixed-path wake hint.
+fn migrate_v8(conn: &Connection) -> StoreResult<()> {
+    if !table_has_column(conn, "runs", "outcome")? {
+        conn.execute("ALTER TABLE runs ADD COLUMN outcome TEXT", [])
+            .map_err(|e| StoreError::Sqlite(format!("migrate v8 add outcome: {e}")))?;
+    }
+    if !table_has_column(conn, "runs", "outcome_reason")? {
+        conn.execute("ALTER TABLE runs ADD COLUMN outcome_reason TEXT", [])
+            .map_err(|e| StoreError::Sqlite(format!("migrate v8 add outcome_reason: {e}")))?;
+    }
+    if !table_has_column(conn, "runs", "cancel_requested")? {
+        conn.execute(
+            "ALTER TABLE runs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|e| StoreError::Sqlite(format!("migrate v8 add cancel_requested: {e}")))?;
+    }
+
+    // Split the legacy status vocabulary into phase + outcome. A legacy
+    // `claimed` row is ambiguous between pending and active; mapping it to
+    // `pending` is the safe at-least-once choice (re-queue, never lose).
+    conn.execute_batch(
+        r"
+        UPDATE runs SET status = 'finished', outcome = 'wake_delivered'
+         WHERE status = 'completed';
+        UPDATE runs SET status = 'finished', outcome = 'wake_failed'
+         WHERE status = 'wake_failed';
+        UPDATE runs SET status = 'pending' WHERE status = 'claimed';
+        ",
+    )
+    .map_err(|e| StoreError::Sqlite(format!("migrate v8 status split: {e}")))?;
+
+    conn.execute_batch(
+        r"
+        CREATE TABLE IF NOT EXISTS transport_projections (
+            run_id             TEXT PRIMARY KEY NOT NULL,
+            timer_id           TEXT NOT NULL,
+            target_path        TEXT NOT NULL,
+            payload            TEXT NOT NULL,
+            publication_order  INTEGER NOT NULL,
+            state              TEXT NOT NULL DEFAULT 'pending',
+            attempts           INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at    TEXT NOT NULL,
+            created_at         TEXT NOT NULL,
+            published_at       TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_transport_projections_state
+            ON transport_projections (state, next_attempt_at);
+
+        CREATE INDEX IF NOT EXISTS idx_transport_projections_timer
+            ON transport_projections (timer_id);
+
+        CREATE TABLE IF NOT EXISTS target_cursors (
+            target_path            TEXT PRIMARY KEY NOT NULL,
+            max_publication_order  INTEGER NOT NULL
+        );
+        ",
+    )
+    .map_err(|e| StoreError::Sqlite(format!("migrate v8 transport projections: {e}")))?;
     Ok(())
 }
 

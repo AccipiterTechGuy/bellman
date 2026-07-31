@@ -94,9 +94,9 @@ fn all_kinds() -> Vec<(&'static str, Occurrence)> {
 #[test]
 fn schema_version_is_current_after_open() {
     let (_dir, store) = open_tmp();
-    assert_eq!(store.schema_version().unwrap(), 7);
+    assert_eq!(store.schema_version().unwrap(), 8);
     let meta = store.meta().unwrap();
-    assert_eq!(meta.schema_version, 7);
+    assert_eq!(meta.schema_version, 8);
     assert!(meta.last_prune.is_none());
 }
 
@@ -183,7 +183,7 @@ fn migrate_v3_partial_restart_is_idempotent() {
         },
     )
     .expect("reopen after partial v3 must succeed");
-    assert_eq!(store.schema_version().unwrap(), 7);
+    assert_eq!(store.schema_version().unwrap(), 8);
 
     // Second open (fully migrated) still succeeds.
     drop(store);
@@ -195,7 +195,7 @@ fn migrate_v3_partial_restart_is_idempotent() {
         },
     )
     .expect("second open");
-    assert_eq!(store2.schema_version().unwrap(), 7);
+    assert_eq!(store2.schema_version().unwrap(), 8);
 
     // claim_run uses event_sequence column.
     let mut store2 = store2;
@@ -320,7 +320,7 @@ fn claim_ledger_blocks_duplicate_timer_id_scheduled_for() {
     let scheduled = t.next_fire_utc.expect("next fire");
 
     let c1 = store.claim_run(t.id, scheduled).unwrap();
-    assert_eq!(c1.status, ClaimStatus::Claimed);
+    assert_eq!(c1.status, ClaimStatus::Pending);
     assert_eq!(c1.timer_id, t.id);
     assert_eq!(c1.scheduled_for, scheduled);
 
@@ -410,7 +410,7 @@ fn crash_between_claim_and_completion_is_recoverable() {
         assert_eq!(pending[0].run_id, run_id);
         assert_eq!(pending[0].timer_id, timer_id);
         assert_eq!(pending[0].scheduled_for, scheduled);
-        assert_eq!(pending[0].status, ClaimStatus::Claimed);
+        assert_eq!(pending[0].status, ClaimStatus::Pending);
 
         // Duplicate claim still blocked after recovery.
         assert!(matches!(
@@ -419,7 +419,8 @@ fn crash_between_claim_and_completion_is_recoverable() {
         ));
 
         let done = store.complete_run(run_id).unwrap();
-        assert_eq!(done.status, ClaimStatus::Completed);
+        assert_eq!(done.status, ClaimStatus::Finished);
+        assert_eq!(done.outcome, Some(crate::store::RunOutcome::WakeDelivered));
         assert!(done.completed_at.is_some());
         assert!(store.pending_claims().unwrap().is_empty());
     }

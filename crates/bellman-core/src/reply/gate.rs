@@ -67,6 +67,12 @@ pub fn acquire_quarantine(data_dir: &Path) -> io::Result<GateGuard> {
     acquire_path(data_dir.join("locks").join("quarantine.lock"))
 }
 
+/// Blocking exclusive acquire of an arbitrary lock file (SCH1 publication
+/// target shards, the dispatcher OS lock). Blocks until free.
+pub fn acquire_file(path: &Path) -> io::Result<GateGuard> {
+    acquire_path(path.to_path_buf())
+}
+
 /// Non-blocking exclusive acquire of an arbitrary lock file (the R11
 /// publisher lease). Returns `Ok(None)` when another process holds it —
 /// the caller is then a follower, not an error case.

@@ -31,6 +31,7 @@ fn test_engine(dir: &std::path::Path) -> crate::reply::ReplyEngine {
         watchdog_factor: 2.0,
         anchors: crate::reply::new_anchors(),
         deadlines: crate::reply::new_deadlines(),
+        fire_slot_file: None,
     }
 }
 

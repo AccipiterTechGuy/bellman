@@ -11,12 +11,12 @@
 //! 4. run states come from the one R5 vocabulary;
 //! 5. shapes round-trip and unknown fields are still ignored on read (R6).
 
-use bellman_core::actions::{WriteSlotPayload, FIRE_SCHEMA_V1};
+use bellman_core::reply::{FireNotification, FIRE_SCHEMA_V1};
 use bellman_core::events::{RunState, EventRecord, EVENT_SCHEMA_V1};
 use bellman_core::slots::{
     SlotErrSidecar, SlotRequest, SlotResponse, SlotRunEvent, SCHEMA_V1,
 };
-use bellman_core::store::{ClaimStatus, RunClaim};
+use bellman_core::store::{ClaimStatus, RunClaim, RunOutcome};
 use chrono::{DateTime, TimeZone, Utc};
 use serde_json::Value;
 use uuid::Uuid;
@@ -37,20 +37,22 @@ fn sample_event_record() -> EventRecord {
         .with_detail(serde_json::json!({"offset": 1}))
 }
 
-fn sample_fire_payload() -> WriteSlotPayload {
-    WriteSlotPayload {
-        schema: FIRE_SCHEMA_V1.to_string(),
-        kind: "fired".into(),
-        timer_id: Uuid::nil(),
-        timer_name: "tick".into(),
-        run_id: Uuid::nil(),
-        scheduled_for: fixed(),
-        fired_at: fixed(),
-        occurrence_kind: "on_time".into(),
-    }
+fn sample_fire_payload() -> FireNotification {
+    FireNotification::new(
+        "fired",
+        "daily",
+        Uuid::nil(),
+        "tick",
+        "app",
+        Uuid::nil(),
+        fixed(),
+        fixed(),
+        std::path::PathBuf::from("/data/timers/tick/status.json"),
+        std::path::PathBuf::from("/data/timers/tick/reply-run.json"),
+    )
 }
 
-fn sample_run_claim(status: ClaimStatus) -> RunClaim {
+fn sample_run_claim(status: ClaimStatus, outcome: Option<RunOutcome>) -> RunClaim {
     RunClaim {
         run_id: Uuid::nil(),
         timer_id: Uuid::nil(),
@@ -58,10 +60,13 @@ fn sample_run_claim(status: ClaimStatus) -> RunClaim {
         status,
         claimed_at: fixed(),
         completed_at: match status {
-            ClaimStatus::Claimed => None,
-            ClaimStatus::Completed | ClaimStatus::WakeFailed => Some(fixed()),
+            ClaimStatus::Pending | ClaimStatus::Active => None,
+            ClaimStatus::Finished => Some(fixed()),
         },
         event_sequence: 7,
+        outcome,
+        outcome_reason: None,
+        cancel_requested: false,
     }
 }
 
@@ -71,7 +76,7 @@ fn sample_slot_response() -> SlotResponse {
         "550e8400-e29b-41d4-a716-446655440000",
         Some(Uuid::nil()),
         Some(fixed()),
-        vec![SlotRunEvent::from_claim(&sample_run_claim(ClaimStatus::Claimed))],
+        vec![SlotRunEvent::from_claim(&sample_run_claim(ClaimStatus::Pending, None))],
     )
 }
 
@@ -83,7 +88,7 @@ fn emitted_shapes() -> Vec<(&'static str, Value)> {
             serde_json::to_value(sample_event_record()).unwrap(),
         ),
         (
-            "WriteSlotPayload (fire notification)",
+            "FireNotification (fire notification)",
             serde_json::to_value(sample_fire_payload()).unwrap(),
         ),
         (
@@ -117,7 +122,9 @@ fn every_emitted_json_carries_schema() {
     // Exact ids per channel (R1).
     assert_eq!(sample_event_record().schema, EVENT_SCHEMA_V1);
     assert_eq!(EVENT_SCHEMA_V1, "bellman-event/1");
-    assert_eq!(FIRE_SCHEMA_V1, "bellman-fire/1");
+    // The fire notification under slots/fires/ is the IK3 FireNotification
+    // (the legacy bellman-fire/1 WriteSlotPayload duplicate was removed by SCH1).
+    assert_eq!(FIRE_SCHEMA_V1, "bellman-slot/1");
     assert_eq!(SCHEMA_V1, "bellman-slot/1");
 }
 
@@ -133,25 +140,48 @@ fn top_level_kind_is_always_the_event_kind() {
         matches!(v["kind"].as_str(), Some("fired" | "fired_late" | "coalesced")),
         "fire-notification top-level kind must be an event kind: {v}"
     );
-    assert_eq!(v["occurrence_kind"], "on_time");
+    assert_eq!(v["occurrence_kind"], "daily");
+    assert_eq!(v["schema"], FIRE_SCHEMA_V1);
 
     // R5 run-state vocabulary on the run-event feed: the ledger's internal
     // bookkeeping projects onto the same `RunState` the event log uses, and
     // never invents the app-reported `completed` / `failed`.
     assert_eq!(
-        SlotRunEvent::from_claim(&sample_run_claim(ClaimStatus::Claimed)).status,
+        SlotRunEvent::from_claim(&sample_run_claim(ClaimStatus::Pending, None)).status,
         RunState::Fired,
-        "an open claimed run is `fired` in the R5 vocabulary"
+        "an unfinished (pending) run is `fired` in the R5 vocabulary"
     );
     assert_eq!(
-        SlotRunEvent::from_claim(&sample_run_claim(ClaimStatus::Completed)).status,
+        SlotRunEvent::from_claim(&sample_run_claim(ClaimStatus::Active, None)).status,
+        RunState::Fired,
+        "an executing (active) run is still an open `fired` run"
+    );
+    assert_eq!(
+        SlotRunEvent::from_claim(&sample_run_claim(
+            ClaimStatus::Finished,
+            Some(RunOutcome::WakeDelivered)
+        ))
+        .status,
         RunState::WakeDelivered,
-        "ledger-completed means Bellman delivered the wake action, not an app outcome"
+        "finished+wake_delivered means Bellman delivered the wake action, not an app outcome"
     );
     assert_eq!(
-        SlotRunEvent::from_claim(&sample_run_claim(ClaimStatus::WakeFailed)).status,
+        SlotRunEvent::from_claim(&sample_run_claim(
+            ClaimStatus::Finished,
+            Some(RunOutcome::WakeFailed)
+        ))
+        .status,
         RunState::WakeFailed,
         "a failed wake action projects as wake_failed, never as success"
+    );
+    assert_eq!(
+        SlotRunEvent::from_claim(&sample_run_claim(
+            ClaimStatus::Finished,
+            Some(RunOutcome::SkippedMisfire)
+        ))
+        .status,
+        RunState::SkippedMisfire,
+        "an overlap skip projects as skipped_misfire, never as wake_delivered"
     );
 }
 
@@ -229,14 +259,14 @@ fn shapes_round_trip_and_ignore_unknown_fields() {
     let back: SlotErrSidecar = serde_json::from_value(v).unwrap();
     assert_eq!(back.reason, "bad json");
 
-    // WriteSlotPayload (fire notification).
+    // FireNotification (fire notification).
     let payload = sample_fire_payload();
     let mut v = serde_json::to_value(&payload).unwrap();
     v["future_field"] = serde_json::json!("ignored");
-    let back: WriteSlotPayload = serde_json::from_value(v).unwrap();
+    let back: FireNotification = serde_json::from_value(v).unwrap();
     assert_eq!(back.schema, FIRE_SCHEMA_V1);
     assert_eq!(back.kind, "fired");
-    assert_eq!(back.occurrence_kind, "on_time");
+    assert_eq!(back.occurrence_kind, "daily");
     assert_eq!(back.fired_at, fixed());
 }
 
@@ -249,14 +279,17 @@ fn fire_notification_wire_keys() {
         "kind",
         "timer_id",
         "timer_name",
+        "app_name",
         "run_id",
         "scheduled_for",
         "fired_at",
         "occurrence_kind",
+        "status_path",
+        "reply_path",
     ] {
         assert!(obj.contains_key(key), "fire notification missing `{key}`: {v}");
     }
-    assert_eq!(obj.len(), 8, "unexpected extra keys in fire notification: {v}");
+    assert_eq!(obj.len(), 11, "unexpected extra keys in fire notification: {v}");
 }
 
 #[test]

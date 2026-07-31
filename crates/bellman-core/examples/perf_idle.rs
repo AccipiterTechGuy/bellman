@@ -1,6 +1,6 @@
 //! Idle-footprint harness for P5 acceptance.
 //!
-//! Boots a real scheduler with one 1 s interval timer, an [`ActionRunner`] that
+//! Boots a real scheduler with one 1 s interval timer, a [`Dispatcher`] that
 //! appends to a real JSONL event log, and samples RSS + CPU over a timed window.
 //!
 //! ```text
@@ -15,7 +15,7 @@
 //! - `logs/events.current.jsonl` — fire evidence
 //! - `perf_idle_report.json` — measured numbers + method
 
-use bellman_core::actions::{ActionRunner, ActionRunnerConfig};
+use bellman_core::actions::{Dispatcher, DispatcherConfig, ExecutorConfig};
 use bellman_core::events::{read_events, RunState};
 use bellman_core::occurrence::{Occurrence, OccurrenceKind};
 use bellman_core::scheduler::{Scheduler, SchedulerConfig, SystemClock};
@@ -94,17 +94,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let logs_dir = data_dir.join("logs");
-    let sink = Store::open_with(db.clone(), OpenOptions::default())?;
-    let runner = ActionRunner::new(ActionRunnerConfig {
-        skip_retry_sleep: true,
-        ..ActionRunnerConfig::default()
-    })
-    .with_event_sink(sink);
+    let dispatcher = Dispatcher::spawn(DispatcherConfig {
+        db_path: db.clone(),
+        data_dir: Some(data_dir.clone()),
+        max_concurrent_actions: 4,
+        notify_sink: std::sync::Arc::new(bellman_core::actions::StubNotifySink),
+        executor: ExecutorConfig {
+            skip_retry_sleep: true,
+            ..ExecutorConfig::default()
+        },
+        tick: Duration::from_millis(200),
+    })?;
 
     let cfg = SchedulerConfig::default()
         .with_max_sleep(Duration::from_millis(200))
         .with_data_dir(data_dir.clone());
-    let mut sched = Scheduler::new(store, SystemClock::new(), runner, cfg);
+    let mut sched = Scheduler::new(store, SystemClock::new(), dispatcher, cfg);
     sched.boot()?;
 
     let pid = std::process::id();
@@ -198,7 +203,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let report = serde_json::json!({
-        "method": "engine-only SystemClock + ActionRunner + R11 outbox/publisher; one 1s interval Action::None",
+        "method": "engine-only SystemClock + SCH1 Dispatcher + R11 outbox/publisher; one 1s interval Action::None",
         "pid": pid,
         "data_dir": data_dir.display().to_string(),
         "window_secs_requested": secs,

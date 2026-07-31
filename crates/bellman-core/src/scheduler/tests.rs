@@ -472,7 +472,8 @@ fn claim_before_work_writes_run_row() {
         .unwrap()
         .expect("run row");
     assert_eq!(run.timer_id, timer.id);
-    assert_eq!(run.status, crate::store::ClaimStatus::Completed);
+    assert_eq!(run.status, crate::store::ClaimStatus::Finished);
+    assert_eq!(run.outcome, Some(crate::store::RunOutcome::WakeDelivered));
 }
 
 #[test]
@@ -703,7 +704,7 @@ fn crash_after_claim_recovers_pending_action() {
         assert_eq!(timer.next_fire_utc.unwrap(), scheduled);
         // Crash boundary: claim written, action never ran, process dies.
         let claim = store.claim_run(timer.id, scheduled).unwrap();
-        assert_eq!(claim.status, crate::store::ClaimStatus::Claimed);
+        assert_eq!(claim.status, crate::store::ClaimStatus::Pending);
         timer.id
     };
 
@@ -736,7 +737,8 @@ fn crash_after_claim_recovers_pending_action() {
         .get_run(boot_fires[0].run_id)
         .unwrap()
         .unwrap();
-    assert_eq!(run.status, crate::store::ClaimStatus::Completed);
+    assert_eq!(run.status, crate::store::ClaimStatus::Finished);
+    assert_eq!(run.outcome, Some(crate::store::RunOutcome::WakeDelivered));
 }
 
 #[test]
