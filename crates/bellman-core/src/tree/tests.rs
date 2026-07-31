@@ -32,6 +32,7 @@ fn test_engine(dir: &std::path::Path) -> crate::reply::ReplyEngine {
         anchors: crate::reply::new_anchors(),
         deadlines: crate::reply::new_deadlines(),
         fire_slot_file: None,
+        status_listener: None,
     }
 }
 

@@ -48,6 +48,7 @@ impl Harness {
             anchors: new_anchors(),
             deadlines: new_deadlines(),
             fire_slot_file: None,
+            status_listener: None,
         };
         Self {
             dir,
@@ -1144,6 +1145,7 @@ fn a_restart_reconstructs_the_pickup_deadline_from_the_persisted_value() {
         anchors: new_anchors(),
         deadlines: new_deadlines(),
         fire_slot_file: None,
+        status_listener: None,
     };
 
     // The persisted wall-clock deadline (t0+60) rebuilds the countdown —
@@ -1505,4 +1507,76 @@ fn armed_deadlines_produce_heap_hints_for_the_scheduler() {
     let expected_wall = at(&h, 1) + chrono::Duration::seconds(20);
     let delta = (hints[0].2 - expected_wall).num_seconds().abs();
     assert!(delta <= 1, "wall estimate matches receipt + expected × factor");
+}
+
+/// IK5: every accepted status projection fires exactly one invalidation with
+/// the timer id — on the fire itself, on an accepted reply, on a pickup
+/// expiry (`no_ack`) and on a watchdog expiry. The GUI refetches on this
+/// signal; a miss here is a stale row.
+#[test]
+fn status_listener_fires_on_every_projection() {
+    let mut h = Harness::new();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Uuid>::new()));
+    let seen2 = seen.clone();
+    h.engine.status_listener = Some(StatusListener(std::sync::Arc::new(move |timer_id| {
+        seen2.lock().unwrap().push(timer_id);
+    })));
+    let timer = h.add_timer("bulb-test", Some("lightbulb"));
+
+    // 1. The fire's initial projection (state `fired`).
+    let claim = h.fire_armed(&timer, 0, at(&h, 0));
+    assert_eq!(seen.lock().unwrap().as_slice(), &[timer.id]);
+
+    // 2. An accepted reply (state → running, progress folded in).
+    let mut doc = h.reply_json(claim.run_id, "lightbulb", "running");
+    doc["expected_secs"] = serde_json::json!(10);
+    doc["error_detection"] = serde_json::json!(true);
+    doc["progress"] = serde_json::json!("half-way");
+    h.write_reply(&timer, claim.run_id, doc);
+    h.poll(1);
+    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert_eq!(h.status(&timer)["state"], "running");
+    assert_eq!(h.status(&timer)["progress"], "half-way");
+
+    // 3. The opt-in watchdog expiring (state → failed/timed_out).
+    h.engine.deadlines.lock().unwrap().entries.insert(
+        claim.run_id,
+        MonoDeadline {
+            kind: DeadlineKind::Watchdog,
+            at: mono(&h, 2),
+        },
+    );
+    h.expire_watchdogs(3);
+    assert_eq!(seen.lock().unwrap().len(), 3);
+    assert_eq!(h.status(&timer)["state"], "failed");
+    assert_eq!(h.status(&timer)["failure_kind"], "timed_out");
+
+    // 4. A late terminal revision on the still-current run (completed wins).
+    let doc = h.reply_json(claim.run_id, "lightbulb", "completed");
+    h.write_reply(&timer, claim.run_id, doc);
+    h.poll(4);
+    assert_eq!(seen.lock().unwrap().len(), 4);
+    assert_eq!(h.status(&timer)["state"], "completed");
+
+    // Every notification carried ONLY this timer's id.
+    assert!(seen.lock().unwrap().iter().all(|id| *id == timer.id));
+}
+
+/// IK5: a pickup deadline expiring to `no_ack` also notifies.
+#[test]
+fn status_listener_fires_on_no_ack() {
+    let mut h = Harness::new();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Uuid>::new()));
+    let seen2 = seen.clone();
+    h.engine.status_listener = Some(StatusListener(std::sync::Arc::new(move |timer_id| {
+        seen2.lock().unwrap().push(timer_id);
+    })));
+    let timer = h.add_timer("quiet-app", Some("quiet"));
+    let claim = h.fire_armed(&timer, 0, at(&h, 0));
+    assert_eq!(seen.lock().unwrap().len(), 1);
+
+    h.arm_pickup(claim.run_id, 60);
+    h.expire_pickups(61);
+    assert_eq!(seen.lock().unwrap().len(), 2, "no_ack projection notified");
+    assert_eq!(h.status(&timer)["state"], "no_ack");
 }

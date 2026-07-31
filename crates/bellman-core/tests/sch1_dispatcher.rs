@@ -71,6 +71,7 @@ fn engine(e: &Env) -> bellman_core::reply::ReplyEngine {
         anchors: bellman_core::reply::new_anchors(),
         deadlines: bellman_core::reply::new_deadlines(),
         fire_slot_file: None,
+        status_listener: None,
     }
 }
 

@@ -145,6 +145,7 @@ pub fn run_now(
             .clone()
             .unwrap_or_else(crate::reply::new_deadlines),
         fire_slot_file: None,
+        status_listener: None,
     };
     let claim = crate::tree::project_fire(
         &engine.tree.clone(),
@@ -280,6 +281,7 @@ fn dispatch_and_wait(
                             .clone()
                             .unwrap_or_else(crate::reply::new_deadlines),
                         fire_slot_file: None,
+                        status_listener: None,
                     };
                     crate::reply::startup_scan(&engine, store, Utc::now());
                 }

@@ -29,7 +29,7 @@ pub use document::{
 };
 pub use engine::{
     current_claim, new_anchors, new_deadlines, DeadlineKind, IngestOutcome, MonoDeadline,
-    ReplyEngine, ReplyError, ReplyResult, SharedAnchors, SharedDeadlines,
+    ReplyEngine, ReplyError, ReplyResult, SharedAnchors, SharedDeadlines, StatusListener,
 };
 pub use engine::RunDb;
 pub use notification::{

@@ -228,7 +228,16 @@ fn run_watch_loop(cfg: WatchConfig, stop_rx: mpsc::Receiver<()>) -> SlotResult<(
         },
     )
     .map_err(|e| SlotError::Io(format!("watcher store open: {e}")))?;
-    let service = SlotService::open(&cfg.slots_root, Default::default())?
+    // IK5: the slot `ack_through` hook projects status through its own
+    // engine — hand it the same invalidation sink the reply engine carries.
+    let slot_cfg = crate::slots::SlotConfig {
+        status_listener: cfg
+            .reply_engine
+            .as_ref()
+            .and_then(|e| e.status_listener.clone()),
+        ..Default::default()
+    };
+    let service = SlotService::open(&cfg.slots_root, slot_cfg)?
         .with_timers_tree(crate::tree::TimersTree::new(&cfg.data_dir));
     let mut publisher = crate::events::EventPublisher::open(&cfg.data_dir)
         .map_err(|e| SlotError::Io(format!("watcher publisher: {e}")))?;
