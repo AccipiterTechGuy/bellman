@@ -452,9 +452,14 @@ class LightbulbGUI(tk.Tk):
                 hh, mm = int(parts[0]), int(parts[1])
                 if not (0 <= hh <= 23 and 0 <= mm <= 59):
                     raise ValueError("Invalid HH:MM time")
-                time_s = f"{hh:02d}:{mm:02d}:00"
-                occ = {"kind": "daily", "time": time_s}
-                desc = f"daily at {time_s}"
+                now_local = datetime.now().astimezone()
+                target_local = now_local.replace(hour=hh, minute=mm, second=0, microsecond=0)
+                if target_local <= now_local:
+                    target_local += timedelta(days=1)
+                target_utc = target_local.astimezone(timezone.utc)
+                time_str = target_utc.strftime("%Y-%m-%dT%H:%M:%S")
+                occ = {"kind": "once", "time": time_str}
+                desc = f"once at {val_str} local ({time_str} UTC)"
             elif mode == "every_n_mins":
                 mins = int(val_str)
                 if mins < 1:
@@ -607,7 +612,17 @@ class LightbulbGUI(tk.Tk):
         self.btn_fail.config(state=tk.NORMAL)
 
         # 1. fired
-        fired_ts = now_time_str()
+        fired_raw = fire.get("fired_at", "")
+        if fired_raw:
+            try:
+                iso_str = fired_raw.replace("Z", "+00:00")
+                dt_utc = datetime.fromisoformat(iso_str)
+                dt_local = dt_utc.astimezone()
+                fired_ts = dt_local.strftime("%H:%M:%S")
+            except Exception:
+                fired_ts = now_time_str()
+        else:
+            fired_ts = now_time_str()
         self.set_chip_state("fired", True, fired_ts)
 
         # 2. acknowledge
