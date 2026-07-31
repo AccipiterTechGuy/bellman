@@ -1228,7 +1228,9 @@ fn external_slot_modify_moves_fire_without_restart() {
 }
 
 /// SCH2 (Path B, delete): a timer deleted on another connection must not
-/// ghost-fire from a stale heap entry.
+/// ghost-fire from a stale heap entry. The timer fires BEFORE the delete —
+/// proving it really reached the heap — so "no fires after" is not vacuously
+/// true on a broken engine that never loads external timers at all.
 #[test]
 fn external_delete_leaves_no_ghost_fire() {
     use std::thread;
@@ -1255,7 +1257,7 @@ fn external_delete_leaves_no_ghost_fire() {
         let now = Utc::now();
         let occ = Occurrence::new(
             OccurrenceKind::Interval {
-                every_secs: 2,
+                every_secs: 1,
                 anchor: now,
             },
             "UTC",
@@ -1265,22 +1267,38 @@ fn external_delete_leaves_no_ghost_fire() {
         new.last_fired = Some(now);
         new.misfire = MisfirePolicy::Skip;
         let timer = ext.create_timer(new).unwrap();
-        // Scheduler notices the add and loads the entry (fire due at +2 s)…
-        thread::sleep(Duration::from_millis(500));
-        // …then the timer is deleted BEFORE its first fire.
+        // Let it fire at least once — proves the entry reached the heap.
+        thread::sleep(Duration::from_millis(2500));
+        // …then the timer is deleted on the foreign connection.
         ext.delete_timer(timer.id).unwrap();
-        // Wait well past the deleted fire time.
+        let deleted_at = Utc::now();
+        // Wait well past several more would-be fire times.
         thread::sleep(Duration::from_millis(3000));
         handle.shutdown();
+        deleted_at
     });
 
     let result = sched.run_until_shutdown().unwrap();
-    bg.join().unwrap();
+    let deleted_at = bg.join().unwrap();
 
+    let before = result
+        .fires
+        .iter()
+        .filter(|f| f.scheduled_for <= deleted_at)
+        .count();
+    let after = result
+        .fires
+        .iter()
+        .filter(|f| f.scheduled_for > deleted_at)
+        .count();
     assert!(
-        result.fires.is_empty(),
-        "deleted timer must not ghost-fire from a stale heap entry, got {} fires",
-        result.fires.len()
+        before >= 1,
+        "the timer must fire BEFORE the delete (proves heap occupancy) — \
+         without this, 'no ghost fire' is vacuous on an engine that never loads it"
+    );
+    assert!(
+        after == 0,
+        "deleted timer ghost-fired {after} time(s) from a stale heap entry"
     );
 }
 

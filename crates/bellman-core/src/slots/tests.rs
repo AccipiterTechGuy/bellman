@@ -998,8 +998,14 @@ fn slot_delete_cancels_an_open_app_run_even_with_a_finished_claim() {
 // slots/ ever signalled the scheduler and the timer never fired.
 
 /// SCH2 regression (Path A): publish to free/, let the running watcher claim
-/// it, and the timer must fire on a running scheduler with no restart, no
-/// GUI edit and no manual refill. Fails against the pre-fix watcher.
+/// it, and the timer must fire PROMPTLY on a running scheduler — no restart,
+/// no GUI edit, no manual refill.
+///
+/// Probe-proof on purpose: `max_sleep` is 60 s, so the scheduler's tick (and
+/// with it the data_version probe the watcher's own commit would trip) does
+/// not run again within the test window, and the rebuild floor is disabled.
+/// The ONLY thing that can wake the loop in time is the watcher's Refill
+/// control message — reverting `refill_if_mutated` turns this test red.
 #[test]
 fn watcher_claimed_slot_add_fires_running_scheduler() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -1021,9 +1027,10 @@ fn watcher_claimed_slot_add_fires_running_scheduler() {
         crate::scheduler::SystemClock::new(),
         crate::scheduler::RecordingAction::new(),
         crate::scheduler::SchedulerConfig::default()
-            .with_max_sleep(Duration::from_millis(50))
-            // Floor disabled: the ONLY thing that can load the timer is the
-            // watcher's refill after processing the slot request.
+            // 60 s between ticks: without the watcher's Refill interrupting
+            // the sleep, nothing fires inside the test window.
+            .with_max_sleep(Duration::from_secs(60))
+            // Floor disabled too — no periodic rebuild can rescue it either.
             .with_external_rebuild_interval(Duration::from_secs(3600)),
     );
     let handle = sched.control_handle();
@@ -1040,15 +1047,20 @@ fn watcher_claimed_slot_add_fires_running_scheduler() {
     })
     .expect("watch thread");
 
+    // Let the scheduler finish booting (empty-heap rebuild) before the
+    // publish, so the timer cannot slip in via the boot snapshot.
+    thread::sleep(Duration::from_millis(500));
+
     // External app publishes to free/ and waits — no slot-submit, no poll of
     // its own. The running Bellman's watcher must claim it.
     let ext_service = SlotService::open(&slots_root, SlotConfig::default()).unwrap();
+    let t_publish = Utc::now();
     ext_service
         .publish(make_add_request("app-a", "watched", "interval", None, Some(1)))
         .unwrap();
 
     // Wait past two intervals, then shut everything down.
-    thread::sleep(Duration::from_millis(4000));
+    thread::sleep(Duration::from_millis(6000));
     handle.shutdown();
     let result = sched_thread.join().unwrap().unwrap();
     watch.stop();
@@ -1061,5 +1073,14 @@ fn watcher_claimed_slot_add_fires_running_scheduler() {
         result.fires.len() >= 2,
         "slot-created timer must fire on its own interval, got {}",
         result.fires.len()
+    );
+    // Promptness (INTEGRATION.md rule 5: watcher-applied requests are live
+    // immediately): the first fire lands on its own scheduled second, a
+    // second or two after publishing — not one max_sleep tick (60 s) later.
+    let first = &result.fires[0];
+    assert!(
+        first.scheduled_for <= t_publish + chrono::Duration::seconds(5),
+        "first fire must land within seconds of publishing (prompt refill), got {:?} (published {t_publish:?})",
+        first.scheduled_for
     );
 }
