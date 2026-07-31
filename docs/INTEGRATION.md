@@ -22,7 +22,7 @@ Bellman makes of you** (see *Connect your own application*).
 | create / modify / delete timers from your app | *Protocol* + *Copy-paste clients*, below |
 | **be woken by a timer and report the outcome** | **[Connect your own application](#connect-your-own-application)** |
 | do that over a socket instead of files | [Talking over the local socket](#talking-over-the-local-socket-ipc) |
-| just see it work first | `testing_apps/lightbulb/` — a ~130-line reference app |
+| just see it work first | `testing_apps/lightbulb/` (terminal snippet to copy) or `testing_apps/lightbulb_gui/` (GUI window to watch) |
 
 CLI helper (one-shot, no daemon):
 
@@ -340,8 +340,8 @@ then log `wake_failed` with message `FAILED`.
 Everything an app needs is three JSON files and one rule: **one writer per
 file**. Bellman writes its files, your app writes exactly one — the reply
 file — and neither side ever touches the other's. The reference
-implementation is `testing_apps/lightbulb/` in the repo: a stdlib-only terminal
-app (~130 lines) whose reply logic is the six-line `reply()` function.
+implementations are in `testing_apps/`: `lightbulb/` (a stdlib-only terminal
+app (~130 lines) whose reply logic is the six-line `reply()` function) and `lightbulb_gui/` (an interactive graphical demo).
 
 ### The timer's folder
 
