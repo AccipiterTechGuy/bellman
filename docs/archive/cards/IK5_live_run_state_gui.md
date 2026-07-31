@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-31 — shipped; card bellman-ik5-live-run-state-in-the-gui, run 2026-07-31_0003, merge b37b7d3.
+
 # IK5 — Live run state in the GUI
 
 Repo: `~/bellman`. Depends on **IK3** (the data must exist first).
