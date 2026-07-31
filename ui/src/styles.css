@@ -1925,3 +1925,57 @@ main {
 
 .dep-list li.ok { color: var(--status-ok); font-weight: var(--weight-medium); }
 .dep-list li.miss { color: var(--fg-secondary); }
+
+/* ── IK5: live run state ─────────────────────────────────────────────── */
+
+/* One-line live state on an owned timer's row / pinned history entry. */
+.run-state { font-size: var(--text-sm); }
+.run-state.tone-live { color: var(--accent-primary); }
+.run-state.tone-ok { color: var(--status-ok); }
+.run-state.tone-err { color: var(--status-err); }
+.run-state.tone-warn { color: var(--status-warn); }
+.run-state.tone-muted { color: var(--fg-secondary); }
+
+/* Terminal success in event-log kind chips (err/warn already existed). */
+.log-line .kind.ok { color: var(--status-ok); }
+
+/* "Happening now" — current non-terminal runs pinned above Run history. */
+.live-runs {
+  margin: 8px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--accent-soft-border);
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+}
+.live-runs-title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--accent-primary);
+  margin-bottom: 4px;
+}
+
+/* Current-run block inside the timer detail panel. */
+.run-detail {
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.run-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 4px 16px;
+  margin: 6px 0 0;
+}
+.run-detail-grid dt {
+  font-size: var(--text-xs);
+  color: var(--fg-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.run-detail-grid dd {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--fg-primary);
+  word-break: break-all;
+}
+.run-detail-grid .mono { font-family: var(--font-mono); }

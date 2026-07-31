@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
-  import { listTimers, setEnabled, runNow, listLogTail } from './api.js';
+  import { listTimers, setEnabled, runNow, listLogTail, listRunStates, onRunStatusChanged } from './api.js';
+  import { runRowDisplay, formatElapsed, elapsedSecs, isOverdue } from './run-status.js';
 
   /** @type {(text: string, kind?: 'info'|'err') => void} */
   let { onToast, onPauseChange, onEdit, onCreate } = $props();
@@ -10,6 +11,9 @@
   let log = $state({ events: [], total: 0, skipped: 0 });
   let loading = $state(true);
   let pollHandle = null;
+
+  /** IK5: timerId → current run DTO (integration-owned timers only). */
+  let runStates = $state({});
 
   /** @type {'next' | 'name'} */
   let sortBy = $state('next');
@@ -39,6 +43,35 @@
     }
   }
 
+  /** IK5: full run-state map (initial load / resync). */
+  async function refreshRunStates() {
+    try {
+      const list = await listRunStates();
+      const map = {};
+      for (const r of list) map[r.timerId] = r;
+      runStates = map;
+    } catch (e) {
+      onToast(String(e), 'err');
+    }
+  }
+
+  /**
+   * IK5: the `run-status-changed` invalidation carries only the timer id —
+   * refetch just that timer's current run and merge (or drop) it.
+   */
+  async function applyRunStateUpdate(timerId) {
+    if (!timerId) { await refreshRunStates(); return; }
+    try {
+      const list = await listRunStates(timerId);
+      const next = { ...runStates };
+      if (list.length === 0) delete next[timerId];
+      else next[timerId] = list[0];
+      runStates = next;
+    } catch (e) {
+      onToast(String(e), 'err');
+    }
+  }
+
   async function toggle(t, e) {
     e.stopPropagation();
     try {
@@ -56,6 +89,7 @@
       const r = await runNow(t.id);
       onToast(`${t.name} fired: ${r.message}`);
       await refresh();
+      await applyRunStateUpdate(t.id);
       if (selectedId === t.id) await refreshLog();
     } catch (err) {
       onToast(String(err), 'err');
@@ -153,9 +187,21 @@
   let _tick = $state(0);
   onMount(() => {
     refresh();
+    refreshRunStates();
     pollHandle = setInterval(refresh, 5000);
+    // The 1s tick re-renders countdowns AND advances elapsed/overdue text
+    // while a run is non-terminal — pure render arithmetic, no refetch.
     const tick = setInterval(() => { _tick++; }, 1000);
+    // IK5: backend invalidation — the ONLY refetch trigger for run state.
+    // (Placeholder-unsub pattern: the async listen resolves after mount.)
+    let unlisten = () => {};
+    let dead = false;
+    onRunStatusChanged((timerId) => { applyRunStateUpdate(timerId); }).then((u) => {
+      if (dead) u(); else unlisten = u;
+    });
     return () => {
+      dead = true;
+      unlisten();
       if (pollHandle) clearInterval(pollHandle);
       clearInterval(tick);
     };
@@ -244,6 +290,12 @@
             onclick={() => select(t)}>
           <td class="col-name">
             <span class="name-text">{t.name}</span>
+            {#key _tick}
+              {@const disp = runRowDisplay(runStates[t.id], Date.now())}
+              {#if disp}
+                <div class="run-state tone-{disp.tone}">{disp.dot} {disp.text}</div>
+              {/if}
+            {/key}
           </td>
           <td class="col-summary">{t.kind} — {t.summary}</td>
           <td class="col-action">{t.action}</td>
@@ -281,6 +333,44 @@
 
   {#if selectedId}
     <div class="log-panel">
+      {#if runStates[selectedId]}
+        {@const run = runStates[selectedId]}
+        <div class="run-detail">
+          {#key _tick}
+            {@const disp = runRowDisplay(run, Date.now())}
+            <header>
+              <span>Current run — <span class="run-state tone-{disp.tone}">{disp.dot} {disp.text}</span></span>
+            </header>
+            <dl class="run-detail-grid">
+              <div><dt>run_id</dt><dd class="mono">{run.runId}</dd></div>
+              <div><dt>app</dt><dd>{run.appName}</dd></div>
+              <div><dt>state</dt><dd>{run.state}{run.failureKind ? ` · ${run.failureKind === 'timed_out' ? 'timed out' : 'reported'}` : ''}</dd></div>
+              <div><dt>fired</dt><dd>{fmtTime(run.firedAt)} ({formatElapsed(elapsedSecs(run, Date.now()))} elapsed)</dd></div>
+              {#if run.expectedSecs != null}
+                <div><dt>expected</dt><dd>~{formatElapsed(run.expectedSecs)}{isOverdue(run, Date.now()) ? ' — overdue' : ''}</dd></div>
+              {/if}
+              {#if run.progress}
+                <div><dt>progress</dt><dd>{run.progress}</dd></div>
+              {/if}
+              {#if run.reason}
+                <div><dt>reason</dt><dd>{run.reason}</dd></div>
+              {/if}
+              {#if run.completedAt}
+                <div><dt>completed</dt><dd>{fmtTime(run.completedAt)}</dd></div>
+              {/if}
+              {#if run.failedAt}
+                <div><dt>failed</dt><dd>{fmtTime(run.failedAt)}</dd></div>
+              {/if}
+              {#if run.noAckAt}
+                <div><dt>no_ack</dt><dd>{fmtTime(run.noAckAt)}</dd></div>
+              {/if}
+              {#if run.result != null}
+                <div><dt>result</dt><dd class="mono">{JSON.stringify(run.result)}{run.resultTruncated ? ' (truncated)' : ''}</dd></div>
+              {/if}
+            </dl>
+          {/key}
+        </div>
+      {/if}
       <header>
         <span>Event log tail (most recent first) — {log.totalRecords} record{log.totalRecords === 1 ? '' : 's'}{log.skipped ? `, ${log.skipped} skipped` : ''}</span>
         <button class="btn" onclick={() => { selectedId = null; log = { events: [], total: 0, skipped: 0 }; }}>Close</button>
