@@ -16,6 +16,27 @@ Cross-platform (Windows / macOS / Linux) **task scheduler** desktop app — the
 desktop cousin of cron. Named after the bellmen (knocker-uppers) who woke
 people before alarm clocks existed: Bellman's job is waking *applications*.
 
+<p align="center">
+  <img src="docs/screenshots/all-timers.png" alt="Bellman — All timers list with next-fire times, density warnings, and Run now controls" width="880" />
+</p>
+
+<details>
+<summary>More screenshots (Week · Month · Run history)</summary>
+
+<p align="center">
+  <img src="docs/screenshots/week.png" alt="Bellman — Week view" width="880" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/month.png" alt="Bellman — Month calendar" width="880" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/run-history.png" alt="Bellman — Run history event log" width="880" />
+</p>
+
+All product shots live in [`docs/screenshots/`](docs/screenshots/). QA before/after captures are under [`docs/qa4-screenshots/`](docs/qa4-screenshots/).
+
+</details>
+
 ## Install
 
 **There is no tagged release and no signed build — you build it yourself.**
