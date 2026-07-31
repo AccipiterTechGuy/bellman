@@ -46,6 +46,7 @@ impl E2e {
             watchdog_factor: 2.0,
             anchors,
             deadlines,
+            fire_slot_file: None,
         }
     }
 

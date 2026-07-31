@@ -20,9 +20,10 @@ pub mod tree;
 pub mod visible;
 
 pub use actions::{
-    notify_stub, run_launch, run_parallel_under_cap, write_output_slot, ActionLimiter, ActionRunner,
-    ActionRunnerConfig, LaunchConfig, LaunchOutcome, LimiterStats, NotifyOutcome, NotifySink,
-    StubNotifySink, WriteSlotPayload, DEFAULT_OUTPUT_CAP_BYTES,
+    notify_stub, run_launch, run_parallel_under_cap, ActionExecutor, ActionLimiter,
+    CancellationToken, Dispatcher, DispatcherConfig, ExecOutcome, ExecutorConfig, LaunchConfig,
+    LaunchOutcome, LimiterStats, NotifyOutcome, NotifySink, StubNotifySink,
+    DEFAULT_OUTPUT_CAP_BYTES,
 };
 pub use app_config::{
     config_path, AppConfig, DEFAULT_ACK_GRACE_SECS, DEFAULT_HORIZON_SECS,
@@ -50,8 +51,8 @@ pub use service::log_query::{
     current_log_path, logs_dir_from_data, read_log_history, read_log_tail, LogPath,
 };
 pub use service::run_now::{
-    open_store, publish_fire_slot_response, resolve_logs_dir, resolve_slots_root_optional,
-    run_now, slot_record_for_timer, RunNowError, RunNowOptions, RunNowOutcome,
+    open_store, resolve_logs_dir, resolve_slots_root_optional, run_now, slot_record_for_timer,
+    RunNowError, RunNowOptions, RunNowOutcome,
 };
 pub use slots::{
     atomic_write_json, make_add_request, poll_once, SlotConfig, SlotError, SlotLayout,

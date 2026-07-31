@@ -244,6 +244,7 @@ impl SlotService {
             watchdog_factor: app_cfg.watchdog_factor,
             anchors: crate::reply::new_anchors(),
             deadlines: crate::reply::new_deadlines(),
+            fire_slot_file: None,
         };
         let Ok(_gate) = crate::reply::gate::acquire(data_dir, timer_id) else {
             return;

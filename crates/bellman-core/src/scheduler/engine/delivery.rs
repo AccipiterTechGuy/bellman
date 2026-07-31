@@ -194,6 +194,13 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
 
     /// Recover claims left in `claimed` state after a crash (at-least-once).
     pub(super) fn recover_pending_claims(&mut self) -> SchedulerResult<Vec<DeliveredFire>> {
+        if !self.action.executes_inline() {
+            // SCH1: the dispatcher owns pending-claim recovery. Claims are
+            // durable; `boot_complete` returned the previous owner's `active`
+            // claims to `pending`, and the pump re-queues every unfinished
+            // claim with its original run_id. Nothing to do on the loop.
+            return Ok(vec![]);
+        }
         let pending = self.store.pending_claims()?;
         let mut out = Vec::new();
         for claim in pending {
@@ -264,14 +271,14 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                         scheduled_for,
                     })) => {
                         match self.store.get_claim_for(timer_id, scheduled_for)? {
-                            Some(existing) if existing.status == ClaimStatus::Claimed => {
+                            Some(existing) if existing.is_unfinished() => {
                                 // Crash between the fire commit and the action
                                 // — recover the action. The reconciler repairs
                                 // any missing projections.
                                 return self.act_and_close(timer, &existing, kind);
                             }
                             Some(_) => {
-                                // Already completed — never re-fire this slot.
+                                // Already finished — never re-fire this slot.
                                 self.ensure_advanced_past(timer.id, scheduled_for)?;
                                 return Ok(None);
                             }
@@ -295,7 +302,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                         timer_id,
                         scheduled_for,
                     }) => match self.store.get_claim_for(timer_id, scheduled_for)? {
-                        Some(existing) if existing.status == ClaimStatus::Claimed => {
+                        Some(existing) if existing.is_unfinished() => {
                             return self.act_and_close(timer, &existing, kind);
                         }
                         Some(_) => {
@@ -316,21 +323,52 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         self.act_and_close(timer, &claim, kind)
     }
 
-    /// Run the action for an existing claim, complete it, and advance the timer.
+    /// Dispatch (or inline-run) the action for an existing claim, then
+    /// advance the timer immediately — the loop never waits for an action.
+    ///
+    /// SCH1: the claim can already be `finished` when it arrives here —
+    /// the fire transaction decided an overlap skip at commit time. The
+    /// record of the fire was published either way; only the configured
+    /// action waits in the timer's lane (or never runs, when skipped).
     fn act_and_close(
         &mut self,
         timer: &Timer,
         claim: &RunClaim,
         kind: FireKind,
     ) -> SchedulerResult<Option<DeliveredFire>> {
-        if claim.status == ClaimStatus::Completed {
-            self.ensure_advanced_past(timer.id, claim.scheduled_for)?;
-            return Ok(None);
+        let mut inline_error: Option<String> = None;
+        if claim.status == ClaimStatus::Finished {
+            // Overlap skip decided at fire commit (or a slot already closed
+            // by a crash race): nothing to execute.
+            if claim.completed_at.is_some() && claim.outcome.is_none() {
+                // Defensive: a finished row always carries an outcome.
+                self.ensure_advanced_past(timer.id, claim.scheduled_for)?;
+                return Ok(None);
+            }
+        } else {
+            let ctx = FireContext::from_claim(timer, claim, kind.clone());
+            let action_res = self.action.on_fire(&ctx);
+
+            if self.action.executes_inline() {
+                // Legacy/test actions: close the claim here, as before —
+                // recording delivered vs wake-failed honestly so recovery
+                // does not infinite-loop.
+                if claim.status == ClaimStatus::Pending {
+                    if action_res.is_ok() {
+                        self.store.complete_run(claim.run_id)?;
+                    } else {
+                        self.store.fail_run(claim.run_id)?;
+                    }
+                }
+                if let Err(e) = action_res {
+                    inline_error = Some(e);
+                }
+            } else if let Err(e) = action_res {
+                // A dispatch nudge failure never fails the fire: the claim is
+                // durable `pending`; the periodic pump (≤ 1 s) re-queues it.
+                eprintln!("bellman: dispatch nudge failed for {}: {e}", claim.run_id);
+            }
         }
-
-        let ctx = FireContext::from_claim(timer, claim, kind.clone());
-
-        let action_res = self.action.on_fire(&ctx);
 
         // Dogfood: when the internal system.prune timer fires, run the prune
         // pass (JSONL rotate/retain + terminal one-shot cleanup).
@@ -353,17 +391,6 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             }
         }
 
-        // Close the claim even when the action fails so recovery does not
-        // infinite-loop — but record the real outcome: delivered vs
-        // wake-failed. Action errors still surface to the caller.
-        if claim.status == ClaimStatus::Claimed {
-            if action_res.is_ok() {
-                self.store.complete_run(claim.run_id)?;
-            } else {
-                self.store.fail_run(claim.run_id)?;
-            }
-        }
-
         // Advance last_fired only when this slot is not yet recorded (crash may
         // have updated next_fire already).
         let fresh = self.store.get_timer(timer.id)?;
@@ -376,23 +403,19 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             self.requeue_timer(timer.id)?;
         }
 
-        if let Err(e) = action_res {
-            // IK2: status.json stays the firing snapshot — the delivery
-            // failure is honest in the claim ledger and the wake_failed event
-            // (R5 `failed` is reserved for app reports, IK3). timer.json
-            // still picks up the advanced next_fire.
-            if let Some(data_dir) = self.config.data_dir.clone() {
-                refresh_timer_json(&crate::tree::TimersTree::new(&data_dir), &self.store, timer.id);
-            }
-            return Err(SchedulerError::Action(e));
-        }
-
         // IK2: timer.json picks up the advanced next_fire from
         // mark_fired/requeue above. status.json intentionally stays at the
         // firing snapshot: the R5 `completed` state is an app report (IK3),
-        // and the claim ledger's `Completed` only means wake_delivered.
+        // and the claim ledger's outcome is delivery bookkeeping. The
+        // dispatcher's workers never touch these files.
         if let Some(data_dir) = self.config.data_dir.clone() {
             refresh_timer_json(&crate::tree::TimersTree::new(&data_dir), &self.store, timer.id);
+        }
+
+        if let Some(e) = inline_error {
+            // Inline action failure surfaces to the caller (the failure is
+            // honest in the claim ledger and the wake_failed event).
+            return Err(SchedulerError::Action(e));
         }
 
         Ok(Some(DeliveredFire {

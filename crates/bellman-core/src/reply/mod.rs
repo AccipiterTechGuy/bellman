@@ -19,6 +19,7 @@ mod document;
 mod engine;
 pub mod gate;
 mod notification;
+pub mod publication;
 pub mod quarantine;
 mod watcher;
 

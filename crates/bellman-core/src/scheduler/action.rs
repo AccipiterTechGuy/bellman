@@ -44,8 +44,30 @@ impl<'a> FireContext<'a> {
 
 /// Injected action sink. Implementations must be side-effect free w.r.t. the
 /// claim ledger — the engine claims before calling and completes after.
+///
+/// SCH1: `on_fire` is the fire-PRODUCER hook. It runs on the scheduler
+/// thread after the fire transaction committed and must only do short work —
+/// the configured action (`Launch` / `Notify` / `None`) executes on a
+/// dispatcher worker, never here.
 pub trait FireAction {
     fn on_fire(&mut self, ctx: &FireContext<'_>) -> Result<(), String>;
+
+    /// True when `on_fire` executed the action to completion on the caller's
+    /// thread (legacy/test actions): the scheduler then closes the claim
+    /// itself. False for the worker-pool dispatcher — its workers commit the
+    /// durable result, so the loop never waits for an action.
+    fn executes_inline(&self) -> bool {
+        true
+    }
+
+    /// Startup recovery may begin: the R10 reply scan/ingest, outbox
+    /// recovery and folder reconciliation completed, so the dispatcher pump
+    /// and transport-publication pump may start. Default no-op.
+    fn boot_complete(&mut self) {}
+
+    /// Stop accepting new jobs and let in-flight lanes finish (shutdown
+    /// drains rather than truncating). Default no-op.
+    fn shutdown(&mut self) {}
 }
 
 /// No-op action (useful when only the ledger / next-fire advance matters).

@@ -18,8 +18,8 @@ mod schema;
 pub use error::{StoreError, StoreResult};
 pub use models::{
     Action, ClaimStatus, FailureKind, Meta, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy,
-    RotationJournal, RotationPhase, RunClaim, RunStateRow, SlotRequestRecord, Timer, TimerId,
-    TimerPatch, TimerUpdate,
+    RotationJournal, RotationPhase, RunClaim, RunOutcome, RunStateRow, SlotRequestRecord, Timer,
+    TimerId, TimerPatch, TimerUpdate, TransportProjection,
 };
 
 use crate::occurrence::Occurrence;
@@ -28,6 +28,11 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use schema::{migrate, SCHEMA_VERSION};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
+
+/// Column list for `runs` reads (phase + outcome + dispatch fields, SCH1).
+const RUN_COLS: &str = "run_id, timer_id, scheduled_for, status, claimed_at, completed_at,
+     COALESCE(event_sequence, 0), outcome, outcome_reason,
+     COALESCE(cancel_requested, 0)";
 
 /// Open options for a store database.
 #[derive(Debug, Clone, Copy)]
@@ -200,9 +205,13 @@ impl Store {
     }
 
     /// Optimistic update: succeeds only when `expected_revision` matches.
-    /// Recomputes `next_fire_utc` in the same transaction.
+    /// Recomputes `next_fire_utc` in the same transaction. IMMEDIATE: the
+    /// read-modify-write must not die with BUSY_SNAPSHOT against a concurrent
+    /// worker/producer commit (busy_timeout deliberately does not retry those).
     pub fn update_timer(&mut self, update: TimerUpdate) -> StoreResult<Timer> {
-        let tx = self.conn.transaction()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let timer = update_timer_tx(&tx, update)?;
         tx.commit()?;
         Ok(timer)
@@ -256,7 +265,12 @@ impl Store {
         timer_id: TimerId,
         scheduled_for: DateTime<Utc>,
     ) -> StoreResult<RunClaim> {
-        let tx = self.conn.transaction()?;
+        // IMMEDIATE: the MAX(event_sequence) read and the claim INSERT must
+        // not be split by a concurrent commit (BUSY_SNAPSHOT, and a duplicate
+        // sequence).
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let claim = claim_run_conn(&tx, timer_id, scheduled_for)?;
         tx.commit()?;
         Ok(claim)
@@ -264,26 +278,39 @@ impl Store {
 
     /// Mark a previously claimed run as completed (wake action delivered).
     pub fn complete_run(&mut self, run_id: Uuid) -> StoreResult<RunClaim> {
-        self.finish_run(run_id, ClaimStatus::Completed)
+        self.finish_run(run_id, RunOutcome::WakeDelivered, None)
     }
 
-    /// Mark a previously claimed run as wake-failed (action failed after
-    /// retries). Terminal for recovery like [`Store::complete_run`], but the
-    /// failure is recorded instead of being rewritten as success.
+    /// Mark a run as wake-failed (action failed after retries). Terminal for
+    /// recovery like [`Store::complete_run`], but the failure is recorded
+    /// instead of being rewritten as success.
     pub fn fail_run(&mut self, run_id: Uuid) -> StoreResult<RunClaim> {
-        self.finish_run(run_id, ClaimStatus::WakeFailed)
+        self.finish_run(run_id, RunOutcome::WakeFailed, None)
     }
 
-    fn finish_run(&mut self, run_id: Uuid, status: ClaimStatus) -> StoreResult<RunClaim> {
+    /// Finish a run with an explicit outcome and machine reason (SCH1).
+    ///
+    /// Accepts the transition from `pending` (fire-transaction skips,
+    /// `Replace` before-start) or `active` (worker results); an already
+    /// `finished` claim is never rewritten — [`StoreError::RunNotFound`].
+    pub fn finish_run(
+        &mut self,
+        run_id: Uuid,
+        outcome: RunOutcome,
+        reason: Option<&str>,
+    ) -> StoreResult<RunClaim> {
         let completed_at = Utc::now();
         let n = self.conn.execute(
-            "UPDATE runs SET status = ?1, completed_at = ?2
-             WHERE run_id = ?3 AND status = ?4",
+            "UPDATE runs SET status = ?1, outcome = ?2, outcome_reason = ?3, completed_at = ?4
+             WHERE run_id = ?5 AND status IN (?6, ?7)",
             params![
-                status.as_str(),
+                ClaimStatus::Finished.as_str(),
+                outcome.as_str(),
+                reason,
                 fmt_dt(completed_at),
                 run_id.to_string(),
-                ClaimStatus::Claimed.as_str(),
+                ClaimStatus::Pending.as_str(),
+                ClaimStatus::Active.as_str(),
             ],
         )?;
         if n != 1 {
@@ -292,20 +319,84 @@ impl Store {
         self.get_run(run_id)?.ok_or(StoreError::RunNotFound(run_id))
     }
 
+    /// CAS `pending → active` (SCH1): a worker must win this transition
+    /// before executing. Duplicate or stale queue hints lose it and do
+    /// nothing, so a live process cannot execute one claim concurrently twice.
+    pub fn activate_run(&mut self, run_id: Uuid) -> StoreResult<bool> {
+        let n = self.conn.execute(
+            "UPDATE runs SET status = ?1 WHERE run_id = ?2 AND status = ?3",
+            params![
+                ClaimStatus::Active.as_str(),
+                run_id.to_string(),
+                ClaimStatus::Pending.as_str(),
+            ],
+        )?;
+        Ok(n == 1)
+    }
+
+    /// Return one `active` claim to `pending` (in-process worker-supervisor
+    /// recovery after a worker panic/exit — the lane never had a chance to
+    /// commit, so the at-least-once rule re-queues the same `run_id`).
+    pub fn repend_run(&mut self, run_id: Uuid) -> StoreResult<()> {
+        self.conn.execute(
+            "UPDATE runs SET status = ?1 WHERE run_id = ?2 AND status = ?3",
+            params![
+                ClaimStatus::Pending.as_str(),
+                run_id.to_string(),
+                ClaimStatus::Active.as_str(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Return every `active` claim to `pending`. ONLY the process holding the
+    /// dispatcher OS lock may call this (at startup, after acquiring the lock
+    /// it knows the previous dispatcher is gone). An arbitrary CLI must not.
+    pub fn repend_all_active(&mut self) -> StoreResult<u64> {
+        let n = self.conn.execute(
+            "UPDATE runs SET status = ?1 WHERE status = ?2",
+            params![
+                ClaimStatus::Pending.as_str(),
+                ClaimStatus::Active.as_str(),
+            ],
+        )?;
+        Ok(n as u64)
+    }
+
+    /// Active claims with a durable cancellation request (`Replace`) that the
+    /// dispatcher has not necessarily signalled to a worker token yet.
+    pub fn cancel_requested_active(&self) -> StoreResult<Vec<Uuid>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT run_id FROM runs
+             WHERE status = ?1 AND COALESCE(cancel_requested, 0) = 1
+             ORDER BY run_id ASC",
+        )?;
+        let rows = stmt.query_map(params![ClaimStatus::Active.as_str()], |r| {
+            r.get::<_, String>(0)
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            let s = r?;
+            out.push(
+                Uuid::parse_str(&s)
+                    .map_err(|e| StoreError::Internal(format!("bad run_id '{s}': {e}")))?,
+            );
+        }
+        Ok(out)
+    }
+
     /// Fetch a run claim by id.
     pub fn get_run(&self, run_id: Uuid) -> StoreResult<Option<RunClaim>> {
         get_run_conn(&self.conn, run_id)
     }
 
-    /// Pending (claimed, not completed) run claims — recovery surface after crash.
+    /// Pending (not yet active) run claims — the dispatcher pump surface.
     pub fn pending_claims(&self) -> StoreResult<Vec<RunClaim>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT run_id, timer_id, scheduled_for, status, claimed_at, completed_at,
-                    COALESCE(event_sequence, 0)
-             FROM runs WHERE status = ?1
-             ORDER BY claimed_at ASC, run_id ASC",
-        )?;
-        let rows = stmt.query_map(params![ClaimStatus::Claimed.as_str()], row_to_claim)?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {RUN_COLS} FROM runs WHERE status = ?1
+             ORDER BY claimed_at ASC, run_id ASC"
+        ))?;
+        let rows = stmt.query_map(params![ClaimStatus::Pending.as_str()], row_to_claim)?;
         let mut out = Vec::new();
         for r in rows {
             out.push(r?);
@@ -319,11 +410,9 @@ impl Store {
         timer_id: TimerId,
         scheduled_for: DateTime<Utc>,
     ) -> StoreResult<Option<RunClaim>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT run_id, timer_id, scheduled_for, status, claimed_at, completed_at,
-                    COALESCE(event_sequence, 0)
-             FROM runs WHERE timer_id = ?1 AND scheduled_for = ?2",
-        )?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {RUN_COLS} FROM runs WHERE timer_id = ?1 AND scheduled_for = ?2"
+        ))?;
         let row = stmt
             .query_row(
                 params![timer_id.to_string(), fmt_dt(scheduled_for)],
@@ -534,13 +623,11 @@ impl Store {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> StoreResult<Vec<RunClaim>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT run_id, timer_id, scheduled_for, status, claimed_at, completed_at,
-                    COALESCE(event_sequence, 0)
-             FROM runs
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {RUN_COLS} FROM runs
              WHERE scheduled_for >= ?1 AND scheduled_for < ?2
-             ORDER BY scheduled_for ASC, run_id ASC",
-        )?;
+             ORDER BY scheduled_for ASC, run_id ASC"
+        ))?;
         let rows = stmt.query_map(params![fmt_dt(from), fmt_dt(to)], row_to_claim)?;
         let mut out = Vec::new();
         for r in rows {
@@ -570,7 +657,9 @@ impl Store {
 
     /// Advance the durable ack cursor (never moves backwards).
     pub fn ack_run_events(&mut self, timer_id: TimerId, through_sequence: u64) -> StoreResult<u64> {
-        let tx = self.conn.transaction()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let new = ack_run_events_tx(&tx, timer_id, through_sequence)?;
         tx.commit()?;
         Ok(new)
@@ -592,14 +681,12 @@ impl Store {
         limit: usize,
     ) -> StoreResult<Vec<RunClaim>> {
         let last_ack = self.last_acked_sequence(timer_id)?;
-        let mut stmt = self.conn.prepare(
-            "SELECT run_id, timer_id, scheduled_for, status, claimed_at, completed_at,
-                    COALESCE(event_sequence, 0)
-             FROM runs
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {RUN_COLS} FROM runs
              WHERE timer_id = ?1 AND COALESCE(event_sequence, 0) > ?2
              ORDER BY event_sequence ASC, run_id ASC
-             LIMIT ?3",
-        )?;
+             LIMIT ?3"
+        ))?;
         let rows = stmt.query_map(
             params![timer_id.to_string(), last_ack as i64, limit as i64],
             row_to_claim,
@@ -618,14 +705,12 @@ impl Store {
         limit: usize,
     ) -> StoreResult<Vec<RunClaim>> {
         let last_ack = Self::last_acked_sequence_in_tx(tx, timer_id)?;
-        let mut stmt = tx.prepare(
-            "SELECT run_id, timer_id, scheduled_for, status, claimed_at, completed_at,
-                    COALESCE(event_sequence, 0)
-             FROM runs
+        let mut stmt = tx.prepare(&format!(
+            "SELECT {RUN_COLS} FROM runs
              WHERE timer_id = ?1 AND COALESCE(event_sequence, 0) > ?2
              ORDER BY event_sequence ASC, run_id ASC
-             LIMIT ?3",
-        )?;
+             LIMIT ?3"
+        ))?;
         let rows = stmt.query_map(
             params![timer_id.to_string(), last_ack as i64, limit as i64],
             row_to_claim,
@@ -1267,6 +1352,9 @@ fn row_to_claim(r: &rusqlite::Row<'_>) -> rusqlite::Result<RunClaim> {
     let claimed_s: String = r.get(4)?;
     let completed_s: Option<String> = r.get(5)?;
     let event_sequence: i64 = r.get(6)?;
+    let outcome_s: Option<String> = r.get(7)?;
+    let outcome_reason: Option<String> = r.get(8)?;
+    let cancel_requested_i: i64 = r.get(9)?;
 
     let run_id = Uuid::parse_str(&run_id_s).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
@@ -1311,6 +1399,7 @@ fn row_to_claim(r: &rusqlite::Row<'_>) -> rusqlite::Result<RunClaim> {
             )),
         )
     })?;
+    let outcome = outcome_s.and_then(|s| RunOutcome::from_wire(&s));
 
     Ok(RunClaim {
         run_id,
@@ -1320,6 +1409,9 @@ fn row_to_claim(r: &rusqlite::Row<'_>) -> rusqlite::Result<RunClaim> {
         claimed_at,
         completed_at,
         event_sequence: event_sequence.max(0) as u64,
+        outcome,
+        outcome_reason,
+        cancel_requested: cancel_requested_i != 0,
     })
 }
 
@@ -1471,7 +1563,9 @@ impl Store {
 }
 
 /// The claim insert: new run id + durable event_sequence, in the caller's
-/// transaction/connection. `AlreadyClaimed` on the UNIQUE guard.
+/// transaction/connection. `AlreadyClaimed` on the UNIQUE guard. The claim is
+/// born `pending` (SCH1): admitted for execution unless the fire transaction
+/// finishes it as an overlap skip in the same commit.
 pub(crate) fn claim_run_conn(
     conn: &Connection,
     timer_id: TimerId,
@@ -1492,7 +1586,7 @@ pub(crate) fn claim_run_conn(
             run_id.to_string(),
             timer_id.to_string(),
             fmt_dt(scheduled_for),
-            ClaimStatus::Claimed.as_str(),
+            ClaimStatus::Pending.as_str(),
             fmt_dt(claimed_at),
             next_seq,
         ],
@@ -1502,10 +1596,13 @@ pub(crate) fn claim_run_conn(
             run_id,
             timer_id,
             scheduled_for,
-            status: ClaimStatus::Claimed,
+            status: ClaimStatus::Pending,
             claimed_at,
             completed_at: None,
             event_sequence: next_seq as u64,
+            outcome: None,
+            outcome_reason: None,
+            cancel_requested: false,
         }),
         Ok(_) => Err(StoreError::Internal("claim insert affected 0 rows".into())),
         Err(rusqlite::Error::SqliteFailure(e, _))
@@ -1521,11 +1618,9 @@ pub(crate) fn claim_run_conn(
 }
 
 pub(crate) fn get_run_conn(conn: &Connection, run_id: Uuid) -> StoreResult<Option<RunClaim>> {
-    let mut stmt = conn.prepare(
-        "SELECT run_id, timer_id, scheduled_for, status, claimed_at, completed_at,
-                COALESCE(event_sequence, 0)
-         FROM runs WHERE run_id = ?1",
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {RUN_COLS} FROM runs WHERE run_id = ?1"
+    ))?;
     let row = stmt
         .query_row(params![run_id.to_string()], row_to_claim)
         .optional()?;
@@ -1536,12 +1631,10 @@ pub(crate) fn runs_for_timer_conn(
     conn: &Connection,
     timer_id: TimerId,
 ) -> StoreResult<Vec<RunClaim>> {
-    let mut stmt = conn.prepare(
-        "SELECT run_id, timer_id, scheduled_for, status, claimed_at, completed_at,
-                COALESCE(event_sequence, 0)
-         FROM runs WHERE timer_id = ?1
-         ORDER BY event_sequence ASC, scheduled_for ASC, run_id ASC",
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {RUN_COLS} FROM runs WHERE timer_id = ?1
+         ORDER BY event_sequence ASC, scheduled_for ASC, run_id ASC"
+    ))?;
     let rows = stmt.query_map(params![timer_id.to_string()], row_to_claim)?;
     let mut out = Vec::new();
     for r in rows {
@@ -1678,6 +1771,423 @@ pub(crate) fn enqueue_event_conn(
         params![rec.event_id.to_string(), payload, fmt_dt(rec.logged_at)],
     )?;
     Ok(())
+}
+
+// ── SCH1: overlap admission (fire transaction) ──────────────────────────
+//
+// The fire transaction — not whichever worker dequeues later — examines the
+// older executable claims (`pending` or `active`) and records the durable
+// disposition: execute (stays `pending`), skip (finished `skipped_misfire`
+// with a reason), or cancel (finish older `pending`, mark older `active`
+// `cancel_requested`). Queue timing never re-decides policy.
+
+/// Count a timer's older executable (unfinished) claims, excluding `exclude`.
+pub(crate) fn unfinished_claims_count_conn(
+    conn: &Connection,
+    timer_id: TimerId,
+    exclude: Uuid,
+) -> StoreResult<usize> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM runs
+         WHERE timer_id = ?1 AND run_id != ?2 AND status IN (?3, ?4)",
+        params![
+            timer_id.to_string(),
+            exclude.to_string(),
+            ClaimStatus::Pending.as_str(),
+            ClaimStatus::Active.as_str(),
+        ],
+        |r| r.get(0),
+    )?;
+    Ok(n.max(0) as usize)
+}
+
+/// Finish one claim inside the caller's transaction (fire-tx skip, or a
+/// `Replace` before-start). Only `pending`/`active` rows move — a worker that
+/// already committed `finished` wins the race (SQLite commit order settles it).
+/// Returns `true` when THIS call transitioned the row; a `false` means the
+/// other side won and the caller must not emit its own outcome event.
+pub(crate) fn finish_run_conn(
+    conn: &Connection,
+    run_id: Uuid,
+    outcome: RunOutcome,
+    reason: &str,
+) -> StoreResult<bool> {
+    let n = conn.execute(
+        "UPDATE runs SET status = ?1, outcome = ?2, outcome_reason = ?3, completed_at = ?4
+         WHERE run_id = ?5 AND status IN (?6, ?7)",
+        params![
+            ClaimStatus::Finished.as_str(),
+            outcome.as_str(),
+            reason,
+            fmt_dt(Utc::now()),
+            run_id.to_string(),
+            ClaimStatus::Pending.as_str(),
+            ClaimStatus::Active.as_str(),
+        ],
+    )?;
+    Ok(n == 1)
+}
+
+/// A timer's `pending` claims except `exclude` (oldest first) — the claims a
+/// `Replace` fire finishes `wake_failed(overlap_replace_before_start)`.
+pub(crate) fn pending_claims_for_timer_conn(
+    conn: &Connection,
+    timer_id: TimerId,
+    exclude: Uuid,
+) -> StoreResult<Vec<RunClaim>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {RUN_COLS} FROM runs
+         WHERE timer_id = ?1 AND run_id != ?2 AND status = ?3
+         ORDER BY event_sequence ASC, run_id ASC"
+    ))?;
+    let rows = stmt.query_map(
+        params![
+            timer_id.to_string(),
+            exclude.to_string(),
+            ClaimStatus::Pending.as_str()
+        ],
+        row_to_claim,
+    )?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// Mark every `active` claim of a timer (except `exclude`) `cancel_requested`;
+/// returns the affected run ids so the dispatcher can signal their tokens.
+pub(crate) fn request_cancel_active_conn(
+    conn: &Connection,
+    timer_id: TimerId,
+    exclude: Uuid,
+) -> StoreResult<Vec<Uuid>> {
+    let mut stmt = conn.prepare(
+        "SELECT run_id FROM runs
+         WHERE timer_id = ?1 AND run_id != ?2 AND status = ?3
+           AND COALESCE(cancel_requested, 0) = 0",
+    )?;
+    let rows = stmt.query_map(
+        params![
+            timer_id.to_string(),
+            exclude.to_string(),
+            ClaimStatus::Active.as_str()
+        ],
+        |r| r.get::<_, String>(0),
+    )?;
+    let mut ids = Vec::new();
+    for r in rows {
+        let s = r?;
+        ids.push(
+            Uuid::parse_str(&s)
+                .map_err(|e| StoreError::Internal(format!("bad run_id '{s}': {e}")))?,
+        );
+    }
+    conn.execute(
+        "UPDATE runs SET cancel_requested = 1
+         WHERE timer_id = ?1 AND run_id != ?2 AND status = ?3",
+        params![
+            timer_id.to_string(),
+            exclude.to_string(),
+            ClaimStatus::Active.as_str()
+        ],
+    )?;
+    Ok(ids)
+}
+
+// ── SCH1: transport projections (fire-notification routing state) ────────
+
+/// Next database-wide publication order. Call inside the fire transaction;
+/// the IMMEDIATE write lock makes the read+insert pair atomic.
+pub(crate) fn next_publication_order_conn(conn: &Connection) -> StoreResult<u64> {
+    let n: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(publication_order), 0) + 1 FROM transport_projections",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(n.max(1) as u64)
+}
+
+/// Insert the projection and advance the fixed-target cursor in the same
+/// transaction. The cursor records the greatest order ever assigned while any
+/// projection for that target remains: an older projection below it is
+/// permanently obsolete as a fixed-path wake hint.
+pub(crate) fn insert_transport_projection_conn(
+    conn: &Connection,
+    proj: &TransportProjection,
+) -> StoreResult<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO transport_projections (
+            run_id, timer_id, target_path, payload, publication_order,
+            state, attempts, next_attempt_at, created_at, published_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            proj.run_id.to_string(),
+            proj.timer_id.to_string(),
+            proj.target_path,
+            proj.payload,
+            proj.publication_order as i64,
+            proj.state,
+            i64::from(proj.attempts),
+            fmt_dt(proj.next_attempt_at),
+            fmt_dt(proj.created_at),
+            proj.published_at.map(fmt_dt),
+        ],
+    )?;
+    conn.execute(
+        "INSERT INTO target_cursors (target_path, max_publication_order)
+         VALUES (?1, ?2)
+         ON CONFLICT(target_path) DO UPDATE SET
+           max_publication_order = MAX(target_cursors.max_publication_order, excluded.max_publication_order)",
+        params![proj.target_path, proj.publication_order as i64],
+    )?;
+    Ok(())
+}
+
+fn row_to_projection(r: &rusqlite::Row<'_>) -> rusqlite::Result<TransportProjection> {
+    let conv = |i: usize, msg: String| {
+        rusqlite::Error::FromSqlConversionFailure(i, rusqlite::types::Type::Text, msg.into())
+    };
+    let run_id_s: String = r.get(0)?;
+    let timer_id_s: String = r.get(1)?;
+    let order: i64 = r.get(4)?;
+    let attempts: i64 = r.get(6)?;
+    let next_s: String = r.get(7)?;
+    let created_s: String = r.get(8)?;
+    let published_s: Option<String> = r.get(9)?;
+    Ok(TransportProjection {
+        run_id: Uuid::parse_str(&run_id_s).map_err(|e| conv(0, e.to_string()))?,
+        timer_id: Uuid::parse_str(&timer_id_s).map_err(|e| conv(1, e.to_string()))?,
+        target_path: r.get(2)?,
+        payload: r.get(3)?,
+        publication_order: order.max(0) as u64,
+        state: r.get(5)?,
+        attempts: u32::try_from(attempts.max(0)).unwrap_or(u32::MAX),
+        next_attempt_at: parse_dt(&next_s).map_err(|e| conv(7, e.to_string()))?,
+        created_at: parse_dt(&created_s).map_err(|e| conv(8, e.to_string()))?,
+        published_at: parse_opt_dt(published_s).map_err(|e| conv(9, e.to_string()))?,
+    })
+}
+
+const PROJECTION_COLS: &str = "run_id, timer_id, target_path, payload, publication_order,
+     state, attempts, next_attempt_at, created_at, published_at";
+
+impl Store {
+    /// The transport projection for one run, if the fire transaction stored one.
+    pub fn transport_projection(&self, run_id: Uuid) -> StoreResult<Option<TransportProjection>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {PROJECTION_COLS} FROM transport_projections WHERE run_id = ?1"
+        ))?;
+        let row = stmt
+            .query_row(params![run_id.to_string()], row_to_projection)
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Pending projections eligible for a publication attempt now (bounded).
+    pub fn due_transport_projections(
+        &self,
+        now: DateTime<Utc>,
+        limit: usize,
+    ) -> StoreResult<Vec<TransportProjection>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {PROJECTION_COLS} FROM transport_projections
+             WHERE state = ?1 AND next_attempt_at <= ?2
+             ORDER BY publication_order ASC
+             LIMIT ?3"
+        ))?;
+        let rows = stmt.query_map(
+            params![
+                TransportProjection::PENDING,
+                fmt_dt(now),
+                limit as i64
+            ],
+            row_to_projection,
+        )?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// Mark a projection published (the atomic replace succeeded).
+    pub fn mark_transport_published(&self, run_id: Uuid) -> StoreResult<()> {
+        self.conn.execute(
+            "UPDATE transport_projections
+             SET state = ?2, published_at = ?3
+             WHERE run_id = ?1 AND state = ?4",
+            params![
+                run_id.to_string(),
+                TransportProjection::PUBLISHED,
+                fmt_dt(Utc::now()),
+                TransportProjection::PENDING,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Mark a projection obsolete (a newer firing owns the fixed path, or the
+    /// durable target cursor moved past it). Terminal: never republished.
+    pub fn mark_transport_obsolete(&self, run_id: Uuid) -> StoreResult<()> {
+        self.conn.execute(
+            "UPDATE transport_projections SET state = ?2
+             WHERE run_id = ?1 AND state IN (?3, ?4)",
+            params![
+                run_id.to_string(),
+                TransportProjection::OBSOLETE,
+                TransportProjection::PENDING,
+                TransportProjection::PUBLISHED,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Move a `published` projection back to `pending` for redelivery (the
+    /// app consumed/deleted the file without pickup being recorded — its
+    /// `run_id` dedupe keeps it one logical firing).
+    pub fn requeue_transport_projection(&self, run_id: Uuid) -> StoreResult<()> {
+        self.conn.execute(
+            "UPDATE transport_projections
+             SET state = ?2, next_attempt_at = ?3
+             WHERE run_id = ?1 AND state = ?4",
+            params![
+                run_id.to_string(),
+                TransportProjection::PENDING,
+                fmt_dt(Utc::now()),
+                TransportProjection::PUBLISHED,
+            ],
+        )?;
+        Ok(())
+    }
+    /// Record a failed/eligibility-deferred attempt with bounded backoff.
+    pub fn defer_transport_projection(
+        &self,
+        run_id: Uuid,
+        attempts: u32,
+        next_attempt_at: DateTime<Utc>,
+    ) -> StoreResult<()> {
+        self.conn.execute(
+            "UPDATE transport_projections
+             SET attempts = ?2, next_attempt_at = ?3
+             WHERE run_id = ?1 AND state = ?4",
+            params![
+                run_id.to_string(),
+                i64::from(attempts),
+                fmt_dt(next_attempt_at),
+                TransportProjection::PENDING,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Mark a projection picked up (ack advanced past its firing, or a valid
+    /// reply was ingested for the run). Terminal: retries stop.
+    pub fn mark_transport_picked_up(&self, run_id: Uuid) -> StoreResult<()> {
+        self.conn.execute(
+            "UPDATE transport_projections SET state = ?2
+             WHERE run_id = ?1 AND state IN (?3, ?4)",
+            params![
+                run_id.to_string(),
+                TransportProjection::PICKED_UP,
+                TransportProjection::PENDING,
+                TransportProjection::PUBLISHED,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Live (pending/published) projections for a timer whose run's
+    /// `event_sequence` is at or below `through_sequence` — the pickup surface
+    /// when `ack_through` advances.
+    pub fn live_projections_through(
+        &self,
+        timer_id: TimerId,
+        through_sequence: u64,
+    ) -> StoreResult<Vec<TransportProjection>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {PROJECTION_COLS} FROM transport_projections tp
+             JOIN runs r ON r.run_id = tp.run_id
+             WHERE tp.timer_id = ?1
+               AND COALESCE(r.event_sequence, 0) <= ?2
+               AND tp.state IN (?3, ?4)
+             ORDER BY tp.publication_order ASC"
+        ))?;
+        let rows = stmt.query_map(
+            params![
+                timer_id.to_string(),
+                through_sequence as i64,
+                TransportProjection::PENDING,
+                TransportProjection::PUBLISHED,
+            ],
+            row_to_projection,
+        )?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// All live (pending/published) projections, oldest first — the pickup
+    /// sweep surface for the publication pump.
+    pub fn live_transport_projections(
+        &self,
+        limit: usize,
+    ) -> StoreResult<Vec<TransportProjection>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {PROJECTION_COLS} FROM transport_projections
+             WHERE state IN (?1, ?2)
+             ORDER BY publication_order ASC
+             LIMIT ?3"
+        ))?;
+        let rows = stmt.query_map(
+            params![
+                TransportProjection::PENDING,
+                TransportProjection::PUBLISHED,
+                limit as i64
+            ],
+            row_to_projection,
+        )?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// The durable cursor for a fixed target path (0 when never assigned).
+    pub fn target_cursor(&self, target_path: &str) -> StoreResult<u64> {
+        let row: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT max_publication_order FROM target_cursors WHERE target_path = ?1",
+                params![target_path],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(row.unwrap_or(0).max(0) as u64)
+    }
+
+    /// Drop projections + orphan cursors for a deleted timer. A cursor is
+    /// pruned only when no retained projection still references its target.
+    pub fn prune_transport_for_timer(&mut self, timer_id: TimerId) -> StoreResult<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "DELETE FROM transport_projections WHERE timer_id = ?1",
+            params![timer_id.to_string()],
+        )?;
+        tx.execute(
+            "DELETE FROM target_cursors
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM transport_projections tp
+                 WHERE tp.target_path = target_cursors.target_path
+             )",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

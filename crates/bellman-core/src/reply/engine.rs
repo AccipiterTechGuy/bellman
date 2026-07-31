@@ -253,6 +253,12 @@ pub struct ReplyEngine {
     pub anchors: SharedAnchors,
     /// Monotonic deadline book shared with the fire path and the watcher.
     pub deadlines: SharedDeadlines,
+    /// SCH1: optional fixed fire-notification filename under `slots/fires/`
+    /// (the runtime `write_slot_file` route). `None` → per-run
+    /// `fire-<run_id>.json`. A fixed name is only an at-least-once wake hint;
+    /// the fire transaction snapshots the resolved target into the run's
+    /// transport projection so it survives the caller and renames.
+    pub fire_slot_file: Option<String>,
 }
 
 /// What became of one ingested reply.

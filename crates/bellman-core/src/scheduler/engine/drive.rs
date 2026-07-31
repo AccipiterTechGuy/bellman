@@ -32,6 +32,11 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         // reply was read would silently record the outcome unknown.
         self.run_reply_startup_scan();
 
+        // SCH1: all startup pumps wait for R10 — only now may the dispatcher
+        // return the previous owner's `active` claims to `pending` and start
+        // the dispatch + transport-publication pumps.
+        self.action.boot_complete();
+
         let mut fires = self.recover_pending_claims()?;
         fires.extend(self.misfire_pass()?);
         self.rebuild_horizon()?;
@@ -223,7 +228,8 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
     ///
     /// Sleeps are interruptible: a [`ControlMsg::Refill`] or
     /// [`ControlMsg::Shutdown`] on the control channel wakes the loop immediately
-    /// so insert/edit does not wait for `max_sleep`.
+    /// so insert/edit does not wait for `max_sleep`. On shutdown the action
+    /// sink drains (SCH1: in-flight lanes finish; nothing is truncated).
     pub fn run_until_shutdown(&mut self) -> SchedulerResult<TickResult> {
         if !self.booted {
             self.boot()?;
@@ -249,6 +255,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 }
             }
         }
+        self.action.shutdown();
         Ok(acc)
     }
 

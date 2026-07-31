@@ -26,6 +26,9 @@ pub struct LaunchConfig {
     pub output_cap: usize,
     /// Value for the `BELLMAN_RUN_ID` environment variable.
     pub run_id: Uuid,
+    /// SCH1 `Replace`: when signalled, the `try_wait` loop kills and reaps
+    /// the child instead of waiting for exit or timeout.
+    pub cancel: Option<std::sync::Arc<super::cancel::CancellationToken>>,
 }
 
 /// Outcome of a launch attempt.
@@ -34,6 +37,9 @@ pub struct LaunchOutcome {
     pub exit_code: Option<i32>,
     pub timed_out: bool,
     pub killed: bool,
+    /// The cancellation token stopped the launch (SCH1 `Replace`) — distinct
+    /// from a timeout kill: the policy interrupted a healthy run.
+    pub cancelled: bool,
     /// Captured output (capped).
     pub output: String,
     pub duration: Duration,
@@ -71,6 +77,20 @@ pub fn run_launch(cfg: &LaunchConfig) -> Result<LaunchOutcome, LaunchError> {
         cmd.current_dir(Path::new(wd));
     }
 
+    // Unix: the child leads its own process group, so a kill (timeout or
+    // SCH1 `Replace` cancellation) reaches the whole tree — otherwise an
+    // orphaned grandchild keeps the captured pipes open and the reap below
+    // blocks until IT exits, stalling the lane for seconds.
+    #[cfg(unix)]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            rustix::process::setsid()
+                .map(|_| ())
+                .map_err(|e| std::io::Error::from_raw_os_error(e.raw_os_error()))
+        });
+    }
+
     let mut child = cmd
         .spawn()
         .map_err(|e| LaunchError::Spawn(format!("spawn '{}': {e}", cfg.command)))?;
@@ -87,14 +107,26 @@ pub fn run_launch(cfg: &LaunchConfig) -> Result<LaunchOutcome, LaunchError> {
 
     let mut timed_out = false;
     let mut killed = false;
+    let mut cancelled = false;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) => {
+                if cfg.cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
+                    // SCH1 `Replace`: the policy cancelled this run — kill
+                    // and reap the child, same as the timeout path.
+                    cancelled = true;
+                    kill_child_tree(&mut child);
+                    killed = true;
+                    let status = child
+                        .wait()
+                        .map_err(|e| LaunchError::Io(format!("wait after cancel kill: {e}")))?;
+                    break status;
+                }
                 if start.elapsed() >= timeout {
                     timed_out = true;
-                    // Best-effort kill. On Unix this is SIGKILL via kill().
-                    let _ = child.kill();
+                    // Kill the whole process group (see setsid above).
+                    kill_child_tree(&mut child);
                     killed = true;
                     let status = child
                         .wait()
@@ -132,6 +164,7 @@ pub fn run_launch(cfg: &LaunchConfig) -> Result<LaunchOutcome, LaunchError> {
         exit_code: status.code(),
         timed_out,
         killed,
+        cancelled,
         output: combined,
         duration: start.elapsed(),
     })
@@ -181,4 +214,18 @@ fn push_utf8_capped(dst: &mut String, bytes: &[u8], cap: usize) {
         }
         dst.push_str(&lossy[..end]);
     }
+}
+
+#[cfg(unix)]
+fn kill_child_tree(child: &mut std::process::Child) {
+    if let Some(pid) = rustix::process::Pid::from_raw(child.id() as i32) {
+        let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+    }
+    // Fallback in case setsid failed at spawn.
+    let _ = child.kill();
+}
+
+#[cfg(not(unix))]
+fn kill_child_tree(child: &mut std::process::Child) {
+    let _ = child.kill();
 }

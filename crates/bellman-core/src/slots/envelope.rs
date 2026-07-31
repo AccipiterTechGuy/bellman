@@ -202,16 +202,26 @@ pub struct SlotRunEvent {
 impl SlotRunEvent {
     /// Project a runs-ledger row onto the wire shape.
     ///
-    /// The ledger's internal `ClaimStatus` is delivery bookkeeping; the wire
-    /// speaks R5: an open claimed run is `fired`, a delivered wake action is
-    /// `wake_delivered`, a failed one is `wake_failed`. The R5 states
-    /// `completed` / `failed` are reserved for app reports (IK3) and are
-    /// never invented from scheduler bookkeeping.
+    /// The ledger's internal phase is delivery bookkeeping; the wire speaks
+    /// R5: an unfinished claim is an open `fired` run, and a `finished` claim
+    /// projects its recorded outcome — `wake_delivered`, `wake_failed`, or
+    /// `skipped_misfire` (an overlap skip can never appear as delivered).
+    /// The R5 states `completed` / `failed` are reserved for app reports
+    /// (IK3) and are never invented from scheduler bookkeeping.
     pub fn from_claim(run: &crate::store::RunClaim) -> Self {
-        let status = match run.status {
-            crate::store::ClaimStatus::Claimed => crate::events::RunState::Fired,
-            crate::store::ClaimStatus::Completed => crate::events::RunState::WakeDelivered,
-            crate::store::ClaimStatus::WakeFailed => crate::events::RunState::WakeFailed,
+        use crate::store::{ClaimStatus, RunOutcome};
+        let status = match (run.status, run.outcome) {
+            (ClaimStatus::Pending | ClaimStatus::Active, _) => crate::events::RunState::Fired,
+            (ClaimStatus::Finished, Some(RunOutcome::WakeDelivered)) => {
+                crate::events::RunState::WakeDelivered
+            }
+            (ClaimStatus::Finished, Some(RunOutcome::SkippedMisfire)) => {
+                crate::events::RunState::SkippedMisfire
+            }
+            // A finished row without a recorded outcome is never success.
+            (ClaimStatus::Finished, Some(RunOutcome::WakeFailed) | None) => {
+                crate::events::RunState::WakeFailed
+            }
         };
         Self {
             event_sequence: run.event_sequence,

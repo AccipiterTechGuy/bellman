@@ -243,31 +243,39 @@ pub struct TimerUpdate {
     pub patch: TimerPatch,
 }
 
-/// Status of a row in the at-least-once claim ledger.
+/// Dispatch phase of a row in the at-least-once claim ledger (SCH1).
 ///
-/// Internal delivery bookkeeping — NOT the R5 run-state vocabulary. Project
-/// onto R5 at the wire boundary (`SlotRunEvent::from_claim`): `claimed` is an
-/// open `fired` run; `completed` means Bellman's wake action was delivered
-/// (`wake_delivered`); `wake_failed` means the action failed after retries.
-/// The R5 states `completed` / `failed` are reserved for app reports (IK3).
+/// Internal delivery bookkeeping — NOT the R5 run-state vocabulary, and NOT
+/// an outcome: `pending` / `active` only say where the claim sits in the
+/// dispatcher; the outcome lives in [`RunClaim::outcome`] once the row is
+/// [`ClaimStatus::Finished`]. Project onto R5 at the wire boundary
+/// (`SlotRunEvent::from_claim`): an unfinished claim is an open `fired` run;
+/// `finished` carries exactly one [`RunOutcome`]. The R5 states `completed` /
+/// `failed` are reserved for app reports (IK3).
+///
+/// The pre-SCH1 ledger used `claimed` / `completed` / `wake_failed`; the
+/// schema-v8 migration rewrites those rows (`claimed → pending`,
+/// `completed → finished + wake_delivered`, `wake_failed → finished +
+/// wake_failed`). [`FromStr`] still accepts the legacy strings so a
+/// not-yet-migrated row can never crash a reader.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimStatus {
-    /// Claimed, work not yet finished (visible after crash recovery).
-    Claimed,
-    /// Wake action delivered successfully.
-    Completed,
-    /// Wake action failed after retries (terminal for recovery, like
-    /// [`ClaimStatus::Completed`], but not a success).
-    WakeFailed,
+    /// Committed, admitted for execution, waiting for a worker lane.
+    Pending,
+    /// A worker holds the lane and is executing (or was, when its owner
+    /// died — the dispatcher-lock holder returns these to `pending`).
+    Active,
+    /// Terminal; `outcome` carries the R5 delivery outcome.
+    Finished,
 }
 
 impl ClaimStatus {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Claimed => "claimed",
-            Self::Completed => "completed",
-            Self::WakeFailed => "wake_failed",
+            Self::Pending => "pending",
+            Self::Active => "active",
+            Self::Finished => "finished",
         }
     }
 }
@@ -277,10 +285,47 @@ impl std::str::FromStr for ClaimStatus {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "claimed" => Ok(Self::Claimed),
-            "completed" => Ok(Self::Completed),
-            "wake_failed" => Ok(Self::WakeFailed),
+            "pending" => Ok(Self::Pending),
+            "active" => Ok(Self::Active),
+            "finished" => Ok(Self::Finished),
+            // Legacy (pre-v8) strings, mapped into the split.
+            "claimed" => Ok(Self::Pending),
+            "completed" | "wake_failed" => Ok(Self::Finished),
             other => Err(format!("unknown claim status '{other}'")),
+        }
+    }
+}
+
+/// The one R5 delivery outcome a `finished` claim carries (SCH1).
+///
+/// Dispatch state (`pending` / `active`) has no outcome; a skip decided in
+/// the fire transaction can never appear as `wake_delivered`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunOutcome {
+    /// Wake action delivered successfully.
+    WakeDelivered,
+    /// Wake action failed after retries, or was cancelled by `Replace`.
+    WakeFailed,
+    /// The overlap policy decided at fire commit not to run this action.
+    SkippedMisfire,
+}
+
+impl RunOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::WakeDelivered => "wake_delivered",
+            Self::WakeFailed => "wake_failed",
+            Self::SkippedMisfire => "skipped_misfire",
+        }
+    }
+
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "wake_delivered" => Some(Self::WakeDelivered),
+            "wake_failed" => Some(Self::WakeFailed),
+            "skipped_misfire" => Some(Self::SkippedMisfire),
+            _ => None,
         }
     }
 }
@@ -311,6 +356,56 @@ pub struct RunClaim {
     pub completed_at: Option<DateTime<Utc>>,
     /// Durable monotonic sequence for this timer's run events (slot output feed).
     pub event_sequence: u64,
+    /// The R5 delivery outcome; `Some` exactly when `status` is
+    /// [`ClaimStatus::Finished`] (internal dispatch field, not a wire shape).
+    #[serde(default)]
+    pub outcome: Option<RunOutcome>,
+    /// Short machine reason for the outcome (`overlap_skip`,
+    /// `overlap_replace`, launch error summary, …).
+    #[serde(default)]
+    pub outcome_reason: Option<String>,
+    /// Durable cancellation request set by a `Replace` fire transaction; the
+    /// dispatcher observes it and signals the worker's cancellation token.
+    #[serde(default)]
+    pub cancel_requested: bool,
+}
+
+impl RunClaim {
+    /// Unfinished means a worker lane still owes this claim an outcome.
+    pub fn is_unfinished(&self) -> bool {
+        self.status != ClaimStatus::Finished
+    }
+}
+
+/// Retry/routing state for one run's fire notification (SCH1) — NOT another
+/// event or history copy. Written by the fire transaction with the immutable
+/// target path, the serialized notification payload and a database-wide
+/// monotonic `publication_order`; pruned with the run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransportProjection {
+    pub run_id: Uuid,
+    pub timer_id: TimerId,
+    /// Immutable absolute target path (`slots/fires/fire-<run_id>.json`, or a
+    /// configured fixed name under `fires/` used as an at-least-once wake hint).
+    pub target_path: String,
+    /// Serialized `FireNotification` JSON (the exact bytes to publish).
+    pub payload: String,
+    /// Database-wide monotonic order assigned in the fire transaction.
+    pub publication_order: u64,
+    /// `pending` | `published` | `obsolete` | `picked_up`.
+    pub state: String,
+    /// Bounded-retry bookkeeping for the publication pump.
+    pub attempts: u32,
+    pub next_attempt_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub published_at: Option<DateTime<Utc>>,
+}
+
+impl TransportProjection {
+    pub const PENDING: &'static str = "pending";
+    pub const PUBLISHED: &'static str = "published";
+    pub const OBSOLETE: &'static str = "obsolete";
+    pub const PICKED_UP: &'static str = "picked_up";
 }
 
 /// Who reported a `failed` run state (IK3).

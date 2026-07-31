@@ -240,7 +240,7 @@ fn prune_preserves_oneshot_with_pending_claim() {
     let _claim = store.claim_run(t.id, past).unwrap();
     assert_eq!(
         store.get_run(_claim.run_id).unwrap().unwrap().status,
-        ClaimStatus::Claimed
+        ClaimStatus::Pending
     );
 
     let mut publisher =

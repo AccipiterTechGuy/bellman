@@ -7,7 +7,7 @@
 use super::build::ExpandableTask;
 use super::types::CalendarCaps;
 use crate::events::{RunState, EventRecord};
-use crate::store::{ClaimStatus, RunClaim};
+use crate::store::RunClaim;
 use chrono::{DateTime, Duration, NaiveDate, Timelike, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
@@ -198,11 +198,13 @@ pub fn build_truth_window(
     }
 
     // Claims enrich matching event buckets. A claim alone (no outcome event)
-    // is NOT invented as delivered — scheduler/run-now complete claims even
-    // when the action fails. Ledger-only rows surface as `unknown` so the UI
-    // never rewrites failure as success after log rotation/pruning.
+    // is NOT invented as delivered — SCH1 records honest outcomes
+    // (`wake_delivered` / `wake_failed` / `skipped_misfire`), but the cell
+    // still wants the event-log evidence. Ledger-only rows surface as
+    // `unknown` so the UI never rewrites failure as success after log
+    // rotation/pruning.
     for claim in claims {
-        if claim.status != ClaimStatus::Completed {
+        if claim.outcome != Some(crate::store::RunOutcome::WakeDelivered) {
             continue;
         }
         let when = claim.scheduled_for;
@@ -611,7 +613,7 @@ mod tests {
     use super::*;
     use crate::calendar::types::{CalendarCaps, CalendarStatus};
     use crate::occurrence::{Occurrence, OccurrenceKind};
-    use crate::store::{ClaimStatus, RunClaim};
+    use crate::store::{ClaimStatus, RunClaim, RunOutcome};
     use chrono::{NaiveTime, TimeZone};
     use uuid::Uuid;
 
@@ -898,8 +900,8 @@ mod tests {
 
     #[test]
     fn claim_ledger_alone_is_unknown_never_delivered() {
-        // Scheduler/run-now complete claims even when the action fails — so a
-        // completed claim without outcome events must not invent "delivered".
+        // A finished ledger row alone — even an honest `wake_delivered` —
+        // without outcome events must not invent "delivered" in the cell.
         let tid = Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap();
         let run_id = Uuid::new_v4();
         let sched = Utc.with_ymd_and_hms(2026, 7, 21, 10, 0, 0).unwrap();
@@ -907,10 +909,13 @@ mod tests {
             run_id,
             timer_id: tid,
             scheduled_for: sched,
-            status: ClaimStatus::Completed,
+            status: ClaimStatus::Finished,
             claimed_at: sched,
             completed_at: Some(sched + Duration::seconds(1)),
             event_sequence: 1,
+            outcome: Some(RunOutcome::WakeDelivered),
+            outcome_reason: None,
+            cancel_requested: false,
         }];
         let task = daily_with_id(&tid.to_string(), "from-ledger", 10, 0, "UTC");
         let now = Utc.with_ymd_and_hms(2026, 7, 29, 12, 0, 0).unwrap();
@@ -941,10 +946,13 @@ mod tests {
             run_id,
             timer_id: tid,
             scheduled_for: sched,
-            status: ClaimStatus::Completed,
+            status: ClaimStatus::Finished,
             claimed_at: sched,
             completed_at: Some(sched + Duration::seconds(1)),
             event_sequence: 1,
+            outcome: Some(RunOutcome::WakeDelivered),
+            outcome_reason: None,
+            cancel_requested: false,
         }];
         // Live definition was renamed, switched to interval, and paused.
         let mut task = daily_with_id(&tid.to_string(), "NEW CURRENT NAME", 10, 0, "UTC");
@@ -1087,10 +1095,13 @@ mod tests {
             run_id,
             timer_id: tid,
             scheduled_for: sched,
-            status: ClaimStatus::Completed,
+            status: ClaimStatus::Finished,
             claimed_at: sched,
             completed_at: Some(sched + Duration::seconds(1)),
             event_sequence: 1,
+            outcome: Some(RunOutcome::WakeDelivered),
+            outcome_reason: None,
+            cancel_requested: false,
         }];
         let task = daily_with_id(&tid.to_string(), "audit-duplicate", 15, 18, "UTC");
         let now = Utc.with_ymd_and_hms(2026, 7, 29, 12, 0, 0).unwrap();
@@ -1133,10 +1144,13 @@ mod tests {
             run_id,
             timer_id: tid,
             scheduled_for: sched,
-            status: ClaimStatus::Completed,
+            status: ClaimStatus::Finished,
             claimed_at: sched,
             completed_at: Some(sched + Duration::seconds(1)),
             event_sequence: 2,
+            outcome: Some(RunOutcome::WakeDelivered),
+            outcome_reason: None,
+            cancel_requested: false,
         }];
         let now = Utc.with_ymd_and_hms(2026, 7, 29, 12, 0, 0).unwrap();
         let win = build_truth_window(
