@@ -66,6 +66,11 @@ pub struct AppConfig {
     /// True when the user opted to set up OS wake-from-sleep.
     #[serde(default)]
     pub wake_enabled: bool,
+    /// True when the user ticked "Show me the demo" in the first-run wizard.
+    /// Remembered so Settings can offer the same demo panel later (WIZ1).
+    /// Purely a UI preference: Bellman never creates the demo's timer.
+    #[serde(default)]
+    pub demo_opt_in: bool,
 
     /// Near-horizon window in seconds (heap residency). Product default: 86400.
     #[serde(default = "default_horizon_secs")]
@@ -184,6 +189,7 @@ impl Default for AppConfig {
             autostart_enabled: false,
             start_minimized: false,
             wake_enabled: false,
+            demo_opt_in: false,
             horizon_secs: DEFAULT_HORIZON_SECS,
             retention_days: DEFAULT_RETENTION_DAYS,
             min_free_slots: DEFAULT_MIN_FREE_SLOTS,

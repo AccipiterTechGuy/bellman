@@ -15,6 +15,7 @@
 
 pub mod commands;
 pub mod config;
+pub mod demo;
 pub mod first_run;
 pub mod neighbours;
 pub mod notify_sink;
@@ -231,6 +232,10 @@ fn register_commands(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<taur
         commands::wizard_status,
         commands::wizard_set_choice,
         commands::wizard_re_run,
+        commands::demo_info,
+        commands::demo_launch,
+        commands::demo_open_docs,
+        commands::set_demo_opt_in,
         commands::app_info,
         commands::wake_status,
         commands::wake_reprobe,
