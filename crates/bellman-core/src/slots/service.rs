@@ -28,6 +28,9 @@ pub struct SlotConfig {
     pub done_retention: Duration,
     /// Max un-acked run events to embed in an output response.
     pub max_events: usize,
+    /// IK5: invalidation sink for the reply engine the `ack_through` hook
+    /// builds (pickup satisfied / `no_ack` revised by the slot-feed cursor).
+    pub status_listener: Option<crate::reply::StatusListener>,
 }
 
 impl Default for SlotConfig {
@@ -38,6 +41,7 @@ impl Default for SlotConfig {
             orphan_age: DEFAULT_ORPHAN_AGE,
             done_retention: DEFAULT_DONE_RETENTION,
             max_events: 64,
+            status_listener: None,
         }
     }
 }
@@ -232,7 +236,13 @@ impl SlotService {
     /// pickup for the current run (or revise its provisional `no_ack`).
     /// Best-effort: a failure here is retried by the reply watcher's
     /// pickup-expiry pass, which also consults the cursor.
-    fn reply_ack_hook(store: &Store, data_dir: &Path, timer_id: Uuid, through: u64) {
+    fn reply_ack_hook(
+        store: &Store,
+        data_dir: &Path,
+        timer_id: Uuid,
+        through: u64,
+        status_listener: Option<crate::reply::StatusListener>,
+    ) {
         let Ok(Some(timer)) = store.get_timer(timer_id) else {
             return;
         };
@@ -245,6 +255,7 @@ impl SlotService {
             anchors: crate::reply::new_anchors(),
             deadlines: crate::reply::new_deadlines(),
             fire_slot_file: None,
+            status_listener,
         };
         let Ok(_gate) = crate::reply::gate::acquire(data_dir, timer_id) else {
             return;
@@ -374,7 +385,13 @@ impl SlotService {
                         (payload.ack_through, payload.resolved_timer_id())
                     {
                         if let Some(data_dir) = tree.root().parent().map(|p| p.to_path_buf()) {
-                            Self::reply_ack_hook(store, &data_dir, tid, ack);
+                            Self::reply_ack_hook(
+                                store,
+                                &data_dir,
+                                tid,
+                                ack,
+                                self.config.status_listener.clone(),
+                            );
                         }
                     }
                 }

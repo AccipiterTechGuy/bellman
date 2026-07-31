@@ -57,6 +57,7 @@ fn engine(e: &Env, fire_slot_file: Option<&str>) -> bellman_core::reply::ReplyEn
         anchors: bellman_core::reply::new_anchors(),
         deadlines: bellman_core::reply::new_deadlines(),
         fire_slot_file: fire_slot_file.map(str::to_string),
+        status_listener: None,
     }
 }
 

@@ -878,6 +878,10 @@ pub fn project_fire(
     if let Err(e) = projection {
         eprintln!("bellman: fire projection failed (reconciler will repair): {e}");
     }
+    // IK5: the fire committed either way — invalidate the live-run view so
+    // the GUI shows the new `fired` run (and the superseded previous one)
+    // without waiting for the app to answer.
+    engine.notify_status_changed(timer.id);
     // The gate must be released BEFORE the publication attempt: the attempt
     // takes the timer shard itself (then the target shard — the fixed lock
     // order), and flock is per open-file-description, so re-acquiring here

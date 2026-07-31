@@ -49,6 +49,9 @@ pub struct SchedulerConfig {
     /// Optional fixed fire-notification filename under `slots/fires/` (SCH1
     /// transport route; `None` → per-run `fire-<run_id>.json`).
     pub fire_slot_file: Option<String>,
+    /// IK5: invalidation sink wired into the reply engine this configuration
+    /// builds (fire projections and scheduler-heap deadline expiries).
+    pub status_listener: Option<crate::reply::StatusListener>,
 }
 
 impl Default for SchedulerConfig {
@@ -82,6 +85,7 @@ impl SchedulerConfig {
             anchors: crate::reply::new_anchors(),
             deadlines: crate::reply::new_deadlines(),
             fire_slot_file: None,
+            status_listener: None,
         }
     }
 
@@ -135,6 +139,12 @@ impl SchedulerConfig {
         self
     }
 
+    /// IK5: invalidation sink for the reply engine this configuration builds.
+    pub fn with_status_listener(mut self, listener: Option<crate::reply::StatusListener>) -> Self {
+        self.status_listener = listener;
+        self
+    }
+
     /// Build the IK3 reply engine for this configuration (None when no data
     /// dir is set — unit tests keep a pure store).
     pub fn reply_engine(&self) -> Option<crate::reply::ReplyEngine> {
@@ -147,6 +157,7 @@ impl SchedulerConfig {
             anchors: self.anchors.clone(),
             deadlines: self.deadlines.clone(),
             fire_slot_file: self.fire_slot_file.clone(),
+            status_listener: self.status_listener.clone(),
         })
     }
 }

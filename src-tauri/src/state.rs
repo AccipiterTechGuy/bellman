@@ -57,6 +57,9 @@ pub struct AppState {
     /// IK3 monotonic deadline book shared by the scheduler, `run_now` and
     /// the watcher (persisted wall deadlines are only the restart fallback).
     pub reply_deadlines: bellman_core::reply::SharedDeadlines,
+    /// IK5: invalidation sink for run-status projections — set from the
+    /// setup hook (it needs the `AppHandle` to emit `run-status-changed`).
+    pub status_listener: Mutex<Option<bellman_core::reply::StatusListener>>,
 }
 
 impl AppState {
@@ -81,7 +84,14 @@ impl AppState {
             reply_watcher: Mutex::new(None),
             reply_anchors: bellman_core::reply::new_anchors(),
             reply_deadlines: bellman_core::reply::new_deadlines(),
+            status_listener: Mutex::new(None),
         }
+    }
+
+    /// IK5: install the run-status invalidation sink (emits the
+    /// `run-status-changed` Tauri event after every status projection).
+    pub fn set_status_listener(&self, listener: bellman_core::reply::StatusListener) {
+        *self.status_listener.lock() = Some(listener);
     }
 
     pub fn set_wake_master(&self, enabled: bool) {
@@ -230,10 +240,12 @@ impl AppState {
         // `duration_ms` stays monotonic across both.
         let anchors = self.reply_anchors.clone();
         let deadlines = self.reply_deadlines.clone();
+        let status_listener = self.status_listener.lock().clone();
         let cfg = SchedulerConfig::from_app_config(&app_cfg)
             .with_data_dir(self.data_dir.clone())
             .with_anchors(anchors.clone())
-            .with_deadlines(deadlines.clone());
+            .with_deadlines(deadlines.clone())
+            .with_status_listener(status_listener.clone());
         // SCH1: the bounded dispatcher — worker lanes execute actions off the
         // scheduler loop, under the shared ActionLimiter. Scheduled fires and
         // `run_now` are producers of the same durable claims; the workers
@@ -276,6 +288,7 @@ impl AppState {
                 anchors,
                 deadlines,
                 fire_slot_file: None,
+                status_listener,
             };
             match bellman_core::slots::spawn_watch_thread(bellman_core::slots::WatchConfig {
                 slots_root: self.data_dir.join("slots"),

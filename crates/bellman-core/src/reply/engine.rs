@@ -233,6 +233,27 @@ impl DeadlineBook {
 /// The shared deadline book (scheduler fire path, `run_now`, watcher).
 pub type SharedDeadlines = Arc<Mutex<DeadlineBook>>;
 
+/// IK5: a one-way invalidation hint fired after every accepted status
+/// projection (and after each fire's initial projection). Carries only the
+/// timer id — never a second copy of state; listeners re-read the database.
+/// The desktop shell turns this into the `run-status-changed` Tauri event.
+/// Newtype so configs holding one can still derive `Debug`.
+#[derive(Clone)]
+pub struct StatusListener(pub Arc<dyn Fn(Uuid) + Send + Sync>);
+
+impl StatusListener {
+    /// Notify that timer `timer_id`'s current run state changed.
+    pub fn notify(&self, timer_id: Uuid) {
+        (self.0)(timer_id);
+    }
+}
+
+impl std::fmt::Debug for StatusListener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("StatusListener(..)")
+    }
+}
+
 /// Fresh empty deadline book.
 pub fn new_deadlines() -> SharedDeadlines {
     Arc::new(Mutex::new(DeadlineBook::default()))
@@ -259,6 +280,9 @@ pub struct ReplyEngine {
     /// the fire transaction snapshots the resolved target into the run's
     /// transport projection so it survives the caller and renames.
     pub fire_slot_file: Option<String>,
+    /// IK5: optional invalidation sink notified after every status
+    /// projection this engine performs (reply ingest, deadlines, fire).
+    pub status_listener: Option<StatusListener>,
 }
 
 /// What became of one ingested reply.
@@ -752,7 +776,8 @@ impl ReplyEngine {
     /// Rewrite `status.json` from the accumulated database row — the mirror
     /// holds at every step, and rebuilding it is safe precisely because it
     /// is Bellman's alone. Always a POST-COMMIT projection: callers run it
-    /// after the mutating transaction, never inside it.
+    /// after the mutating transaction, never inside it. Notifies the IK5
+    /// status listener afterwards (an invalidation, not a state copy).
     pub fn project_status(
         &self,
         store: &Store,
@@ -764,8 +789,21 @@ impl ReplyEngine {
             return Ok(());
         };
         let status = RunStatus::from_run_state(timer, &claim, &row);
-        tree::write_status(&self.tree, timer, &status)?;
+        let write = tree::write_status(&self.tree, timer, &status);
+        // The database committed already — the listener re-reads it, so the
+        // invalidation goes out even if the file projection failed (the
+        // reconciler repairs the file; the error still propagates).
+        self.notify_status_changed(timer.id);
+        write?;
         Ok(())
+    }
+
+    /// IK5: fire the optional status listener with a timer id. Pure
+    /// invalidation — never carries run state.
+    pub fn notify_status_changed(&self, timer_id: Uuid) {
+        if let Some(listener) = &self.status_listener {
+            listener.notify(timer_id);
+        }
     }
 
     /// Enqueue a `reply_rejected` event. Called by the transport when its

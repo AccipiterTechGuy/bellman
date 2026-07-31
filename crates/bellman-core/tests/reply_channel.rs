@@ -47,6 +47,7 @@ impl E2e {
             anchors,
             deadlines,
             fire_slot_file: None,
+            status_listener: None,
         }
     }
 
@@ -279,6 +280,99 @@ fn end_to_end_no_ack_when_the_app_never_answers() {
     e.wait_log_kinds(outcome.run_id, Duration::from_secs(5), &["no_ack", "completed"]);
     let (_, kinds) = e.log_kinds(outcome.run_id);
     assert_eq!(kinds, vec!["no_ack", "completed"]);
+
+    stop.stop();
+}
+
+#[test]
+fn end_to_end_overdue_label_writes_nothing_and_never_fails_without_opt_in() {
+    // IK5: `overdue` is a GUI label computed at render time from
+    // `now − fired_at > expected_secs` (1×, not the watchdog factor). For an
+    // app that did NOT set `error_detection` the backend must do NOTHING at
+    // either threshold — no event, no log line, no state change — and the
+    // run may still complete normally afterwards.
+    let mut e = E2e::new();
+    let timer = e.add_owned_timer("slow-app", "lightbulb");
+    let anchors = new_anchors();
+    let deadlines = new_deadlines();
+    // factor 2.0: 1× = 1s (GUI label only), 2× = 2s (watchdog — NOT armed).
+    let engine = e.engine(Duration::from_secs(60), anchors.clone(), deadlines.clone());
+    let opts = RunNowOptions {
+        skip_retry_sleep: true,
+        anchors: Some(anchors),
+        deadlines: Some(deadlines),
+        ..Default::default()
+    };
+    let db = e.data_dir().join("timers.db");
+    let outcome = run_now(&mut e.store, &db, timer.id, &opts).expect("run_now");
+    let run_id = outcome.run_id;
+    let stop = spawn_watch_thread(WatchConfig {
+        slots_root: e.data_dir().join("slots"),
+        data_dir: e.data_dir().to_path_buf(),
+        db_path: e.data_dir().join("timers.db"),
+        reply_engine: Some(engine),
+        scheduler: None,
+        poll_interval: Duration::from_millis(100),
+    })
+    .unwrap();
+    let folder = TimersTree::new(e.data_dir()).folder_for(timer.id).unwrap();
+
+    // The app answers with a 1-second estimate and NO error_detection.
+    let reply = serde_json::json!({
+        "schema": REPLY_SCHEMA_V1,
+        "run_id": run_id,
+        "app_name": "lightbulb",
+        "state": "running",
+        "acknowledged_at": chrono::Utc::now().to_rfc3339(),
+        "expected_secs": 1,
+        "progress": "working",
+    });
+    std::fs::write(
+        folder.join(reply_file_name(run_id)),
+        serde_json::to_vec(&reply).unwrap(),
+    )
+    .unwrap();
+    let s = e.wait_status(timer.id, Duration::from_secs(5), |s| s["state"] == "running");
+    assert_eq!(s["expected_secs"], 1);
+    e.wait_log_kinds(run_id, Duration::from_secs(5), &["acknowledged", "running"]);
+
+    // Snapshot the whole log: count EVERY line, not just this run's kinds.
+    let count_lines = |dir: &Path| -> usize {
+        let (recs, _) = read_events(dir.join("logs/events.current.jsonl")).unwrap_or_default();
+        recs.len()
+    };
+    let before = count_lines(e.data_dir());
+
+    // Cross BOTH thresholds: 1× (the label) at 1s, ×factor (2s) — the
+    // watchdog was never armed, so nothing may happen at either.
+    std::thread::sleep(Duration::from_millis(2600));
+
+    let after = count_lines(e.data_dir());
+    assert_eq!(
+        before, after,
+        "crossing the overdue threshold wrote log lines ({before} → {after})"
+    );
+    let s = e.status(timer.id);
+    assert_eq!(s["state"], "running", "no error_detection → never failed");
+    assert!(s["failed_at"].is_null());
+    assert!(s["failure_kind"].is_null());
+
+    // The run still completes normally after being "overdue".
+    let done = serde_json::json!({
+        "schema": REPLY_SCHEMA_V1,
+        "run_id": run_id,
+        "app_name": "lightbulb",
+        "state": "completed",
+    });
+    std::fs::write(
+        folder.join(reply_file_name(run_id)),
+        serde_json::to_vec(&done).unwrap(),
+    )
+    .unwrap();
+    e.wait_status(timer.id, Duration::from_secs(5), |s| s["state"] == "completed");
+    e.wait_log_kinds(run_id, Duration::from_secs(5), &["acknowledged", "running", "completed"]);
+    // Exactly ONE new line across the whole log for the completion.
+    assert_eq!(count_lines(e.data_dir()), before + 1);
 
     stop.stop();
 }

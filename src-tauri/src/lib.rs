@@ -29,6 +29,7 @@ mod dto_serde_tests;
 
 use std::path::PathBuf;
 
+use tauri::Emitter as _;
 use tauri::Manager;
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_notification::NotificationExt;
@@ -101,6 +102,19 @@ pub fn run() {
                 pause_all,
                 notify_sink::TauriNotifySink::new(app.handle().clone()),
             );
+
+            // IK5: one `run-status-changed` invalidation after every accepted
+            // status projection (reply ingest, pickup/watchdog deadlines,
+            // fire). It carries only the timer id — the webview refetches the
+            // affected row via `list_run_states`; no second copy of state.
+            {
+                let handle = app.handle().clone();
+                state.set_status_listener(bellman_core::reply::StatusListener(
+                    std::sync::Arc::new(move |timer_id: uuid::Uuid| {
+                        let _ = handle.emit("run-status-changed", timer_id.to_string());
+                    }),
+                ));
+            }
 
             // Build the scheduler + start the background tick thread.
             // The thread is the only writer to the engine; Tauri commands
@@ -202,6 +216,7 @@ fn register_commands(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<taur
     builder.invoke_handler(tauri::generate_handler![
         commands::list_timers,
         commands::get_timer,
+        commands::list_run_states,
         commands::set_enabled,
         commands::run_now,
         commands::list_log_tail,

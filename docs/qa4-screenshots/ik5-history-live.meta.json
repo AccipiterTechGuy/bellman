@@ -1,0 +1,21 @@
+{
+  "file": "ik5-history-live.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 93647,
+  "mean_luma": 33.66,
+  "stdev": 11.35,
+  "unique_colors_cap200k": 2071,
+  "window_id": "0x400003",
+  "wmctrl_geom": [
+    185,
+    137,
+    960,
+    640
+  ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
+  "phase": "history-live-pinned"
+}

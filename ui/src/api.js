@@ -175,6 +175,21 @@ export async function listLogTail(timerId, limit) {
   return await invoke('list_log_tail', { timerId, limit });
 }
 /**
+ * IK5: the current run of every integration-owned timer (or of one timer
+ * when timerId is given — the `run-status-changed` refetch path).
+ */
+export async function listRunStates(timerId = null) {
+  return await invoke('list_run_states', { timerId });
+}
+/**
+ * IK5: subscribe to the backend's run-status invalidation. The payload is
+ * just the timer id (never a copy of state); the handler should refetch.
+ * Returns an unsubscribe function (no-op outside Tauri).
+ */
+export async function onRunStatusChanged(handler) {
+  return await listen('run-status-changed', (e) => handler(e?.payload ?? null));
+}
+/**
  * Week/Month truth model for a civil date range.
  * @param {string} from YYYY-MM-DD
  * @param {string} to YYYY-MM-DD

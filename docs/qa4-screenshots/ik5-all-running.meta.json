@@ -1,0 +1,21 @@
+{
+  "file": "ik5-all-running.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 90110,
+  "mean_luma": 39.78,
+  "stdev": 19.04,
+  "unique_colors_cap200k": 2432,
+  "window_id": "0x400003",
+  "wmctrl_geom": [
+    185,
+    137,
+    960,
+    640
+  ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
+  "phase": "running"
+}

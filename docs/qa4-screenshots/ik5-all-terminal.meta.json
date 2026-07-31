@@ -1,0 +1,21 @@
+{
+  "file": "ik5-all-terminal.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 90348,
+  "mean_luma": 39.86,
+  "stdev": 19.27,
+  "unique_colors_cap200k": 2357,
+  "window_id": "0x400003",
+  "wmctrl_geom": [
+    185,
+    137,
+    960,
+    640
+  ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
+  "phase": "all-terminal-states"
+}

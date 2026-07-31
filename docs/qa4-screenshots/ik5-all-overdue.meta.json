@@ -1,0 +1,21 @@
+{
+  "file": "ik5-all-overdue.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 88110,
+  "mean_luma": 38.97,
+  "stdev": 17.97,
+  "unique_colors_cap200k": 2305,
+  "window_id": "0x400003",
+  "wmctrl_geom": [
+    185,
+    137,
+    960,
+    640
+  ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
+  "phase": "overdue-at-1x"
+}
