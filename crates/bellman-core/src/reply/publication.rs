@@ -78,19 +78,19 @@ impl SelectedTransport {
 }
 
 /// Per-firing transport selection (IK6). `json` is always files; `ipc` and
-/// `auto` resolve against the live IPC handle — a timer asking for a socket
-/// while no IPC server exists in this process falls to files (the fallback
-/// must be the thing that always works), and `auto` picks IPC only when a
+/// `auto` resolve against a LIVE IPC server — a timer asking for a socket
+/// while no server is live in this process falls to files (the fallback
+/// must be the thing that already works), and `auto` picks IPC only when a
 /// client holding this timer is connected at fire time.
 pub fn select_transport(timer: &Timer, engine: &ReplyEngine) -> SelectedTransport {
     match timer.transport {
         TransportMode::Json => SelectedTransport::Json,
         TransportMode::Ipc => match &engine.ipc {
-            Some(_) => SelectedTransport::Ipc,
-            None => SelectedTransport::Json,
+            Some(h) if h.is_live() => SelectedTransport::Ipc,
+            _ => SelectedTransport::Json,
         },
         TransportMode::Auto => match &engine.ipc {
-            Some(h) if h.has_client(&timer.id) => SelectedTransport::Ipc,
+            Some(h) if h.is_live() && h.has_client(&timer.id) => SelectedTransport::Ipc,
             _ => SelectedTransport::Json,
         },
     }
@@ -413,6 +413,18 @@ fn ipc_fallback(
         }
     }
     let _ = store.set_run_transport(proj.run_id, TRANSPORT_IPC_FALLBACK);
+    // The mirror said `ipc`; re-project immediately so status.json shows
+    // the effective delivery, not the stale selection.
+    if let (Ok(Some(timer)), Ok(Some(row)), Ok(Some(claim))) = (
+        store.get_timer(proj.timer_id),
+        store.get_run_state(proj.run_id),
+        store.get_run(proj.run_id),
+    ) {
+        let status = crate::tree::RunStatus::from_run_state(&timer, &claim, &row);
+        if let Err(e) = crate::tree::write_status(&tree, &timer, &status) {
+            eprintln!("bellman: ipc fallback status projection: {e}");
+        }
+    }
     // 4. Deliver through the file adapter immediately (the pump would retry
     //    anyway; the freshly converted row is due now).
     match store.transport_projection(proj.run_id) {
@@ -421,7 +433,8 @@ fn ipc_fallback(
     }
 }
 
-fn defer(store: &Store, proj: &TransportProjection) -> Attempt {    let attempts = proj.attempts.saturating_add(1);
+fn defer(store: &Store, proj: &TransportProjection) -> Attempt {
+    let attempts = proj.attempts.saturating_add(1);
     if attempts > MAX_ATTEMPTS {
         // Bounded retries exhausted without pickup — stop quietly; the
         // durable feed (SlotRunEvent) still carries the firing.

@@ -1915,7 +1915,8 @@ pub(crate) fn request_cancel_active_conn(
 
 /// Next database-wide publication order. Call inside the fire transaction;
 /// the IMMEDIATE write lock makes the read+insert pair atomic.
-pub(crate) fn next_publication_order_conn(conn: &Connection) -> StoreResult<u64> {    let n: i64 = conn.query_row(
+pub(crate) fn next_publication_order_conn(conn: &Connection) -> StoreResult<u64> {
+    let n: i64 = conn.query_row(
         "SELECT COALESCE(MAX(publication_order), 0) + 1 FROM transport_projections",
         [],
         |r| r.get(0),

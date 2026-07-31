@@ -302,6 +302,69 @@ fn same_reply_bytes_identical_records_via_socket_and_file() {
     );
 }
 
+/// A handle without a LIVE server (failed bind, stopped server) must never
+/// strand a firing: every mode resolves to the file transport — the
+/// fallback that already works. (Supervisor repro: an `ipc` timer firing
+/// against a dead handle dead-ended at `no_ack` with no channel any app
+/// could have answered on.)
+#[test]
+fn no_live_server_degrades_every_firing_to_files() {
+    let e = env();
+    let mut st = store(&e);
+    let handle = IpcHandle::new(e.sock.clone()); // NO server is ever spawned
+    assert!(!handle.is_live());
+    let eng = engine(&e, Some(&handle), Duration::from_secs(0));
+
+    for (name, mode) in [("t-dead-ipc", TransportMode::Ipc), ("t-dead-auto", TransportMode::Auto)] {
+        let t = owned_timer(&e, &mut st, name, mode);
+        let run = fire(&e, &mut st, &eng, &t);
+        let row = run_row(&st, run);
+        assert_eq!(
+            row.selected_transport.as_deref(),
+            Some("json"),
+            "{name}: no live server ⇒ files"
+        );
+        assert_eq!(row.transport.as_deref(), Some("json"));
+        assert!(
+            folder(&e, t.id).join(reply_file_name(run)).exists(),
+            "{name}: the stub an app can answer on exists"
+        );
+        assert!(
+            e.data.join("slots/fires").join(reply::fire_notification_name(run)).exists(),
+            "{name}: the fire file exists"
+        );
+    }
+}
+
+/// A live server that later STOPS also degrades: the next firing after
+/// `stop()` resolves to files again.
+#[test]
+fn stopped_server_degrades_later_firings_to_files() {
+    let e = env();
+    let mut st = store(&e);
+    let handle = IpcHandle::new(e.sock.clone());
+    let eng = engine(&e, Some(&handle), Duration::from_secs(60));
+    let server = spawn_server(&e, eng.clone(), &handle);
+    assert!(handle.is_live());
+
+    let t = owned_timer(&e, &mut st, "t-bounce", TransportMode::Ipc);
+    let mut client = connect(&e);
+    assert_eq!(client.claim(t.id, APP)["ok"], json!(true));
+    let run1 = fire(&e, &mut st, &eng, &t);
+    let _ = client.fire_for(run1);
+    assert_eq!(run_row(&st, run1).selected_transport.as_deref(), Some("ipc"));
+    client.send(&reply_json(run1));
+    wait_row(&st, run1, Duration::from_secs(5), |r| r.state == "acknowledged");
+    drop(client);
+
+    server.stop();
+    assert!(!handle.is_live(), "stop clears the live flag");
+    let run2 = fire(&e, &mut st, &eng, &t);
+    let row2 = run_row(&st, run2);
+    assert_eq!(row2.selected_transport.as_deref(), Some("json"), "post-stop firing uses files");
+    assert!(folder(&e, t.id).join(reply_file_name(run2)).exists());
+}
+
 /// `json` mode (the default) and `auto` with no connected client both use
 /// the file transport: stub + fire file, `transport: json` on the run.
 #[test]
@@ -485,6 +548,13 @@ fn auto_unconfirmed_ipc_failure_falls_back_to_files_same_run() {
     assert_eq!(msg["reply_path"], json!(stub.to_string_lossy().to_string()));
     let proj = st.transport_projection(run).unwrap().unwrap();
     assert_eq!(proj.kind, "file", "same projection row, converted");
+
+    // The mirror is re-projected at fallback time, not left stale.
+    let status: Value = serde_json::from_str(
+        &std::fs::read_to_string(folder(&e, t.id).join(STATUS_FILE_NAME)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(status["transport"], json!("ipc_fallback"));
 
     // The app answers through the file channel — one ingest path again.
     std::fs::write(&stub, reply_json(run)).unwrap();
