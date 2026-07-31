@@ -1,0 +1,21 @@
+{
+  "file": "wiz1-complete-demo-panel.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 78556,
+  "mean_luma": 26.56,
+  "stdev": 21.57,
+  "unique_colors_cap200k": 2166,
+  "window_id": "0x600003",
+  "wmctrl_geom": [
+    66,
+    137,
+    960,
+    640
+  ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":97",
+  "expect": "completion step with demo panel"
+}

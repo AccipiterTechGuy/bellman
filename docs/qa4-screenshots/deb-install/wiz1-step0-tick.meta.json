@@ -1,0 +1,21 @@
+{
+  "file": "wiz1-step0-tick.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 62154,
+  "mean_luma": 21.66,
+  "stdev": 20.26,
+  "unique_colors_cap200k": 1122,
+  "window_id": "0x600003",
+  "wmctrl_geom": [
+    42,
+    80,
+    960,
+    640
+  ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":99",
+  "expect": "step 0 with demo tick, unticked"
+}

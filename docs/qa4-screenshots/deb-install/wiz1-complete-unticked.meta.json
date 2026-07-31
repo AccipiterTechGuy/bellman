@@ -1,0 +1,21 @@
+{
+  "file": "wiz1-complete-unticked.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 38648,
+  "mean_luma": 18.83,
+  "stdev": 19.34,
+  "unique_colors_cap200k": 1578,
+  "window_id": "0x600003",
+  "wmctrl_geom": [
+    42,
+    80,
+    960,
+    640
+  ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":99",
+  "expect": "completion step, no demo panel"
+}

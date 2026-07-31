@@ -9,6 +9,7 @@
 #   scripts/run_gui_qa.sh p4d
 #   scripts/run_gui_qa.sh p4e
 #   scripts/run_gui_qa.sh p4f
+#   scripts/run_gui_qa.sh wiz1
 #   scripts/run_gui_qa.sh all
 #
 # Env:
@@ -189,14 +190,14 @@ except Exception:
 }
 
 case "$SUITE" in
-  p4b|p4d|p4e|p4f) run_one "$SUITE" ;;
+  p4b|p4d|p4e|p4f|wiz1) run_one "$SUITE" ;;
   all)
     for s in p4b p4d p4e p4f; do
       run_one "$s"
     done
     ;;
   *)
-    echo "Usage: $0 [p4b|p4d|p4e|p4f|all]" >&2
+    echo "Usage: $0 [p4b|p4d|p4e|p4f|wiz1|all]" >&2
     exit 2
     ;;
 esac
