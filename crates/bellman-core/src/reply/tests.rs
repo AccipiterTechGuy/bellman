@@ -1558,6 +1558,17 @@ fn status_listener_fires_on_every_projection() {
     assert_eq!(seen.lock().unwrap().len(), 4);
     assert_eq!(h.status(&timer)["state"], "completed");
 
+    // 5. The app revises its OWN verdict completed → failed on the same
+    // still-current run — a terminal-but-current revision notifies too
+    // (the GUI must refresh without any polling).
+    let mut doc = h.reply_json(claim.run_id, "lightbulb", "failed");
+    doc["reason"] = serde_json::json!("changed my mind");
+    h.write_reply(&timer, claim.run_id, doc);
+    h.poll(5);
+    assert_eq!(seen.lock().unwrap().len(), 5, "terminal revision notifies");
+    assert_eq!(h.status(&timer)["state"], "failed");
+    assert_eq!(h.status(&timer)["failure_kind"], "reported");
+
     // Every notification carried ONLY this timer's id.
     assert!(seen.lock().unwrap().iter().all(|id| *id == timer.id));
 }
