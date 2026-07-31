@@ -19,7 +19,8 @@ pub use error::{StoreError, StoreResult};
 pub use models::{
     Action, ClaimStatus, FailureKind, Meta, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy,
     RotationJournal, RotationPhase, RunClaim, RunOutcome, RunStateRow, SlotRequestRecord, Timer,
-    TimerId, TimerPatch, TimerUpdate, TransportProjection,
+    TimerId, TimerPatch, TimerUpdate, TransportMode, TransportProjection, TRANSPORT_IPC,
+    TRANSPORT_IPC_FALLBACK, TRANSPORT_JSON,
 };
 
 use crate::occurrence::Occurrence;
@@ -177,7 +178,7 @@ impl Store {
                     misfire_policy, overlap_policy, retry_policy,
                     valid_from, valid_until, max_runs, tags, action, revision,
                     COALESCE(jitter_secs, 0), accuracy_slack_secs,
-                    COALESCE(wake_machine, 0)
+                    COALESCE(wake_machine, 0), COALESCE(transport, 'json')
              FROM timers WHERE id = ?1",
         )?;
         let row = stmt
@@ -193,7 +194,7 @@ impl Store {
                     misfire_policy, overlap_policy, retry_policy,
                     valid_from, valid_until, max_runs, tags, action, revision,
                     COALESCE(jitter_secs, 0), accuracy_slack_secs,
-                    COALESCE(wake_machine, 0)
+                    COALESCE(wake_machine, 0), COALESCE(transport, 'json')
              FROM timers ORDER BY name, id",
         )?;
         let rows = stmt.query_map([], row_to_timer)?;
@@ -237,7 +238,7 @@ impl Store {
                     misfire_policy, overlap_policy, retry_policy,
                     valid_from, valid_until, max_runs, tags, action, revision,
                     COALESCE(jitter_secs, 0), accuracy_slack_secs,
-                    COALESCE(wake_machine, 0)
+                    COALESCE(wake_machine, 0), COALESCE(transport, 'json')
              FROM timers
              WHERE enabled = 1
                AND next_fire_utc IS NOT NULL
@@ -973,6 +974,9 @@ fn apply_patch(timer: &mut Timer, patch: TimerPatch) -> StoreResult<()> {
     if let Some(w) = patch.wake_machine {
         timer.wake_machine = w;
     }
+    if let Some(t) = patch.transport {
+        timer.transport = t;
+    }
     Ok(())
 }
 
@@ -1003,12 +1007,12 @@ fn create_timer_tx(tx: &Transaction<'_>, new: NewTimer) -> StoreResult<Timer> {
             id, name, enabled, occurrence, tz, next_fire_utc, last_fired,
             misfire_policy, overlap_policy, retry_policy,
             valid_from, valid_until, max_runs, tags, action, revision,
-            jitter_secs, accuracy_slack_secs, wake_machine
+            jitter_secs, accuracy_slack_secs, wake_machine, transport
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7,
             ?8, ?9, ?10,
             ?11, ?12, ?13, ?14, ?15, ?16,
-            ?17, ?18, ?19
+            ?17, ?18, ?19, ?20
          )",
         params![
             id.to_string(),
@@ -1030,6 +1034,7 @@ fn create_timer_tx(tx: &Transaction<'_>, new: NewTimer) -> StoreResult<Timer> {
             i64::from(new.jitter_secs),
             new.accuracy_slack_secs.map(i64::from),
             i64::from(new.wake_machine),
+            new.transport.as_str(),
         ],
     )?;
     get_timer_tx(tx, id)?.ok_or_else(|| StoreError::Internal("timer missing after insert".into()))
@@ -1066,8 +1071,9 @@ fn update_timer_tx(tx: &Transaction<'_>, update: TimerUpdate) -> StoreResult<Tim
             misfire_policy = ?7, overlap_policy = ?8, retry_policy = ?9,
             valid_from = ?10, valid_until = ?11, max_runs = ?12,
             tags = ?13, action = ?14, revision = ?15,
-            jitter_secs = ?16, accuracy_slack_secs = ?17, wake_machine = ?18
-         WHERE id = ?19 AND revision = ?20",
+            jitter_secs = ?16, accuracy_slack_secs = ?17, wake_machine = ?18,
+            transport = ?19
+         WHERE id = ?20 AND revision = ?21",
         params![
             next.name,
             i64::from(next.enabled),
@@ -1087,6 +1093,7 @@ fn update_timer_tx(tx: &Transaction<'_>, update: TimerUpdate) -> StoreResult<Tim
             i64::from(next.jitter_secs),
             next.accuracy_slack_secs.map(i64::from),
             i64::from(next.wake_machine),
+            next.transport.as_str(),
             next.id.to_string(),
             update.expected_revision,
         ],
@@ -1116,7 +1123,7 @@ fn get_timer_tx_inner(tx: &Connection, id: TimerId) -> StoreResult<Option<Timer>
                 misfire_policy, overlap_policy, retry_policy,
                 valid_from, valid_until, max_runs, tags, action, revision,
                 COALESCE(jitter_secs, 0), accuracy_slack_secs,
-                COALESCE(wake_machine, 0)
+                COALESCE(wake_machine, 0), COALESCE(transport, 'json')
          FROM timers WHERE id = ?1",
     )?;
     let row = stmt
@@ -1217,6 +1224,7 @@ fn row_to_timer(r: &rusqlite::Row<'_>) -> rusqlite::Result<Timer> {
     let jitter_secs_i: i64 = r.get(16)?;
     let accuracy_slack_i: Option<i64> = r.get(17)?;
     let wake_machine_i: i64 = r.get(18)?;
+    let transport_s: String = r.get(19)?;
 
     let occurrence: Occurrence = serde_json::from_str(&occ_json).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e))
@@ -1302,6 +1310,7 @@ fn row_to_timer(r: &rusqlite::Row<'_>) -> rusqlite::Result<Timer> {
         jitter_secs,
         accuracy_slack_secs,
         wake_machine: wake_machine_i != 0,
+        transport: TransportMode::from_wire(&transport_s).unwrap_or_default(),
     })
 }
 
@@ -1441,7 +1450,8 @@ const RUN_STATE_COLS: &str = "rs.run_id, rs.timer_id, rs.app_name, rs.state, rs.
      rs.pickup_deadline, rs.acknowledged_at, rs.expected_secs, rs.error_detection,
      rs.heartbeat_at, rs.progress, rs.completed_at, rs.failed_at, rs.reason,
      rs.failure_kind, rs.result_json, rs.result_truncated, rs.watchdog_deadline,
-     rs.no_ack_at, rs.reply_digest, rs.acknowledged_logged, rs.running_logged";
+     rs.no_ack_at, rs.reply_digest, rs.acknowledged_logged, rs.running_logged,
+     rs.selected_transport, rs.transport";
 
 fn row_to_run_state(r: &rusqlite::Row<'_>) -> rusqlite::Result<RunStateRow> {
     let conv = |i: usize, msg: String| {
@@ -1475,6 +1485,8 @@ fn row_to_run_state(r: &rusqlite::Row<'_>) -> rusqlite::Result<RunStateRow> {
         reply_digest: r.get(19)?,
         acknowledged_logged: r.get(20)?,
         running_logged: r.get(21)?,
+        selected_transport: r.get(22)?,
+        transport: r.get(23)?,
     })
 }
 
@@ -1680,10 +1692,11 @@ pub(crate) fn insert_run_state_conn(conn: &Connection, row: &RunStateRow) -> Sto
             acknowledged_at, expected_secs, error_detection, heartbeat_at,
             progress, completed_at, failed_at, reason, failure_kind,
             result_json, result_truncated, watchdog_deadline, no_ack_at,
-            reply_digest, acknowledged_logged, running_logged
+            reply_digest, acknowledged_logged, running_logged,
+            selected_transport, transport
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, NULL, NULL,
                    NULL, NULL, NULL, NULL, NULL,
-                   NULL, 0, NULL, NULL, NULL, 0, 0)",
+                   NULL, 0, NULL, NULL, NULL, 0, 0, ?7, ?8)",
         params![
             row.run_id.to_string(),
             row.timer_id.to_string(),
@@ -1691,6 +1704,8 @@ pub(crate) fn insert_run_state_conn(conn: &Connection, row: &RunStateRow) -> Sto
             row.state.as_str(),
             fmt_dt(row.fired_at),
             row.pickup_deadline.map(fmt_dt),
+            row.selected_transport.as_deref(),
+            row.transport.as_deref(),
         ],
     )?;
     Ok(())
@@ -1704,7 +1719,7 @@ pub(crate) fn update_run_state_conn(conn: &Connection, row: &RunStateRow) -> Sto
             progress = ?8, completed_at = ?9, failed_at = ?10, reason = ?11,
             failure_kind = ?12, result_json = ?13, result_truncated = ?14,
             watchdog_deadline = ?15, no_ack_at = ?16, reply_digest = ?17,
-            acknowledged_logged = ?18, running_logged = ?19
+            acknowledged_logged = ?18, running_logged = ?19, transport = ?20
          WHERE run_id = ?1",
         params![
             row.run_id.to_string(),
@@ -1728,6 +1743,7 @@ pub(crate) fn update_run_state_conn(conn: &Connection, row: &RunStateRow) -> Sto
             row.reply_digest.as_deref(),
             row.acknowledged_logged,
             row.running_logged,
+            row.transport.as_deref(),
         ],
     )?;
     Ok(())
@@ -1899,8 +1915,7 @@ pub(crate) fn request_cancel_active_conn(
 
 /// Next database-wide publication order. Call inside the fire transaction;
 /// the IMMEDIATE write lock makes the read+insert pair atomic.
-pub(crate) fn next_publication_order_conn(conn: &Connection) -> StoreResult<u64> {
-    let n: i64 = conn.query_row(
+pub(crate) fn next_publication_order_conn(conn: &Connection) -> StoreResult<u64> {    let n: i64 = conn.query_row(
         "SELECT COALESCE(MAX(publication_order), 0) + 1 FROM transport_projections",
         [],
         |r| r.get(0),
@@ -1919,8 +1934,8 @@ pub(crate) fn insert_transport_projection_conn(
     conn.execute(
         "INSERT OR REPLACE INTO transport_projections (
             run_id, timer_id, target_path, payload, publication_order,
-            state, attempts, next_attempt_at, created_at, published_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            state, attempts, next_attempt_at, created_at, published_at, kind
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             proj.run_id.to_string(),
             proj.timer_id.to_string(),
@@ -1932,6 +1947,7 @@ pub(crate) fn insert_transport_projection_conn(
             fmt_dt(proj.next_attempt_at),
             fmt_dt(proj.created_at),
             proj.published_at.map(fmt_dt),
+            proj.kind,
         ],
     )?;
     conn.execute(
@@ -1955,6 +1971,7 @@ fn row_to_projection(r: &rusqlite::Row<'_>) -> rusqlite::Result<TransportProject
     let next_s: String = r.get(7)?;
     let created_s: String = r.get(8)?;
     let published_s: Option<String> = r.get(9)?;
+    let kind: Option<String> = r.get(10)?;
     Ok(TransportProjection {
         run_id: Uuid::parse_str(&run_id_s).map_err(|e| conv(0, e.to_string()))?,
         timer_id: Uuid::parse_str(&timer_id_s).map_err(|e| conv(1, e.to_string()))?,
@@ -1966,11 +1983,12 @@ fn row_to_projection(r: &rusqlite::Row<'_>) -> rusqlite::Result<TransportProject
         next_attempt_at: parse_dt(&next_s).map_err(|e| conv(7, e.to_string()))?,
         created_at: parse_dt(&created_s).map_err(|e| conv(8, e.to_string()))?,
         published_at: parse_opt_dt(published_s).map_err(|e| conv(9, e.to_string()))?,
+        kind: kind.unwrap_or_else(|| TransportProjection::KIND_FILE.to_string()),
     })
 }
 
 const PROJECTION_COLS: &str = "run_id, timer_id, target_path, payload, publication_order,
-     state, attempts, next_attempt_at, created_at, published_at";
+     state, attempts, next_attempt_at, created_at, published_at, kind";
 
 impl Store {
     /// The transport projection for one run, if the fire transaction stored one.
@@ -2077,6 +2095,47 @@ impl Store {
                 fmt_dt(next_attempt_at),
                 TransportProjection::PENDING,
             ],
+        )?;
+        Ok(())
+    }
+
+    /// IK6 `auto` fallback: convert an IPC projection to the file adapter in
+    /// place — same `run_id`, new per-adapter encoding (the create-only
+    /// stub's `reply_path` added) and file target. Never mints a second run
+    /// or row. Matches both `pending` and `published`: a queued-but-
+    /// unconfirmed IPC send (client lost after the bounded write) must be
+    /// convertible too. Returns false when the projection already settled
+    /// (picked up / obsolete — confirmation won, no fallback needed).
+    pub fn convert_projection_to_file(
+        &self,
+        run_id: Uuid,
+        target_path: &str,
+        payload: &str,
+    ) -> StoreResult<bool> {
+        let n = self.conn.execute(
+            "UPDATE transport_projections
+             SET kind = ?2, target_path = ?3, payload = ?4, state = ?5
+             WHERE run_id = ?1 AND state IN (?6, ?7)",
+            params![
+                run_id.to_string(),
+                TransportProjection::KIND_FILE,
+                target_path,
+                payload,
+                TransportProjection::PENDING,
+                TransportProjection::PENDING,
+                TransportProjection::PUBLISHED,
+            ],
+        )?;
+        Ok(n == 1)
+    }
+
+    /// IK6: record the effective delivery transport on the run's lifecycle
+    /// row (`ipc_fallback` after an `auto` fallback). The selected transport
+    /// is immutable and never written here.
+    pub fn set_run_transport(&self, run_id: Uuid, transport: &str) -> StoreResult<()> {
+        self.conn.execute(
+            "UPDATE run_states SET transport = ?2 WHERE run_id = ?1",
+            params![run_id.to_string(), transport],
         )?;
         Ok(())
     }

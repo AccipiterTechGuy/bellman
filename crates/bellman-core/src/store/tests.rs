@@ -94,9 +94,9 @@ fn all_kinds() -> Vec<(&'static str, Occurrence)> {
 #[test]
 fn schema_version_is_current_after_open() {
     let (_dir, store) = open_tmp();
-    assert_eq!(store.schema_version().unwrap(), 8);
+    assert_eq!(store.schema_version().unwrap(), 9);
     let meta = store.meta().unwrap();
-    assert_eq!(meta.schema_version, 8);
+    assert_eq!(meta.schema_version, 9);
     assert!(meta.last_prune.is_none());
 }
 
@@ -183,7 +183,7 @@ fn migrate_v3_partial_restart_is_idempotent() {
         },
     )
     .expect("reopen after partial v3 must succeed");
-    assert_eq!(store.schema_version().unwrap(), 8);
+    assert_eq!(store.schema_version().unwrap(), 9);
 
     // Second open (fully migrated) still succeeds.
     drop(store);
@@ -195,7 +195,7 @@ fn migrate_v3_partial_restart_is_idempotent() {
         },
     )
     .expect("second open");
-    assert_eq!(store2.schema_version().unwrap(), 8);
+    assert_eq!(store2.schema_version().unwrap(), 9);
 
     // claim_run uses event_sequence column.
     let mut store2 = store2;
