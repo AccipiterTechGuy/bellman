@@ -24,6 +24,7 @@ use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 use crate::config;
+use crate::demo::DemoInfoDto;
 use crate::first_run::{WizardChoice, WizardStatus};
 use crate::occurrence_input::{self, PreviewFire};
 use crate::state::{AppState, RunNowResponse};
@@ -383,6 +384,7 @@ pub fn wizard_status(state: State<'_, AppState>) -> WizardStatus {
             autostart: cfg.autostart_enabled,
             start_minimized: cfg.start_minimized,
             wake_enabled: cfg.wake_enabled,
+            demo: cfg.demo_opt_in,
         },
     }
 }
@@ -406,6 +408,7 @@ pub fn wizard_set_choice(
             autostart: cfg.autostart_enabled,
             start_minimized: cfg.start_minimized,
             wake_enabled: cfg.wake_enabled,
+            demo: cfg.demo_opt_in,
         },
     })
 }
@@ -420,8 +423,48 @@ pub fn wizard_re_run(state: State<'_, AppState>) -> WizardStatus {
             autostart: cfg.autostart_enabled,
             start_minimized: cfg.start_minimized,
             wake_enabled: cfg.wake_enabled,
+            demo: cfg.demo_opt_in,
         },
     }
+}
+
+// ── WIZ1 demo commands ─────────────────────────────────────────────────
+//
+// The wizard panel and the Settings demo entry read `demo_info` and act via
+// `demo_launch` / `demo_open_docs`. Bellman explains and launches; it never
+// provisions the demo's timer (the demo claims its own through the slot
+// protocol — see `crate::demo` and WIZ1's "must NOT do").
+
+/// `demo_info` — everything the demo panel renders: resolved demo dir,
+/// copyable command, interpreter probe, slots root, docs path.
+#[tauri::command]
+pub fn demo_info(state: State<'_, AppState>) -> DemoInfoDto {
+    let opt_in = state.config.lock().demo_opt_in;
+    crate::demo::gather(opt_in, &state.data_dir.join("slots"))
+}
+
+/// `demo_launch` — spawn the demo detached against this install's slots
+/// root. Returns the child pid. Refuses when the demo or the interpreter
+/// (python3 + tkinter) is not actually runnable.
+#[tauri::command]
+pub fn demo_launch(state: State<'_, AppState>) -> Result<u32, String> {
+    crate::demo::launch_demo(&state.data_dir.join("slots"))
+}
+
+/// `demo_open_docs` — open `docs/INTEGRATION.md` with the platform handler.
+#[tauri::command]
+pub fn demo_open_docs() -> Result<(), String> {
+    crate::demo::open_integration_doc()
+}
+
+/// `set_demo_opt_in` — persist the Settings-side mirror of the wizard tick.
+#[tauri::command]
+pub fn set_demo_opt_in(state: State<'_, AppState>, enabled: bool) -> Result<bool, String> {
+    let mut cfg = state.config.lock().clone();
+    cfg.demo_opt_in = enabled;
+    cfg.save(&state.data_dir).map_err(|e| e.to_string())?;
+    *state.config.lock() = cfg;
+    Ok(enabled)
 }
 
 /// `app_info` — app metadata the UI uses in headers / settings. camelCase

@@ -7,7 +7,9 @@
     wakeReprobe,
     dependencyCheck,
     wakeEnrollMacos,
+    demoInfo,
   } from './api.js';
+  import DemoPanel from './DemoPanel.svelte';
 
   let { onDone } = $props();
 
@@ -16,6 +18,8 @@
   let autostart = $state(true);
   let startMinimized = $state(false);
   let wakeEnabled = $state(false);
+  let demo = $state(false);
+  let demoData = $state(null);
   let busy = $state(false);
   let statusLine = $state('');
   let deps = $state([]);
@@ -27,6 +31,7 @@
       autostart = s?.defaults?.autostart ?? autostart;
       startMinimized = s?.defaults?.startMinimized ?? startMinimized;
       wakeEnabled = s?.defaults?.wakeEnabled ?? wakeEnabled;
+      demo = s?.defaults?.demo ?? false;
     } catch {}
   });
 
@@ -34,7 +39,17 @@
     busy = true;
     try {
       wakeEnabled = !!withWake;
-      await wizardSetChoice({ autostart, startMinimized, wakeEnabled });
+      await wizardSetChoice({ autostart, startMinimized, wakeEnabled, demo });
+      if (demo) {
+        // The panel renders only what this machine can actually run.
+        try {
+          demoData = await demoInfo();
+        } catch {
+          demoData = null;
+        }
+      } else {
+        demoData = null;
+      }
       if (withWake) {
         // Per-OS setup: macOS enrolls the helper; others just probe.
         try {
@@ -102,6 +117,19 @@
         </label>
       </div>
 
+      <div class="q">
+        <label for="w-demo" class="checkbox-label">
+          <input id="w-demo" type="checkbox" data-testid="demo-tick" bind:checked={demo} />
+          <span>Show me the demo — watch a timer wake a real application</span>
+        </label>
+      </div>
+      <p class="hint">
+        A tiny example app (a lightbulb) that Bellman wakes on a schedule. It
+        talks to Bellman exactly the way your own applications can — over
+        plain JSON files, no plugin and no shared code. Optional, and it
+        changes nothing about your setup.
+      </p>
+
       <div class="actions">
         <button class="btn primary" disabled={busy} onclick={() => (step = 1)}>
           Next
@@ -141,6 +169,11 @@
             </li>
           {/each}
         </ul>
+      {/if}
+
+      {#if demo && demoData}
+        <h4>The demo</h4>
+        <DemoPanel info={demoData} />
       {/if}
 
       <div class="actions">

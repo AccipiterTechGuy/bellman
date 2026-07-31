@@ -307,12 +307,25 @@ fn wizard_choice_is_camel_case() {
         autostart: true,
         start_minimized: true,
         wake_enabled: false,
+        demo: true,
     };
     let keys = json_keys(&c);
     assert!(keys.contains(&"startMinimized".to_string()));
     assert!(keys.contains(&"wakeEnabled".to_string()));
+    assert!(keys.contains(&"demo".to_string()));
     assert!(!keys.contains(&"start_minimized".to_string()));
     assert!(!keys.contains(&"wake_enabled".to_string()));
+}
+
+#[test]
+fn wizard_choice_demo_defaults_to_unticked_when_absent() {
+    // An older webview that does not send `demo` must deserialize as
+    // declined — the tick's default is unticked (WIZ1 exit gate).
+    let c: WizardChoice = serde_json::from_str(
+        r#"{"autostart":true,"startMinimized":false,"wakeEnabled":false}"#,
+    )
+    .unwrap();
+    assert!(!c.demo);
 }
 
 #[test]
@@ -323,6 +336,7 @@ fn wizard_status_defaults_is_camel_case_wizard_choice() {
             autostart: true,
             start_minimized: true,
             wake_enabled: false,
+            demo: false,
         },
     };
     let j = serde_json::to_string(&s).unwrap();

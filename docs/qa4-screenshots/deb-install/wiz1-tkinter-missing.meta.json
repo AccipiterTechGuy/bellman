@@ -1,0 +1,21 @@
+{
+  "file": "wiz1-tkinter-missing.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 35508,
+  "mean_luma": 15.14,
+  "stdev": 19.89,
+  "unique_colors_cap200k": 1380,
+  "window_id": "0x600003",
+  "wmctrl_geom": [
+    320,
+    40,
+    960,
+    640
+  ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":99",
+  "expect": "no run button; command + python3-tk note"
+}

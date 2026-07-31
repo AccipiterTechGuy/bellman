@@ -19,6 +19,12 @@ pub struct WizardChoice {
     /// "Try to wake this machine from sleep so timers fire on time?"
     /// Stored for C11; C7 itself does not implement wake yet.
     pub wake_enabled: bool,
+    /// "Show me the demo — watch a timer wake a real application?" (WIZ1).
+    /// Persisted as `demo_opt_in` so Settings can offer the same panel later.
+    /// `#[serde(default)]` so an older webview that does not send the key
+    /// still deserializes (demo declines by default).
+    #[serde(default)]
+    pub demo: bool,
 }
 
 /// What the webview asks for at startup.

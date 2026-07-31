@@ -1,0 +1,21 @@
+{
+  "file": "wiz1-settings-demo.png",
+  "size": [
+    960,
+    640
+  ],
+  "bytes": 53960,
+  "mean_luma": 31.66,
+  "stdev": 14.59,
+  "unique_colors_cap200k": 1535,
+  "window_id": "0x600003",
+  "wmctrl_geom": [
+    42,
+    80,
+    960,
+    640
+  ],
+  "input_backend": "tauri-driver+WebKitWebDriver",
+  "display": ":99",
+  "expect": "Settings > Demo with panel + ticked offer"
+}

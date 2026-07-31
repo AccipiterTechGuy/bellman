@@ -13,6 +13,9 @@
   let pauseAll = $state(false);
   let info = $state(null);
   let wizardOpen = $state(false);
+  /** Bumped when the wizard closes so a mounted Settings page remounts and
+   *  re-reads choices the wizard just changed (e.g. the WIZ1 demo opt-in). */
+  let settingsTick = $state(0);
   let toasts = $state([]);
   let editingTimer = $state(null);   // null = closed, {} = new, timer = edit
   /** YYYY-MM-DD when create was opened from a calendar day cell. */
@@ -69,6 +72,7 @@
 
   function onWizardDone() {
     wizardOpen = false;
+    settingsTick++;
     pushToast('Settings saved');
     refresh();
   }
@@ -174,10 +178,12 @@
   {:else if page === 'history'}
     <HistoryPage onToast={pushToast} />
   {:else if page === 'settings'}
-    <SettingsPage
-      onToast={pushToast}
-      onRerunWizard={() => { wizardOpen = true; }}
-    />
+    {#key settingsTick}
+      <SettingsPage
+        onToast={pushToast}
+        onRerunWizard={() => { wizardOpen = true; }}
+      />
+    {/key}
   {/if}
 </main>
 

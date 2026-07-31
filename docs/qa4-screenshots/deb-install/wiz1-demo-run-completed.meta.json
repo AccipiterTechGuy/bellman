@@ -1,0 +1,12 @@
+{
+  "file": "wiz1-demo-run-completed.png",
+  "size": [
+    740,
+    775
+  ],
+  "window_id": "0xe0006a",
+  "display": ":99",
+  "input_backend": "tauri-driver+WebKitWebDriver (+XTEST on isolated Xvfb)",
+  "expect": "demo window after fired\u2192ack\u2192running\u2192completed",
+  "run_id": "131bc847-0025-486f-8beb-29a235bce976"
+}

@@ -1,0 +1,11 @@
+{
+  "file": "wiz1-demo-bulb-lit.png",
+  "size": [
+    740,
+    763
+  ],
+  "window_id": "0x160006a",
+  "display": ":97",
+  "input_backend": "tauri-driver+WebKitWebDriver (+XTEST on isolated Xvfb)",
+  "expect": "golden bulb LIT mid-run (acknowledged, pre-completion)"
+}

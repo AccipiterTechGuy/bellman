@@ -24,6 +24,11 @@ Bellman makes of you** (see *Connect your own application*).
 | do that over a socket instead of files | [Talking over the local socket](#talking-over-the-local-socket-ipc) |
 | just see it work first | `testing_apps/lightbulb/` (terminal snippet to copy) or `testing_apps/lightbulb_gui/` (GUI window to watch) |
 
+New installs also offer the GUI demo in the first-run wizard (tick *Show me
+the demo*; the same panel lives in Settings afterwards). The Linux package
+ships both demos under `/usr/share/bellman/testing_apps/`; the wizard never
+creates the demo's timer — the demo claims its own, exactly as below.
+
 CLI helper (one-shot, no daemon):
 
 ```bash

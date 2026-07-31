@@ -60,7 +60,11 @@
         "depends": [],
         "section": "utils",
         "priority": "optional",
-        "desktopTemplate": "linux/bellman.desktop"
+        "desktopTemplate": "linux/bellman.desktop",
+        "files": {
+          "/usr/share/bellman/testing_apps": "../testing_apps",
+          "/usr/share/bellman/docs/INTEGRATION.md": "../docs/INTEGRATION.md"
+        }
       }
     },
     "windows": {
