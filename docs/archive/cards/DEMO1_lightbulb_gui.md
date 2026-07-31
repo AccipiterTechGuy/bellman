@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-31 — shipped; card bellman-demo1-lightbulb-gui-demo-app-neon-golden-bulb, run 2026-07-31_0006, merge 6a46408.
+
 # DEMO1 — The lightbulb, with a window
 
 Repo: `~/bellman`. Depends on **IK4 shipped** (the protocol and
