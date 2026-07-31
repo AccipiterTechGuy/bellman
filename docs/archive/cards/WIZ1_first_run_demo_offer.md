@@ -1,3 +1,5 @@
+> ARCHIVED 2026-08-01 — shipped; card bellman-wiz1-first-run-wizard-offers-the-demo-tick-explain-run, run 2026-08-01_0001, merge 1aca190.
+
 # WIZ1 — Offer the demo in the first-run wizard
 
 Repo: `~/bellman`. Depends on **DEMO1 shipped** (done) **and SCH2 shipped**
