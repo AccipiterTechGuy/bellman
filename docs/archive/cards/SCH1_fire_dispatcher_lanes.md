@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-31 — shipped; card sch1-in-memory-fire-dispatcher-bounded-action-lanes, run 2026-07-31_0001, merge b784241.
+
 # SCH1 — In-memory fire dispatcher and bounded action lanes
 
 Repo: `~/bellman`. **Internal scheduler work — no JSON-shape change.** Depends on **IK3**:
