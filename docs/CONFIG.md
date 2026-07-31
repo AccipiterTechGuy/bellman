@@ -10,6 +10,7 @@ the defaults below.
 | `autostart_enabled` | bool | `false` | Launch on login |
 | `start_minimized` | bool | `false` | Start tray-only |
 | `wake_enabled` | bool | `false` | Master toggle: allow RTC wake-from-sleep (P7) |
+| `demo_opt_in` | bool | `false` | Wizard's "Show me the demo" tick (WIZ1); Settings offers the same demo panel from this key. UI preference only — Bellman never creates the demo's timer |
 | `horizon_secs` | u64 | `86400` (24 h) | Near-horizon heap window |
 | `retention_days` | u64 | `30` | JSONL archive retention (30-day history) |
 | `log_rotation_max_bytes` | u64 | `67108864` (64 MiB) | Rotate `events.current.jsonl` before an append crosses this |
