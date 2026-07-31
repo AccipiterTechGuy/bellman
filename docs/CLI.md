@@ -194,6 +194,7 @@ bellman add --name <NAME> --occurrence <KIND> [kind flags] [--tz TZ] [--tag T]..
 | `--cron` | cron | Cron expression (seconds optional; croner) |
 | `--tz` | optional | IANA timezone (default: system local if detectable, else `UTC`) |
 | `--tag` | optional | Repeatable free-form tags |
+| `--transport` | optional | Fire-delivery transport (IK6): `auto` \| `json` \| `ipc` (default `json`) |
 
 **Time formats**
 
@@ -252,11 +253,12 @@ Patch a timer identified by **name or id**.
 ```text
 bellman edit <name-or-id> [--name NEW] [--time TIME] [--enabled true|false]
                            [--every-secs N] [--days …] [--day N] [--month N]
-                           [--cron EXPR] [--json]
+                           [--cron EXPR] [--transport auto|json|ipc] [--json]
 ```
 
 - `--time` updates the wall-clock component of the existing kind (or once-at).
 - Kind-specific flags only apply when the timer already has that kind.
+- `--transport` sets the fire-delivery transport (IK6); a timer owner change applies from the next firing.
 - At least one patch flag is required.
 - Uses optimistic revision internally (single writer; agents need not pass revision).
 
