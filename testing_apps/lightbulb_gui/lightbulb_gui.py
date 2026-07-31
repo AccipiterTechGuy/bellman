@@ -599,6 +599,7 @@ class LightbulbGUI(tk.Tk):
         self.after(250, self.tick_poll_fires)
 
     def start_run_handshake(self, fire):
+        self.reset_chips()
         self.current_fire = fire
         self.run_in_flight = True
         self.run_start_time = time.monotonic()
@@ -606,11 +607,7 @@ class LightbulbGUI(tk.Tk):
         self.btn_fail.config(state=tk.NORMAL)
 
         # 1. fired
-        fired_raw = fire.get("fired_at", "")
-        if "T" in fired_raw:
-            fired_ts = fired_raw.split("T")[1].rstrip("Z").split(".")[0]
-        else:
-            fired_ts = now_time_str()
+        fired_ts = now_time_str()
         self.set_chip_state("fired", True, fired_ts)
 
         # 2. acknowledge
@@ -759,10 +756,10 @@ class LightbulbGUI(tk.Tk):
 
         # Status text below bulb
         if on:
-            status_text = f"💡 BULB IS LIT — {remaining:4.1f}s remaining"
+            status_text = f"BULB IS LIT — {remaining:4.1f}s remaining"
             text_color = BULB_ON
         else:
-            status_text = "💡 Lightbulb is OFF"
+            status_text = "Lightbulb is OFF"
             text_color = TEXT_DIM
 
         c.create_text(
