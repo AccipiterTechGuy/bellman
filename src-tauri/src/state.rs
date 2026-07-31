@@ -12,8 +12,8 @@ use std::time::Duration;
 use bellman_core::scheduler::{ControlHandle, Scheduler, SchedulerConfig, SystemClock};
 use bellman_core::store::Store;
 use bellman_core::{
-    ActionRunner, ActionRunnerConfig, NotifySink, RunNowOptions, SingleNextWake, WakeCandidate,
-    WakeCapability,
+    Dispatcher, DispatcherConfig, ExecutorConfig, NotifySink, RunNowOptions, SingleNextWake,
+    WakeCandidate, WakeCapability,
 };
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
@@ -38,6 +38,9 @@ pub struct AppState {
     pub notify_sink: Arc<dyn NotifySink>,
     /// Control handle for the scheduler (set after `start_scheduler`).
     pub control_handle: Mutex<Option<ControlHandle>>,
+    /// SCH1: the bounded action dispatcher shared by scheduled fires and
+    /// `run_now` (set after `start_scheduler`).
+    pub dispatcher: Mutex<Option<Dispatcher>>,
     /// Handle to the tray's "Pause all" CheckMenuItem, set when the
     /// tray is installed. Used by the `set_pause_all` Tauri command
     /// to keep the tray in sync with the in-window toggle. The `Wry`
@@ -72,6 +75,7 @@ impl AppState {
             pause_all: Mutex::new(pause_all),
             notify_sink,
             control_handle: Mutex::new(None),
+            dispatcher: Mutex::new(None),
             tray_pause_check: parking_lot::Mutex::new(None),
             wake,
             reply_watcher: Mutex::new(None),
@@ -230,19 +234,20 @@ impl AppState {
             .with_data_dir(self.data_dir.clone())
             .with_anchors(anchors.clone())
             .with_deadlines(deadlines.clone());
-        // R11: the runner enqueues into the outbox (its own store
-        // connection); the elected publisher appends, so scheduled fires
-        // land in events.current.jsonl exactly like run-now events.
-        let runner_cfg = ActionRunnerConfig {
-            max_concurrent_actions: app_cfg.max_concurrent_actions,
-            ..ActionRunnerConfig::default()
-        };
-        let mut runner = ActionRunner::new(runner_cfg)
-            .with_notify_sink(self.notify_sink.clone());
-        match bellman_core::open_store(&self.data_dir.join("timers.db")) {
-            Ok(sink) => runner = runner.with_event_sink(sink),
-            Err(e) => log::error!("bellman: could not open runner event sink: {e}"),
-        }
+        // SCH1: the bounded dispatcher — worker lanes execute actions off the
+        // scheduler loop, under the shared ActionLimiter. Scheduled fires and
+        // `run_now` are producers of the same durable claims; the workers
+        // commit results + R11 outbox rows from their own connections.
+        let dispatcher = Dispatcher::spawn(DispatcherConfig {
+            db_path: self.data_dir.join("timers.db"),
+            data_dir: Some(self.data_dir.clone()),
+            max_concurrent_actions: app_cfg.max_concurrent_actions.max(1),
+            notify_sink: self.notify_sink.clone(),
+            executor: ExecutorConfig::default(),
+            tick: Duration::from_secs(1),
+        })
+        .expect("dispatcher spawn");
+        *self.dispatcher.lock() = Some(dispatcher.clone());
         // Same db path: the scheduler opens its own connection on a clone.
         // (SQLite is happy with multiple readers + one writer; WAL mode is
         // enabled by `Store::open_with`.)
@@ -251,9 +256,9 @@ impl AppState {
             .expect("scheduler store open");
         let pause_all = *self.pause_all.lock();
         let mut sched = if pause_all {
-            Scheduler::new_paused(sched_store, SystemClock::new(), runner, cfg)
+            Scheduler::new_paused(sched_store, SystemClock::new(), dispatcher, cfg)
         } else {
-            Scheduler::new(sched_store, SystemClock::new(), runner, cfg)
+            Scheduler::new(sched_store, SystemClock::new(), dispatcher, cfg)
         };
         sched.boot().expect("scheduler boot");
         let handle = sched.control_handle();
@@ -270,6 +275,7 @@ impl AppState {
                 watchdog_factor: app_cfg.watchdog_factor,
                 anchors,
                 deadlines,
+                fire_slot_file: None,
             };
             match bellman_core::slots::spawn_watch_thread(bellman_core::slots::WatchConfig {
                 slots_root: self.data_dir.join("slots"),
@@ -320,6 +326,7 @@ impl AppState {
         let mut store = self.store.lock();
         let opts = RunNowOptions {
             notify_sink: Some(self.notify_sink.clone()),
+            dispatcher: self.dispatcher.lock().clone(),
             ..Default::default()
         };
         let outcome = bellman_core::run_now(&mut store, &self.data_dir.join("timers.db"), timer.id, &opts)

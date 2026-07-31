@@ -108,6 +108,7 @@ pub fn run_now(
         notify_sink: Some(state.notify_sink.clone()),
         anchors: Some(state.reply_anchors.clone()),
         deadlines: Some(state.reply_deadlines.clone()),
+        dispatcher: state.dispatcher.lock().clone(),
         ..Default::default()
     };
     let mut store = state.store.lock();

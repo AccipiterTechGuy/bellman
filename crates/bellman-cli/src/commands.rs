@@ -13,7 +13,7 @@ use bellman_core::store::{
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use uuid::Uuid;
 
 /// Enqueue an event (R11) and best-effort drain: a CLI-only invocation
@@ -543,12 +543,16 @@ fn set_enabled(
     Ok(CommandPayload::Timer { command, timer })
 }
 
-/// Execute the timer action immediately via claim → [`ActionRunner`] → complete.
+/// Execute the timer action immediately through the shared dispatch service
+/// (SCH1: `pre-fire barrier → claim/commit → publish → dispatch`).
 ///
-/// Uses the real launch / notify / write-slot path with event-log recording
-/// under `<db parent>/logs/` (or `$BELLMAN_LOGS` when set). When a slots root
-/// is available (`$BELLMAN_SLOTS` or `<db parent>/slots`), fire delivery also
-/// writes trigger data into `slots/done/` (launch + write JSON).
+/// The fire is published immediately (status.json / reply stub / fire
+/// notification under `slots/fires/`); the action runs on a dispatcher
+/// worker — this CLI spins up the bounded dispatcher when no process owns
+/// the dispatcher OS lock, otherwise it polls for the durable claim result.
+/// `slots/done/` is owned by `SlotService` alone: no post-action overlay is
+/// written here — unacknowledged run events appear in the next normal
+/// response.
 pub fn run_now(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> {
     const CMD: &str = "run-now";
     let mut store = open_store(db).map_err(|mut e| {
@@ -557,32 +561,8 @@ pub fn run_now(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> 
     })?;
     let timer = resolve_timer(&store, name_or_id).map_err(|e| e.with_command(CMD))?;
 
-    // Resolve the slot-record mapping up front so we can do the done/ overlay
-    // after the shared run_now call (which already wrote the fire payload).
-    let slots_root = resolve_slots_root_optional(db);
-    let slot_rec = store
-        .latest_slot_request_for_timer(timer.id)
-        .map_err(|e| e.with_command(CMD))?;
-    let opts = bellman_core::RunNowOptions {
-        write_slot_dir: slots_root.as_ref().map(|r| r.join("done")),
-        write_slot_file: slot_rec
-            .as_ref()
-            .map(|r| format!("slot-{}.json", r.slot_id)),
-        ..Default::default()
-    };
-
-    let outcome = bellman_core::run_now(&mut store, db, timer.id, &opts);
-
-    // Overlay the full SlotResponse so consumers that parse done/ as
-    // bellman-slot/1 still see events + next_fire_at. Done on success AND
-    // failure: a failed wake must surface as `wake_failed` in the feed, not
-    // as silence.
-    if let (Some(root), Some(rec)) = (slots_root.as_ref(), slot_rec.as_ref()) {
-        let t = outcome.as_ref().map_or(&timer, |o| &o.timer);
-        let _ = bellman_core::publish_fire_slot_response(&store, root, t, rec);
-    }
-
-    let outcome = outcome.map_err(|e| {
+    let opts = bellman_core::RunNowOptions::default();
+    let outcome = bellman_core::run_now(&mut store, db, timer.id, &opts).map_err(|e| {
         use bellman_core::RunNowError::*;
         let code = match e {
             NotFound { .. } => "not_found",
@@ -602,21 +582,6 @@ pub fn run_now(db: &Path, name_or_id: &str) -> Result<CommandPayload, CliError> 
         message: outcome.message,
         timer: outcome.timer,
     })
-}
-
-/// Prefer `$BELLMAN_SLOTS`, else `<db parent>/slots` when that directory exists.
-fn resolve_slots_root_optional(db: &Path) -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("BELLMAN_SLOTS") {
-        if !p.is_empty() {
-            return Some(PathBuf::from(p));
-        }
-    }
-    let candidate = db.parent()?.join("slots");
-    if candidate.is_dir() {
-        Some(candidate)
-    } else {
-        None
-    }
 }
 
 /// Publish a slot request JSON file and process it against the local store.

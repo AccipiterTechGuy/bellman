@@ -314,19 +314,27 @@ apply the same way as live `next_fire`, but pending skips are **not** consumed.
 
 ### `bellman run-now`
 
-Execute the timer's action **immediately** through the core fire path:
+Execute the timer's action **immediately** through the shared dispatch
+service (SCH1: `pre-fire barrier → claim/commit → publish → dispatch`):
 
-1. `claim_run(timer_id, now)` on the store claim ledger  
-2. invoke the production action runner
-3. `complete_run`  
-4. advance `last_fired` + `record_run` (same bookkeeping as the scheduler)
+1. the R10 fire transaction: claim + overlap disposition + lifecycle row +
+   `fired` event, then the `status.json` / reply-stub projections and the
+   fire notification under `slots/fires/` — all published at fire time
+2. advance `last_fired` + `record_run` (same bookkeeping as the scheduler,
+   never behind the action)
+3. the action runs on a dispatcher worker: the CLI runs the bounded
+   dispatcher itself when no process owns the dispatcher OS lock, otherwise
+   it polls for the durable claim result while the owner's pump executes it
 
-The action runner executes launch actions with the configured timeout, output
-cap, retry, and concurrency policy; writes trigger JSON to the mapped output
-slot when one exists; and appends lifecycle events to the JSONL log. The
-headless CLI reports notification actions through its stub sink, while the
-Tauri application supplies the real desktop-notification sink. The JSON
-`message` describes the actual path taken.
+The worker executes launch actions with the configured timeout, output cap,
+retry, and concurrency policy, and commits the claim result plus the R11
+outbox event in one transaction (the elected publisher appends it to the
+JSONL log). `slots/done/` is owned by `SlotService` alone — run-now writes
+no post-action overlay there; unacknowledged run events appear in the next
+normal slot response. The headless CLI reports notification actions through
+its stub sink, while the Tauri application supplies the real
+desktop-notification sink. The JSON `message` describes the actual path
+taken.
 
 ```text
 bellman run-now <name-or-id> [--json]
