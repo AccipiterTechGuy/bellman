@@ -43,7 +43,7 @@ Apps that prefer a socket can speak the same messages over local IPC instead.
 Start here: **[docs/INTEGRATION.md → Connect your own
 application](docs/INTEGRATION.md#connect-your-own-application)** — the protocol,
 what each file contains, and copy-paste clients in Python, bash, PowerShell and
-Node. Then run [`examples/lightbulb/`](examples/lightbulb/), a ~130-line
+Node. Then run [`testing_apps/lightbulb/`](testing_apps/lightbulb/), a ~130-line
 stdlib-only reference app that does the whole loop end to end: a timer fires,
 the bulb lights visibly for 15 seconds, the app reports `completed`.
 
@@ -80,7 +80,7 @@ validating the whole thing on real hardware.
 | Reply channel — per-run reply file, at-least-once delivery, pickup grace, late-reply revision | ✅ built |
 | Opt-in silence watchdog — `error_detection` + `expected_secs`, heartbeats extend the deadline | ✅ built |
 | Local IPC transport — Unix socket / Windows named pipe, chosen per firing, same validation as files | ✅ built |
-| Reference app + protocol docs (`examples/lightbulb/`, [docs/INTEGRATION.md](docs/INTEGRATION.md)) | ✅ built |
+| Reference app + protocol docs (`testing_apps/lightbulb/`, [docs/INTEGRATION.md](docs/INTEGRATION.md)) | ✅ built |
 
 **Desktop, CLI, platform**
 

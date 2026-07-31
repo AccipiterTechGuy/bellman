@@ -29,6 +29,16 @@ Design documents:
 | **IK5** | Live run state in the GUI — no new tab | IK3 |
 | **IK6** | Dual transport: local IPC + files, chosen **per firing**. One ingest path; **no generated `adapter.py`** — connection info is data, not code. Files stay canonical | IK3 + SCH1 shipped, IK4 proven |
 
+## Demos — the apps a visitor sees
+
+| card | scope | depends on |
+|---|---|---|
+| **DEMO1** | `testing_apps/lightbulb_gui/` — the lightbulb with a window: set a time, watch the bulb light, watch the four-state handshake. stdlib **tkinter**, neon palette with a **golden** bulb, no Bellman imports. The terminal `lightbulb/` stays as-is | IK4 shipped |
+
+Both demos live under `testing_apps/`. They share no code on purpose: the
+terminal one is what a developer copies, the GUI one is what everyone else
+watches. See `testing_apps/README.md`.
+
 ## Scheduler internals
 
 | card | scope | depends on |
