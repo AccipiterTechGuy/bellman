@@ -45,6 +45,7 @@ watches. See `testing_apps/README.md`.
 | card | scope | depends on |
 |---|---|---|
 | **SCH1** | In-memory fire dispatcher + bounded action lanes. A slow launch currently stalls the whole heap | IK3 |
+| **SCH2** | 🔴 **Slot-created timers never fire in a running Bellman** — `refill()` has no caller in `slots/`, so the horizon heap never learns of them. Fix both paths (watcher-processed *and* external `slot-submit`), and prove it with the lightbulb firing on its **own** schedule, no `run-now` | — |
 
 ### Deferred — worth doing, not now
 
