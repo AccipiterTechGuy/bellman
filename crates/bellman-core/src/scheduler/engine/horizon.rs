@@ -16,6 +16,14 @@ use std::cmp::Reverse;
 impl<C: Clock, A: FireAction> Scheduler<C, A> {
     /// Explicit horizon rebuild (also triggered by control Refill).
     pub fn rebuild_horizon(&mut self) -> SchedulerResult<()> {
+        // SCH2 bookkeeping: snapshot the store's data_version BEFORE the reads
+        // so a foreign commit racing this rebuild still looks like a change on
+        // the next tick (never missed; may cost one extra rebuild). Stamp the
+        // rebuild time for the unconditional external-rebuild floor.
+        if let Ok(v) = self.store.data_version() {
+            self.last_data_version = v;
+        }
+        self.last_rebuild_mono = self.clock.mono_now();
         self.heap.clear();
         let now = self.clock.wall_now();
         let horizon = now

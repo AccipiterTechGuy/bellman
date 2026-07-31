@@ -17,6 +17,13 @@ pub struct SchedulerConfig {
     pub horizon: Duration,
     /// Max sleep chunk before re-reading the wall clock (default 30 s).
     pub max_sleep: Duration,
+    /// Unconditional horizon-rebuild floor (default 60 s). External writers
+    /// (`bellman slot-submit` applies slot requests on its own connection)
+    /// commit to the store without any control message; the loop notices them
+    /// via `PRAGMA data_version` on each wake, and rebuilds at least this
+    /// often even if the probe somehow stays silent. Set very large in tests
+    /// to prove the probe path alone.
+    pub external_rebuild_interval: Duration,
     /// Wall-vs-monotonic divergence that counts as a clock jump / suspend
     /// (default 3 s).
     pub jump_threshold: Duration,
@@ -70,6 +77,7 @@ impl SchedulerConfig {
         Self {
             horizon: cfg.horizon(),
             max_sleep: Duration::from_secs(30),
+            external_rebuild_interval: Duration::from_secs(60),
             jump_threshold: Duration::from_secs(3),
             max_concurrent_actions: cfg.max_concurrent_actions.max(1),
             accuracy_slack: cfg.accuracy_slack(),
@@ -96,6 +104,12 @@ impl SchedulerConfig {
 
     pub fn with_max_sleep(mut self, max_sleep: Duration) -> Self {
         self.max_sleep = max_sleep;
+        self
+    }
+
+    /// Unconditional horizon-rebuild floor for external store writers (SCH2).
+    pub fn with_external_rebuild_interval(mut self, interval: Duration) -> Self {
+        self.external_rebuild_interval = interval;
         self
     }
 
