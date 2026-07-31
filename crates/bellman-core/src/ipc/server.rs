@@ -710,15 +710,25 @@ fn accept_loop(
 /// current user — the same same-user trust boundary as the 0600 socket.
 /// The server-instance lock is a named mutex; a second server on the pipe
 /// name is refused, exactly like the Unix flock.
+///
+/// Instances are OVERLAPPED and never wrapped in `std::fs::File`: this
+/// protocol needs simultaneous read+write on one instance (the client is
+/// parked in a read while Bellman pushes fire frames), and NT serializes
+/// I/O on a synchronous file object — the writer would park behind the
+/// reader's pending read and both sides would wait forever. Per MSDN
+/// ("Synchronous and Overlapped Pipe I/O"), the only reliable technique is
+/// a separate OVERLAPPED with its own event object per operation — exactly
+/// what [`PipeReader`]/[`PipeWriter`] do, which also avoids std's
+/// wait-on-the-file-handle abort hazard for overlapped handles.
 #[cfg(windows)]
 mod win_imp {
     use super::*;
-    use std::os::windows::io::FromRawHandle;
     use std::time::Duration;
     use windows::core::{HRESULT, PCWSTR};
     use windows::Win32::Foundation::{
-        CloseHandle, GetLastError, LocalFree, BOOL, ERROR_ALREADY_EXISTS,
-        ERROR_PIPE_CONNECTED, HANDLE, HLOCAL,
+        CloseHandle, GetLastError, LocalFree, BOOL, ERROR_ALREADY_EXISTS, ERROR_BROKEN_PIPE,
+        ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, ERROR_PIPE_NOT_CONNECTED, HANDLE, HLOCAL,
+        WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows::Win32::Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
@@ -728,12 +738,19 @@ mod win_imp {
         GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TokenUser, TOKEN_QUERY,
         TOKEN_USER,
     };
-    use windows::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
+    use windows::Win32::Storage::FileSystem::{
+        ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
+        PIPE_ACCESS_DUPLEX,
+    };
+    use windows::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
     use windows::Win32::System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
         PIPE_TYPE_BYTE, PIPE_WAIT,
     };
-    use windows::Win32::System::Threading::{CreateMutexW, GetCurrentProcess, OpenProcessToken};
+    use windows::Win32::System::Threading::{
+        CreateEventW, CreateMutexW, GetCurrentProcess, OpenProcessToken, ResetEvent,
+        WaitForSingleObject,
+    };
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -863,13 +880,11 @@ mod win_imp {
 
     /// Accept loop: one pipe instance per client (that is how named pipes
     /// multiplex — never a server per timer, but one instance per
-    /// connection). Instances are SYNCHRONOUS (no FILE_FLAG_OVERLAPPED): the
-    /// client threads then do blocking `std::fs::File` I/O on them, exactly
-    /// like the Unix socket — std's blocking Read/Write on an *overlapped*
-    /// handle can see STATUS_PENDING and abort the process, and two threads
-    /// sharing one overlapped file object can satisfy each other's waits.
-    /// The blocking `ConnectNamedPipe` is unblocked on shutdown by
-    /// [`wake_listener`]'s throwaway self-connect.
+    /// connection). Instances are OVERLAPPED, so `ConnectNamedPipe` gets a
+    /// real OVERLAPPED (never NULL — on an overlapped handle a NULL
+    /// OVERLAPPED can falsely report completion) with its own event, and the
+    /// wait polls the stop flag so shutdown is responsive; `wake_listener`'s
+    /// self-connect makes it immediate.
     pub(super) fn accept_loop(
         pipe: &str,
         security: &PipeSecurity,
@@ -877,13 +892,15 @@ mod win_imp {
         stop: Arc<AtomicBool>,
     ) -> io::Result<()> {
         let pipe_w = wide(pipe);
-        let mut first = true;
         unsafe {
+            let event = new_manual_event()?;
+            let mut first = true;
             loop {
                 if stop.load(Ordering::SeqCst) {
+                    let _ = CloseHandle(event);
                     return Ok(());
                 }
-                let mut open_mode = PIPE_ACCESS_DUPLEX;
+                let mut open_mode = PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED;
                 if first {
                     open_mode |= FILE_FLAG_FIRST_PIPE_INSTANCE;
                     first = false;
@@ -900,13 +917,43 @@ mod win_imp {
                 );
                 if hpipe.is_invalid() {
                     let e = windows::core::Error::from_win32();
+                    let _ = CloseHandle(event);
                     return Err(io::Error::other(format!("CreateNamedPipeW: {e}")));
                 }
-                // Blocking wait for one client (a client that connected
-                // between create and connect reports ERROR_PIPE_CONNECTED —
-                // also ready).
-                if let Err(e) = ConnectNamedPipe(hpipe, None) {
-                    if e.code() != hr(ERROR_PIPE_CONNECTED.0) {
+                let _ = ResetEvent(event);
+                let mut overlapped = OVERLAPPED::default();
+                overlapped.hEvent = event;
+                match ConnectNamedPipe(hpipe, Some(&mut overlapped)) {
+                    Ok(()) => {}
+                    // A client connected between create and connect: ready.
+                    Err(e) if e.code() == hr(ERROR_PIPE_CONNECTED.0) => {}
+                    Err(e) if e.code() == hr(ERROR_IO_PENDING.0) => {
+                        loop {
+                            if stop.load(Ordering::SeqCst) {
+                                let _ = CancelIo(hpipe);
+                                let _ = CloseHandle(hpipe);
+                                let _ = CloseHandle(event);
+                                return Ok(());
+                            }
+                            match WaitForSingleObject(event, 100) {
+                                WAIT_OBJECT_0 => break,
+                                WAIT_TIMEOUT => continue,
+                                other => {
+                                    eprintln!("bellman: ipc connect wait: {other:?}");
+                                    break;
+                                }
+                            }
+                        }
+                        let mut transferred = 0u32;
+                        if let Err(e) =
+                            GetOverlappedResult(hpipe, &overlapped, &mut transferred, BOOL(0))
+                        {
+                            eprintln!("bellman: ipc connect result: {e}");
+                            let _ = CloseHandle(hpipe);
+                            continue;
+                        }
+                    }
+                    Err(e) => {
                         eprintln!("bellman: ipc ConnectNamedPipe: {e}");
                         let _ = CloseHandle(hpipe);
                         continue;
@@ -915,6 +962,7 @@ mod win_imp {
                 // Woken by the shutdown self-connect: leave quietly.
                 if stop.load(Ordering::SeqCst) {
                     let _ = CloseHandle(hpipe);
+                    let _ = CloseHandle(event);
                     return Ok(());
                 }
                 // Hand the instance to its client thread (usize hop: HANDLE
@@ -948,17 +996,177 @@ mod win_imp {
         }
     }
 
+    fn new_manual_event() -> io::Result<HANDLE> {
+        unsafe {
+            CreateEventW(None, BOOL(1), BOOL(0), PCWSTR::null())
+                .map_err(|e| io::Error::other(format!("CreateEventW: {e}")))
+        }
+    }
+
+    /// The shared instance handle, closed exactly once when the reader and
+    /// the writer are both gone. Send+Sync is sound here: a Windows file
+    /// handle is a kernel object usable from any thread, and SIMULTANEOUS
+    /// use is made safe the MSDN way — every ReadFile/WriteFile below gets
+    /// its own OVERLAPPED with its own event, never the file handle's own
+    /// signal.
+    struct PipeHandle(HANDLE);
+    unsafe impl Send for PipeHandle {}
+    unsafe impl Sync for PipeHandle {}
+    impl Drop for PipeHandle {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+
+    /// EOF from the far end, as ReadFile/GetOverlappedResult report it.
+    fn is_eof(e: &windows::core::Error) -> bool {
+        e.code() == hr(ERROR_BROKEN_PIPE.0) || e.code() == hr(ERROR_PIPE_NOT_CONNECTED.0)
+    }
+
+    /// The read half of one instance: overlapped `ReadFile` with THIS
+    /// half's own manual-reset event. Lives on the client (reader) thread.
+    struct PipeReader {
+        handle: Arc<PipeHandle>,
+        event: HANDLE,
+    }
+    unsafe impl Send for PipeReader {}
+
+    impl PipeReader {
+        fn new(handle: &Arc<PipeHandle>) -> io::Result<Self> {
+            Ok(Self {
+                handle: Arc::clone(handle),
+                event: new_manual_event()?,
+            })
+        }
+    }
+
+    impl Drop for PipeReader {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseHandle(self.event);
+            }
+        }
+    }
+
+    impl Read for PipeReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            unsafe {
+                // Reset BEFORE issuing: a signal left by the previous
+                // operation must never satisfy this one's wait.
+                let _ = ResetEvent(self.event);
+                let mut overlapped = OVERLAPPED::default();
+                overlapped.hEvent = self.event;
+                match ReadFile(self.handle.0, Some(buf), None, Some(&mut overlapped)) {
+                    Ok(()) => {
+                        let mut transferred = 0u32;
+                        match GetOverlappedResult(
+                            self.handle.0,
+                            &overlapped,
+                            &mut transferred,
+                            BOOL(0),
+                        ) {
+                            Ok(()) => Ok(transferred as usize),
+                            Err(e) if is_eof(&e) => Ok(0),
+                            Err(e) => Err(io::Error::other(format!("pipe read: {e}"))),
+                        }
+                    }
+                    Err(e) if e.code() == hr(ERROR_IO_PENDING.0) => {
+                        let mut transferred = 0u32;
+                        match GetOverlappedResult(
+                            self.handle.0,
+                            &overlapped,
+                            &mut transferred,
+                            BOOL(1),
+                        ) {
+                            Ok(()) => Ok(transferred as usize),
+                            Err(e) if is_eof(&e) => Ok(0),
+                            Err(e) => Err(io::Error::other(format!("pipe read: {e}"))),
+                        }
+                    }
+                    Err(e) if is_eof(&e) => Ok(0),
+                    Err(e) => Err(io::Error::other(format!("pipe read: {e}"))),
+                }
+            }
+        }
+    }
+
+    /// The write half of one instance: overlapped `WriteFile` with THIS
+    /// half's own manual-reset event. Lives on the per-client writer thread.
+    struct PipeWriter {
+        handle: Arc<PipeHandle>,
+        event: HANDLE,
+    }
+    unsafe impl Send for PipeWriter {}
+
+    impl PipeWriter {
+        fn new(handle: &Arc<PipeHandle>) -> io::Result<Self> {
+            Ok(Self {
+                handle: Arc::clone(handle),
+                event: new_manual_event()?,
+            })
+        }
+    }
+
+    impl Drop for PipeWriter {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseHandle(self.event);
+            }
+        }
+    }
+
+    impl Write for PipeWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            unsafe {
+                let _ = ResetEvent(self.event);
+                let mut overlapped = OVERLAPPED::default();
+                overlapped.hEvent = self.event;
+                match WriteFile(self.handle.0, Some(buf), None, Some(&mut overlapped)) {
+                    Ok(()) => {
+                        let mut transferred = 0u32;
+                        GetOverlappedResult(self.handle.0, &overlapped, &mut transferred, BOOL(0))
+                            .map(|_| transferred as usize)
+                            .map_err(|e| io::Error::other(format!("pipe write: {e}")))
+                    }
+                    Err(e) if e.code() == hr(ERROR_IO_PENDING.0) => {
+                        let mut transferred = 0u32;
+                        GetOverlappedResult(self.handle.0, &overlapped, &mut transferred, BOOL(1))
+                            .map(|_| transferred as usize)
+                            .map_err(|e| io::Error::other(format!("pipe write: {e}")))
+                    }
+                    Err(e) => Err(io::Error::other(format!("pipe write: {e}"))),
+                }
+            }
+        }
+
+        /// Byte-mode pipe: every completed WriteFile is on the wire.
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
     /// One pipe instance = one client: claim → replies, through the same
-    /// platform-neutral protocol the Unix socket uses.
+    /// platform-neutral protocol the Unix socket uses. The instance is
+    /// shared by the reader (this thread) and the writer thread serve_client
+    /// spawns — simultaneous by construction (per-operation OVERLAPPED).
     fn client_thread(raw: usize, ctx: Arc<ClientCtx>) {
-        let file = unsafe { std::fs::File::from_raw_handle(raw as *mut _) };
-        let reader = match file.try_clone() {
-            Ok(f) => BufReader::new(f),
+        let handle = Arc::new(PipeHandle(HANDLE(raw as *mut _)));
+        let reader = match PipeReader::new(&handle) {
+            Ok(r) => r,
             Err(e) => {
-                eprintln!("bellman: ipc pipe clone: {e}");
-                return; // file closes the instance handle
+                eprintln!("bellman: ipc pipe reader: {e}");
+                return; // PipeHandle closes the instance
             }
         };
-        serve_client(reader, file, ctx);
+        let writer = match PipeWriter::new(&handle) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("bellman: ipc pipe writer: {e}");
+                return;
+            }
+        };
+        serve_client(BufReader::new(reader), writer, ctx);
     }
 }
