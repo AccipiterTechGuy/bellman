@@ -31,6 +31,14 @@ pub fn fire_notification_name(run_id: Uuid) -> String {
     format!("fire-{run_id}.json")
 }
 
+/// Where an IPC client connects (IK6) — data, not code. Present on
+/// `timer.json` and on fire notifications whenever the IPC server is up.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IpcEndpoint {
+    /// Absolute native path of the one Bellman socket.
+    pub socket: PathBuf,
+}
+
 /// A fire notification published for one run of one timer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FireNotification {
@@ -54,8 +62,14 @@ pub struct FireNotification {
     pub fired_at: DateTime<Utc>,
     /// Absolute native path to the run's `status.json` projection.
     pub status_path: PathBuf,
-    /// Absolute native path to the run's reply stub.
-    pub reply_path: PathBuf,
+    /// Absolute native path to the run's reply stub. **File transport only**
+    /// (IK6): an IPC-only firing deliberately has no stub and omits the
+    /// field — it never advertises a file Bellman did not create.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_path: Option<PathBuf>,
+    /// The one Bellman socket (IK6), present when the IPC server is up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ipc: Option<IpcEndpoint>,
 }
 
 impl FireNotification {
@@ -71,7 +85,8 @@ impl FireNotification {
         scheduled_for: DateTime<Utc>,
         fired_at: DateTime<Utc>,
         status_path: PathBuf,
-        reply_path: PathBuf,
+        reply_path: Option<PathBuf>,
+        ipc: Option<IpcEndpoint>,
     ) -> Self {
         Self {
             schema: FIRE_SCHEMA_V1.to_string(),
@@ -85,6 +100,7 @@ impl FireNotification {
             fired_at,
             status_path,
             reply_path,
+            ipc,
         }
     }
 }
@@ -94,17 +110,20 @@ impl FireNotification {
 /// A notification for the same `run_id` is replaced (idempotent rewrite is
 /// fine — the name is per-run), but the notification is **never** written while
 /// either required projection is missing: returns `InvalidInput` when
-/// `status_path` or `reply_path` does not exist.
+/// `status_path` or `reply_path` does not exist. This is the FILE adapter's
+/// writer — a notification without a `reply_path` (IPC encoding, IK6) is not
+/// eligible here by construction.
 pub fn write_fire_notification(slots_root: &Path, n: &FireNotification) -> io::Result<PathBuf> {
-    if !n.status_path.exists() || !n.reply_path.exists() {
+    let reply_ok = n.reply_path.as_ref().map(|p| p.exists()).unwrap_or(false);
+    if !n.status_path.exists() || !reply_ok {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!(
-                "fire notification not eligible: status_path {} exists={} reply_path {} exists={}",
+                "fire notification not eligible: status_path {} exists={} reply_path {:?} exists={}",
                 n.status_path.display(),
                 n.status_path.exists(),
-                n.reply_path.display(),
-                n.reply_path.exists(),
+                n.reply_path,
+                reply_ok,
             ),
         ));
     }
@@ -140,7 +159,8 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc),
             status_path,
-            reply_path,
+            Some(reply_path),
+            None,
         )
     }
 
@@ -187,15 +207,21 @@ mod tests {
     fn refuses_to_write_when_reply_path_is_missing() {
         let tmp = tempfile::tempdir().unwrap();
         let mut n = sample(tmp.path());
-        std::fs::remove_file(&n.reply_path).unwrap();
+        std::fs::remove_file(n.reply_path.as_ref().unwrap()).unwrap();
         let err = write_fire_notification(tmp.path(), &n).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         assert!(!fires_dir(tmp.path()).join(fire_notification_name(n.run_id)).exists());
 
         // Same for a missing status_path.
-        n.reply_path = tmp.path().join("timers/t-bulb/reply-back.json");
-        std::fs::write(&n.reply_path, b"{}").unwrap();
+        n.reply_path = Some(tmp.path().join("timers/t-bulb/reply-back.json"));
+        std::fs::write(n.reply_path.as_ref().unwrap(), b"{}").unwrap();
         std::fs::remove_file(&n.status_path).unwrap();
+        let err = write_fire_notification(tmp.path(), &n).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+
+        // And for an IPC-encoding notification (no reply_path at all, IK6).
+        let mut n = sample(tmp.path());
+        n.reply_path = None;
         let err = write_fire_notification(tmp.path(), &n).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }

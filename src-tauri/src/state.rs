@@ -60,6 +60,9 @@ pub struct AppState {
     /// IK5: invalidation sink for run-status projections — set from the
     /// setup hook (it needs the `AppHandle` to emit `run-status-changed`).
     pub status_listener: Mutex<Option<bellman_core::reply::StatusListener>>,
+    /// IK6: the local IPC socket server (set after `start_scheduler` when
+    /// `ipc_enabled`). Kept alive here; drop stops the accept thread.
+    pub ipc_server: Mutex<Option<bellman_core::ipc::IpcServer>>,
 }
 
 impl AppState {
@@ -85,6 +88,7 @@ impl AppState {
             reply_anchors: bellman_core::reply::new_anchors(),
             reply_deadlines: bellman_core::reply::new_deadlines(),
             status_listener: Mutex::new(None),
+            ipc_server: Mutex::new(None),
         }
     }
 
@@ -246,6 +250,17 @@ impl AppState {
             .with_anchors(anchors.clone())
             .with_deadlines(deadlines.clone())
             .with_status_listener(status_listener.clone());
+        // IK6: the one IPC socket for all of Bellman. The handle is shared
+        // by the fire path (per-firing transport selection), the dispatcher
+        // (publication pump) and the reply engine (ingest context); the
+        // server below drives the accept side on the same registry.
+        let ipc_handle = if app_cfg.ipc_enabled {
+            Some(bellman_core::ipc::IpcHandle::new(
+                bellman_core::ipc::default_socket_path(),
+            ))
+        } else {
+            None
+        };
         // SCH1: the bounded dispatcher — worker lanes execute actions off the
         // scheduler loop, under the shared ActionLimiter. Scheduled fires and
         // `run_now` are producers of the same durable claims; the workers
@@ -257,6 +272,7 @@ impl AppState {
             notify_sink: self.notify_sink.clone(),
             executor: ExecutorConfig::default(),
             tick: Duration::from_secs(1),
+            ipc: ipc_handle.clone(),
         })
         .expect("dispatcher spawn");
         *self.dispatcher.lock() = Some(dispatcher.clone());
@@ -289,7 +305,27 @@ impl AppState {
                 deadlines,
                 fire_slot_file: None,
                 status_listener,
+                ipc: ipc_handle.clone(),
             };
+            // IK6: the socket server, fed by the SAME engine instance the
+            // file watcher uses — one ingest path for both transports. A
+            // bind/lock failure degrades to files only (the fallback must be
+            // the thing that always works), never blocks startup.
+            if let Some(handle) = ipc_handle {
+                match bellman_core::ipc::IpcServer::spawn(bellman_core::ipc::IpcConfig {
+                    socket_path: handle.socket_path().to_path_buf(),
+                    data_dir: self.data_dir.clone(),
+                    db_path: self.data_dir.join("timers.db"),
+                    engine: engine.clone(),
+                    handle,
+                }) {
+                    Ok(server) => {
+                        log::info!("bellman: IPC socket at {}", server.socket_path().display());
+                        *self.ipc_server.lock() = Some(server);
+                    }
+                    Err(e) => log::error!("bellman: IPC server disabled: {e}"),
+                }
+            }
             match bellman_core::slots::spawn_watch_thread(bellman_core::slots::WatchConfig {
                 slots_root: self.data_dir.join("slots"),
                 data_dir: self.data_dir.clone(),

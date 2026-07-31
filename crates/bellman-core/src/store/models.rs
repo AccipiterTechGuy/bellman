@@ -132,6 +132,54 @@ pub enum Action {
     None,
 }
 
+/// Per-timer delivery transport for fire notifications (IK6).
+///
+/// Both transports carry the same logical messages and hit the same ingest;
+/// the choice is made per firing, recorded on the run, and never changes
+/// mid-firing. `Auto` uses IPC when a client holding the timer is connected
+/// at fire time, files otherwise. `Json` is the default: today's behaviour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportMode {
+    /// Files only (`slots/fires/` + reply stub) — the default.
+    #[default]
+    Json,
+    /// Socket only; no client at fire time ⇒ the run ages to `no_ack`
+    /// exactly like an unwatched folder. Never falls back to files.
+    Ipc,
+    /// IPC when a client holding this timer is connected at fire time,
+    /// files otherwise; an unconfirmed IPC failure may fall back to files
+    /// with the same `run_id` (`ipc_fallback` on the run).
+    Auto,
+}
+
+impl TransportMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Ipc => "ipc",
+            Self::Auto => "auto",
+        }
+    }
+
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "json" => Some(Self::Json),
+            "ipc" => Some(Self::Ipc),
+            "auto" => Some(Self::Auto),
+            _ => None,
+        }
+    }
+}
+
+/// Run-recorded transport values (IK6): `selected_transport` is the mode
+/// chosen at fire (immutable mid-firing); `transport` is the effective
+/// delivery, which only ever diverges as `ipc_fallback` (an `auto` run whose
+/// unconfirmed IPC delivery failed over to files with the same `run_id`).
+pub const TRANSPORT_JSON: &str = "json";
+pub const TRANSPORT_IPC: &str = "ipc";
+pub const TRANSPORT_IPC_FALLBACK: &str = "ipc_fallback";
+
 /// Fully loaded timer row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Timer {
@@ -165,6 +213,9 @@ pub struct Timer {
     /// Greyed in the GUI when platform capability is Disabled.
     #[serde(default)]
     pub wake_machine: bool,
+    /// Delivery transport for fire notifications (IK6). Default `json`.
+    #[serde(default)]
+    pub transport: TransportMode,
 }
 
 /// Input for [`super::Store::create_timer`].
@@ -188,6 +239,8 @@ pub struct NewTimer {
     pub accuracy_slack_secs: Option<u32>,
     /// Participate in single-next-wake election (default false).
     pub wake_machine: bool,
+    /// Delivery transport for fire notifications (default `json`).
+    pub transport: TransportMode,
 }
 
 impl NewTimer {
@@ -209,6 +262,7 @@ impl NewTimer {
             jitter_secs: 0,
             accuracy_slack_secs: None,
             wake_machine: false,
+            transport: TransportMode::default(),
         }
     }
 
@@ -233,6 +287,7 @@ pub struct TimerPatch {
     pub jitter_secs: Option<u32>,
     pub accuracy_slack_secs: Option<Option<u32>>,
     pub wake_machine: Option<bool>,
+    pub transport: Option<TransportMode>,
 }
 
 /// Optimistic update envelope.
@@ -385,8 +440,16 @@ impl RunClaim {
 pub struct TransportProjection {
     pub run_id: Uuid,
     pub timer_id: TimerId,
+    /// Delivery adapter for this projection (IK6): `file` (the JSON folder
+    /// adapter) or `ipc` (the socket adapter). The payload is the deterministic
+    /// per-adapter encoding of the same logical fire message; an `auto`
+    /// fallback rewrites `kind`/`target_path`/`payload` in place — the run and
+    /// its identity fields never change.
+    #[serde(default = "TransportProjection::default_kind")]
+    pub kind: String,
     /// Immutable absolute target path (`slots/fires/fire-<run_id>.json`, or a
-    /// configured fixed name under `fires/` used as an at-least-once wake hint).
+    /// configured fixed name under `fires/` used as an at-least-once wake hint;
+    /// `ipc://<timer_id>` for an IPC-delivered run).
     pub target_path: String,
     /// Serialized `FireNotification` JSON (the exact bytes to publish).
     pub payload: String,
@@ -406,6 +469,13 @@ impl TransportProjection {
     pub const PUBLISHED: &'static str = "published";
     pub const OBSOLETE: &'static str = "obsolete";
     pub const PICKED_UP: &'static str = "picked_up";
+    /// Adapter kinds (IK6).
+    pub const KIND_FILE: &'static str = "file";
+    pub const KIND_IPC: &'static str = "ipc";
+
+    fn default_kind() -> String {
+        Self::KIND_FILE.to_string()
+    }
 }
 
 /// Who reported a `failed` run state (IK3).
@@ -479,6 +549,15 @@ pub struct RunStateRow {
     /// only; repeated writes inside a state append nothing).
     pub acknowledged_logged: bool,
     pub running_logged: bool,
+    /// The transport mode selected at fire (IK6: `json` | `ipc`) — fixed for
+    /// the firing, never changes mid-firing. `None` on rows predating IK6.
+    #[serde(default)]
+    pub selected_transport: Option<String>,
+    /// The effective delivery transport (`json` | `ipc` | `ipc_fallback`).
+    /// Starts equal to `selected_transport`; an `auto` run whose unconfirmed
+    /// IPC delivery fell back to files records `ipc_fallback` here.
+    #[serde(default)]
+    pub transport: Option<String>,
 }
 
 impl RunStateRow {
@@ -514,7 +593,18 @@ impl RunStateRow {
             reply_digest: None,
             acknowledged_logged: false,
             running_logged: false,
+            selected_transport: None,
+            transport: None,
         }
+    }
+
+    /// Stamp the firing's selected transport (IK6): both the immutable
+    /// selection and the effective delivery start at the same value; only an
+    /// `auto` fallback later moves `transport` to `ipc_fallback`.
+    pub fn with_transport(mut self, selected: &str) -> Self {
+        self.selected_transport = Some(selected.to_string());
+        self.transport = Some(selected.to_string());
+        self
     }
 
     /// The R5 state of this row.

@@ -4,7 +4,7 @@ use super::error::{StoreError, StoreResult};
 use rusqlite::Connection;
 
 /// Current on-disk schema version (also stored in `PRAGMA user_version` and `meta`).
-pub const SCHEMA_VERSION: i32 = 8;
+pub const SCHEMA_VERSION: i32 = 9;
 
 /// Apply pending migrations. Safe to call on every open.
 pub fn migrate(conn: &Connection) -> StoreResult<()> {
@@ -48,6 +48,9 @@ pub fn migrate(conn: &Connection) -> StoreResult<()> {
     }
     if current < 8 {
         migrate_v8(conn)?;
+    }
+    if current < 9 {
+        migrate_v9(conn)?;
     }
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
@@ -381,6 +384,46 @@ fn migrate_v8(conn: &Connection) -> StoreResult<()> {
         ",
     )
     .map_err(|e| StoreError::Sqlite(format!("migrate v8 transport projections: {e}")))?;
+    Ok(())
+}
+
+/// IK6: dual transport — per-timer transport mode, per-run transport
+/// recording, and the per-adapter kind on the transport projection.
+///
+/// - `timers.transport`: the configured mode (`json` | `ipc` | `auto`),
+///   default `json` (today's behaviour).
+/// - `run_states.selected_transport` / `run_states.transport`: the mode
+///   selected at fire (immutable) and the effective delivery (`ipc_fallback`
+///   when an `auto` run fell back to files with the same `run_id`). Nullable:
+///   runs predating IK6 have no transport record.
+/// - `transport_projections.kind`: the adapter (`file` | `ipc`) this
+///   projection's payload/target is encoded for — extends the SCH1 row; no
+///   second run ledger exists.
+fn migrate_v9(conn: &Connection) -> StoreResult<()> {
+    if !table_has_column(conn, "timers", "transport")? {
+        conn.execute(
+            "ALTER TABLE timers ADD COLUMN transport TEXT NOT NULL DEFAULT 'json'",
+            [],
+        )
+        .map_err(|e| StoreError::Sqlite(format!("migrate v9 add timers.transport: {e}")))?;
+    }
+    if !table_has_column(conn, "run_states", "selected_transport")? {
+        conn.execute("ALTER TABLE run_states ADD COLUMN selected_transport TEXT", [])
+            .map_err(|e| StoreError::Sqlite(format!("migrate v9 add selected_transport: {e}")))?;
+    }
+    if !table_has_column(conn, "run_states", "transport")? {
+        conn.execute("ALTER TABLE run_states ADD COLUMN transport TEXT", [])
+            .map_err(|e| StoreError::Sqlite(format!("migrate v9 add transport: {e}")))?;
+    }
+    if !table_has_column(conn, "transport_projections", "kind")? {
+        conn.execute(
+            "ALTER TABLE transport_projections ADD COLUMN kind TEXT NOT NULL DEFAULT 'file'",
+            [],
+        )
+        .map_err(|e| {
+            StoreError::Sqlite(format!("migrate v9 add transport_projections.kind: {e}"))
+        })?;
+    }
     Ok(())
 }
 

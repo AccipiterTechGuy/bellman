@@ -871,6 +871,7 @@ mod tests {
             jitter_secs: 0,
             accuracy_slack_secs: None,
             wake_machine: false,
+            transport: bellman_core::TransportMode::default(),
         };
         let dto = timer_to_input(&timer);
         assert_eq!(dto.name, "tick");

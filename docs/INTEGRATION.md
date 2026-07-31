@@ -493,3 +493,130 @@ claiming to work.
 Run it end to end with `examples/lightbulb/`: its README shows the full
 loop — fire → acknowledge → bulb visibly on for 15 s → completed →
 validated and terminal — against a live Bellman.
+
+## Talking over the local socket (IPC)
+
+Everything above is the **file transport**, and it is the fallback that
+always works. An app may instead talk to Bellman over **one local socket** —
+a faster folder, not a second protocol. Both transports carry the same
+logical messages and schemas (`bellman-slot/1` out, `bellman-reply/1` in),
+hit the **same validation**, and produce the **same records** (state, log
+lines, `status.json`). The operator and the app choose; Bellman is
+indifferent — there is exactly one ingest path behind both adapters.
+
+### Choosing the transport — per firing, never mid-firing
+
+Each timer has `"transport": {"mode": …}` (set `"transport"` on the slot
+`add`/`modify` payload, `bellman add --transport`, or `bellman edit
+--transport`):
+
+- `json` — files only, today's behaviour, **the default**.
+- `ipc` — socket only; if no client is connected at fire time the run goes
+  `no_ack` when the pickup grace lapses, exactly like an unwatched folder.
+  It never falls back.
+- `auto` — if a client holding this timer is connected at fire time, use
+  IPC; otherwise files. The choice is made **at fire**, recorded on the run
+  (`status.json` shows `transport: json | ipc | ipc_fallback`), and never
+  changes mid-firing. The next firing chooses fresh.
+
+Fallback exists **only in `auto`**, and **only before delivery is
+confirmed** (confirmation = the first valid reply accepted, normally
+`acknowledged`). On an unconfirmed IPC failure — a send error, or the
+client disconnecting before confirming — Bellman creates the same run's
+reply stub (create-only) and publishes the **same `run_id`** through the
+file adapter with its `reply_path`; the run records
+`transport: "ipc_fallback"`. No second run is ever minted because a pipe
+broke, and silence on a live connection is not a failure: the bounded
+retry pump keeps offering IPC until the normal pickup deadline rules apply.
+A client that confirms and *then* disconnects is **not** `no_ack` — it
+stays `acknowledged`, exactly like a file app that already answered.
+Duplicate delivery is possible by construction, so the rule from step 3
+applies doubled: **deduplicate by `run_id`** — same `run_id` seen twice is
+the same firing, act once, reply normally.
+
+### The socket
+
+- **One socket for all of Bellman** — never a server per timer.
+- Linux: `$XDG_RUNTIME_DIR/bellman/bellman.sock`; without `XDG_RUNTIME_DIR`,
+  a user-owned private directory below the OS temp dir. macOS: a private
+  directory below `$TMPDIR`. Windows: the named pipe
+  `\\.\pipe\bellman-<username>` with an ACL restricted to you (the pipe
+  name is what goes in `"ipc": {"socket": …}`). The directory is **0700**,
+  the socket **0600** — the trust boundary is identical to the file
+  protocol's (same-user processes; the OS is the gate, no credentials, no
+  secrets).
+- Find the path in `timer.json` (`"ipc": {"socket": "<path>"}`) or in any
+  fire message. It is **data, not code** — Bellman never writes an
+  `adapter.py` or any other generated, importable file into a timer folder;
+  the raw protocol below is the whole contract, speakable from any language.
+- The server runs while the desktop app runs (`"ipc_enabled": true` in
+  `config.json`, the default). With it off, every firing resolves to files.
+
+### The protocol — three frame kinds, newline-delimited JSON
+
+1. **Claim** (client → Bellman, once, first frame):
+
+   ```json
+   {"schema":"bellman-claim/1","app_name":"demo-app","timer_id":"<uuid>"}
+   ```
+
+   `app_name` must match the timer's explicit integration owner — the same
+   rule that rejects a wrong-`app_name` reply file, no first-acker
+   ownership. A rejected claim gets
+   `{"schema":"bellman-claim/1","ok":false,"error":"…"}` and a closed
+   connection; an accepted one gets `{"schema":"bellman-claim/1","ok":true,…}`.
+
+2. **Fire** (Bellman → client): the same `bellman-slot/1` message as the
+   fire file, **without** `reply_path` (there is deliberately no stub for
+   an IPC firing — the folder README explains: "this run spoke over IPC;
+   `status.json` is still the truth"), with `"ipc": {"socket": …}` present:
+
+   ```json
+   {"schema":"bellman-slot/1","kind":"fired","run_id":"9f2c1d77-…",
+    "timer_id":"…","timer_name":"demo-wake","app_name":"demo-app",
+    "scheduled_for":"…","fired_at":"…",
+    "status_path":"/…/status.json","ipc":{"socket":"/run/user/1000/bellman/bellman.sock"}}
+   ```
+
+   `status.json` is written **always**, on both transports. After `no_ack`
+   periodic sends stop, but claiming later triggers **one replay** of the
+   still-current explicit-`ipc` run — confirming it revises `no_ack` to
+   `acknowledged`, exactly like late file pickup.
+
+3. **Reply** (client → Bellman): the same `bellman-reply/1` document you
+   would write into the reply file, as **one line**:
+
+   ```json
+   {"schema":"bellman-reply/1","run_id":"9f2c1d77-…","app_name":"demo-app","state":"acknowledged","expected_secs":15}
+   ```
+
+   Same states, same accumulation, same validation, same rejections
+   (`reply_rejected` in the log), same caps: a frame is at most **64 KB**;
+   a peer that sends more without a newline is disconnected, and every
+   other client is unaffected. Heartbeats over IPC obey the file rule:
+   live view only, never the log.
+
+### A minimal IPC client (Python, stdlib)
+
+```python
+import json, socket, sys, time
+
+sock_path, app_name, timer_id = sys.argv[1], "demo-app", sys.argv[2]
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(sock_path)
+f = s.makefile("rw")
+f.write(json.dumps({"schema": "bellman-claim/1", "app_name": app_name,
+                    "timer_id": timer_id}) + "\n"); f.flush()
+assert json.loads(f.readline())["ok"], "claim rejected"
+seen = set()
+for line in f:
+    fire = json.loads(line)
+    if fire["run_id"] in seen:
+        continue                      # same run_id = same firing; act once
+    seen.add(fire["run_id"])
+    # … do the work …
+    f.write(json.dumps({"schema": "bellman-reply/1", "run_id": fire["run_id"],
+                        "app_name": app_name, "state": "completed",
+                        "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "result": {"ok": True}}) + "\n"); f.flush()
+```

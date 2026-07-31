@@ -68,6 +68,10 @@ Inside a folder:
   reply-<run_id>.json   where an integrating app answers (only present for
                         timers owned by an app; a fresh file per run).
 
+A run without a reply-<run_id>.json spoke over IPC (the local socket) —
+that is normal, not a missing file: this run spoke over IPC; status.json
+is still the truth.
+
 Which file answers the question \"did it work?\": status.json is the truth;
 the reply file is only the app's side. They diverge whenever Bellman judged
 a run (no_ack, watchdog expiry) and the app did not speak.
@@ -479,10 +483,16 @@ fn write_timer_json(folder: &Path, timer: &Timer, owner: Option<&str>) -> TreeRe
         "tz": timer.tz,
         "occurrence": occurrence_view(timer.occurrence.kind()),
         "action": timer.action,
+        "transport": { "mode": timer.transport.as_str() },
         "note": TIMER_NOTE,
     });
     if let Some(app) = owner {
         v["integration"] = serde_json::json!({ "app_name": app });
+    }
+    // IK6: connection info is data, not code — the one socket path, only
+    // while the IPC server is up. Never a generated adapter file.
+    if let Some(socket) = crate::ipc::advertised_socket() {
+        v["ipc"] = serde_json::json!({ "socket": socket });
     }
     if let Some(next) = timer.next_fire_utc {
         v["next_fire_at"] = serde_json::json!(next);
@@ -561,11 +571,22 @@ pub struct RunStatus {
     pub failure_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub no_ack_at: Option<DateTime<Utc>>,
+    /// IK6: the effective delivery transport of this run (`json` | `ipc` |
+    /// `ipc_fallback`) — the mirror stays transport-independent (written for
+    /// both), but the human reading it can see how the app was spoken to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transport: Option<String>,
 }
 
 impl RunStatus {
     /// Fresh snapshot at fire time.
-    pub fn fired(timer: &Timer, claim: &RunClaim, kind: &FireKind, owner: Option<&str>) -> Self {
+    pub fn fired(
+        timer: &Timer,
+        claim: &RunClaim,
+        kind: &FireKind,
+        owner: Option<&str>,
+        transport: Option<&str>,
+    ) -> Self {
         Self {
             schema: RUN_SCHEMA_V1.to_string(),
             state: fire_state(kind).to_string(),
@@ -588,6 +609,7 @@ impl RunStatus {
             reason: None,
             failure_kind: None,
             no_ack_at: None,
+            transport: transport.map(str::to_string),
         }
     }
 
@@ -621,6 +643,7 @@ impl RunStatus {
             reason: row.reason.clone(),
             failure_kind: row.failure_kind.map(|k| k.as_str().to_string()),
             no_ack_at: row.no_ack_at,
+            transport: row.transport.clone(),
         }
     }
 }
@@ -741,6 +764,9 @@ pub fn project_fire(
 
     let owner = store.get_timer_owner(timer.id)?;
     let folder = tree.sync_timer_json(timer, owner.as_deref())?;
+    // IK6: the transport choice is made HERE, at fire, recorded on the run,
+    // and never changes mid-firing. The next firing chooses fresh.
+    let selected = crate::reply::publication::select_transport(timer, engine);
 
     // 2. Barrier READ (file I/O — outside the transaction, bounded). The
     //    barrier enforces the same filename/document identity rule as the
@@ -824,7 +850,8 @@ pub fn project_fire(
                 fire_state(kind),
                 claim.claimed_at,
                 deadline,
-            );
+            )
+            .with_transport(selected.as_str());
             insert_run_state_conn(&tx, &row)?;
         }
         // SCH1: the durable transport projection for the fire notification
@@ -841,6 +868,7 @@ pub fn project_fire(
                 app_name,
                 order,
                 now,
+                selected,
             )
             .map_err(crate::store::StoreError::Internal)?;
             crate::store::insert_transport_projection_conn(&tx, &proj)?;
@@ -868,10 +896,22 @@ pub fn project_fire(
     // stub is created O_EXCL only).
     let projection = (|| -> TreeResult<()> {
         tree.remove_stale_replies(&folder, claim.run_id)?;
-        let status = RunStatus::fired(timer, &claim, kind, owner.as_deref());
+        let status = RunStatus::fired(
+            timer,
+            &claim,
+            kind,
+            owner.as_deref(),
+            owner.as_deref().map(|_| selected.as_str()),
+        );
         write_status(tree, timer, &status)?;
-        if let Some(app_name) = owner.as_deref() {
-            tree.create_reply_stub(&folder, claim.run_id, app_name)?;
+        // The reply stub exists only for firings that selected the file
+        // transport (IK6): an IPC firing deliberately has no stub — the
+        // folder README explains "this run spoke over IPC; status.json is
+        // still the truth".
+        if selected == crate::reply::publication::SelectedTransport::Json {
+            if let Some(app_name) = owner.as_deref() {
+                tree.create_reply_stub(&folder, claim.run_id, app_name)?;
+            }
         }
         Ok(())
     })();
@@ -893,7 +933,7 @@ pub fn project_fire(
     // `pending` for the publication pump / startup recovery, never for an
     // action worker.
     if let Some(proj) = &transport {
-        crate::reply::publication::attempt(&engine.data_dir, store, proj);
+        crate::reply::publication::attempt(&engine.data_dir, store, proj, engine.ipc.as_ref());
     }
     Ok(claim)
 }

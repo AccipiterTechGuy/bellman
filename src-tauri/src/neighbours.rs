@@ -417,6 +417,7 @@ mod tests {
             jitter_secs: 0,
             accuracy_slack_secs: None,
             wake_machine: false,
+            transport: bellman_core::TransportMode::default(),
         }
     }
 

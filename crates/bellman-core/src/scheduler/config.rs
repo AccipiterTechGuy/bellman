@@ -158,6 +158,7 @@ impl SchedulerConfig {
             deadlines: self.deadlines.clone(),
             fire_slot_file: self.fire_slot_file.clone(),
             status_listener: self.status_listener.clone(),
+            ipc: None,
         })
     }
 }

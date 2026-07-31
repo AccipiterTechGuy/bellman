@@ -178,6 +178,7 @@ pub fn ensure_system_prune_timer(store: &mut Store) -> PruneResult<Timer> {
         jitter_secs: 0,
         accuracy_slack_secs: None,
         wake_machine: false,
+        transport: crate::store::TransportMode::default(),
     })?;
     Ok(timer)
 }

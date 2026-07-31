@@ -697,7 +697,13 @@ pub fn publish_fire_notification(
         claim.scheduled_for,
         claim.claimed_at,
         folder.join(STATUS_FILE_NAME),
-        folder.join(reply_file_name(claim.run_id)),
+        Some(folder.join(reply_file_name(claim.run_id))),
+        engine
+            .ipc
+            .as_ref()
+            .map(|h| super::notification::IpcEndpoint {
+                socket: h.socket_path().to_path_buf(),
+            }),
     );
     write_fire_notification(&engine.data_dir.join("slots"), &n)?;
     Ok(())
@@ -724,7 +730,12 @@ pub fn reconcile(engine: &ReplyEngine, store: &Store) -> usize {
                 // itself (flock is per open-file-description; re-acquiring
                 // under our guard would deadlock).
                 if let Some(proj) = attempt {
-                    crate::reply::publication::attempt(&engine.data_dir, store, &proj);
+                    crate::reply::publication::attempt(
+                        &engine.data_dir,
+                        store,
+                        &proj,
+                        engine.ipc.as_ref(),
+                    );
                 }
             }
             Err(e) => eprintln!("bellman: reply reconciler: timer {}: {e}", timer.id),
@@ -762,8 +773,12 @@ fn reconcile_timer(
     }
     // Missing stub: create-only — an app can be writing at this exact
     // moment, and a lost O_EXCL race to a real reply is the correct outcome.
+    // IK6: an IPC-selected run deliberately has no stub; never repair one
+    // into existence (the folder README explains its absence).
     let stub_path = folder.join(reply_file_name(claim.run_id));
-    if !stub_path.exists() {
+    let ipc_selected =
+        row.selected_transport.as_deref() == Some(crate::store::TRANSPORT_IPC);
+    if !ipc_selected && !stub_path.exists() {
         engine
             .tree
             .create_reply_stub(&folder, claim.run_id, &row.app_name)?;
@@ -783,8 +798,10 @@ fn reconcile_timer(
                 return Ok(Some(proj));
             }
             // Published but the file vanished without pickup (crash window /
-            // silent consumption): redelivery is allowed.
-            if proj.state == crate::store::TransportProjection::PUBLISHED
+            // silent consumption): redelivery is allowed. IPC projections
+            // have no file to vanish — their retry is the pump's.
+            if proj.kind == crate::store::TransportProjection::KIND_FILE
+                && proj.state == crate::store::TransportProjection::PUBLISHED
                 && !std::path::Path::new(&proj.target_path).exists()
             {
                 let _ = store.requeue_transport_projection(proj.run_id);

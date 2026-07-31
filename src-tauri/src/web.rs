@@ -573,6 +573,7 @@ mod tests {
             jitter_secs: 0,
             accuracy_slack_secs: None,
             wake_machine: false,
+            transport: bellman_core::TransportMode::default(),
         };
         let dto: WebTimerDto = timer.into();
         let json = serde_json::to_string_pretty(&dto).unwrap();

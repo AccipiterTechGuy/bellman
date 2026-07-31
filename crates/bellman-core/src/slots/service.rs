@@ -256,6 +256,7 @@ impl SlotService {
             deadlines: crate::reply::new_deadlines(),
             fire_slot_file: None,
             status_listener,
+            ipc: None,
         };
         let Ok(_gate) = crate::reply::gate::acquire(data_dir, timer_id) else {
             return;

@@ -48,7 +48,8 @@ fn sample_fire_payload() -> FireNotification {
         fixed(),
         fixed(),
         std::path::PathBuf::from("/data/timers/tick/status.json"),
-        std::path::PathBuf::from("/data/timers/tick/reply-run.json"),
+        Some(std::path::PathBuf::from("/data/timers/tick/reply-run.json")),
+        None,
     )
 }
 

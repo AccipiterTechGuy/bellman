@@ -68,6 +68,10 @@ pub struct DispatcherConfig {
     /// Periodic pump safety tick — the backstop for a lost in-process
     /// wakeup. Production: 1 s; tests may shrink it.
     pub tick: Duration,
+    /// IK6: the live IPC handle for socket-kind transport projections the
+    /// publication pump delivers. `None` → IPC projections defer (a server
+    /// restart re-attempts them; explicit-`ipc` runs rely on R7 `no_ack`).
+    pub ipc: Option<crate::ipc::IpcHandle>,
 }
 
 impl std::fmt::Debug for DispatcherConfig {
@@ -515,7 +519,7 @@ fn pump_once(inner: &Arc<Inner>) {
 
     // 3. The transport-publication pump (bounded per pass).
     if let Some(data_dir) = &inner.cfg.data_dir {
-        crate::reply::publication::pump(data_dir, &store, 8);
+        crate::reply::publication::pump(data_dir, &store, 8, inner.cfg.ipc.as_ref());
     }
 }
 

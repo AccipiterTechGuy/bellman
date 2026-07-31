@@ -48,6 +48,7 @@ impl E2e {
             deadlines,
             fire_slot_file: None,
             status_listener: None,
+            ipc: None,
         }
     }
 

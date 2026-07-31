@@ -122,6 +122,13 @@ pub struct AppConfig {
     /// default: 64 MiB; oldest payload/sidecar pairs are removed first.
     #[serde(default = "default_quarantine_budget_bytes")]
     pub quarantine_budget_bytes: u64,
+
+    /// IK6: run the local IPC socket server (one socket for all of Bellman,
+    /// `$XDG_RUNTIME_DIR/bellman/bellman.sock` on Linux). Per-timer
+    /// `transport.mode` chooses who uses it; with the server off, every
+    /// firing resolves to the file transport. Product default: true.
+    #[serde(default = "default_ipc_enabled")]
+    pub ipc_enabled: bool,
 }
 
 fn default_horizon_secs() -> u64 {
@@ -166,6 +173,9 @@ fn default_watchdog_factor() -> f64 {
 fn default_quarantine_budget_bytes() -> u64 {
     DEFAULT_QUARANTINE_BUDGET_BYTES
 }
+fn default_ipc_enabled() -> bool {
+    true
+}
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -188,6 +198,7 @@ impl Default for AppConfig {
             pickup_grace_secs: DEFAULT_PICKUP_GRACE_SECS,
             watchdog_factor: DEFAULT_WATCHDOG_FACTOR,
             quarantine_budget_bytes: DEFAULT_QUARANTINE_BUDGET_BYTES,
+            ipc_enabled: true,
         }
     }
 }
