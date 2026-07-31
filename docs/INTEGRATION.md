@@ -45,7 +45,21 @@ bellman slot-submit request.json --slots ~/.bellman/slots --db ~/.bellman/timers
 4. **Watcher events are hints**; a periodic rescan is the source of truth. After
    publishing, either wait for the running Bellman process or call
    `bellman slot-submit` / drive `SlotService::poll` yourself.
-5. Free stubs are pre-generated (≥5). After every claim Bellman replenishes.
+5. **When is the timer live?** A successful slot response means the timer is in
+   the database; the *running scheduler* loads it into its firing heap without
+   any restart:
+   - Bellman's own watcher processed your request (you published to `free/`
+     and waited): the heap is refilled **immediately** after the response is
+     written.
+   - Another process applied the request (`bellman slot-submit`, or your own
+     `SlotService::poll`): the running scheduler notices the foreign commit
+     within **30 s** (its maximum sleep tick, via SQLite's `PRAGMA
+     data_version`), with an unconditional horizon rebuild every **60 s** as
+     the floor. The same bound covers `modify` and `delete`: a moved fire
+     time takes effect and a deleted timer stops firing within it.
+   So: schedule first fires at least ~30 s out when using `slot-submit`, or
+   accept that the first fire can be up to one tick late.
+6. Free stubs are pre-generated (≥5). After every claim Bellman replenishes.
 
 ### Request envelope
 
