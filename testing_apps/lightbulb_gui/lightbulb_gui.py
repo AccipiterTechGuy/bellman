@@ -21,7 +21,7 @@ import pathlib
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import messagebox
@@ -441,8 +441,10 @@ class LightbulbGUI(tk.Tk):
                 secs = int(val_str)
                 if secs < 1:
                     raise ValueError("Seconds must be >= 1")
-                occ = {"kind": "interval", "every_secs": secs}
-                desc = f"interval every {secs}s"
+                fire_dt = datetime.now(timezone.utc) + timedelta(seconds=secs)
+                time_str = fire_dt.strftime("%Y-%m-%dT%H:%M:%S")
+                occ = {"kind": "once", "time": time_str}
+                desc = f"once in {secs}s ({time_str})"
             elif mode == "at_hhmm":
                 parts = val_str.split(":")
                 if len(parts) != 2:
@@ -604,9 +606,11 @@ class LightbulbGUI(tk.Tk):
         self.btn_fail.config(state=tk.NORMAL)
 
         # 1. fired
-        fired_ts = fire.get("fired_at", now_time_str())
-        if "T" in fired_ts:
-            fired_ts = fired_ts.split("T")[1].rstrip("Z")
+        fired_raw = fire.get("fired_at", "")
+        if "T" in fired_raw:
+            fired_ts = fired_raw.split("T")[1].rstrip("Z").split(".")[0]
+        else:
+            fired_ts = now_time_str()
         self.set_chip_state("fired", True, fired_ts)
 
         # 2. acknowledge
