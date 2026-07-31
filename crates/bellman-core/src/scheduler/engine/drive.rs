@@ -123,6 +123,15 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             }
         }
 
+        // SCH2: another process (bellman slot-submit applies slot requests on
+        // its own connection) can commit timer changes to this same store
+        // without any control message. Notice the foreign commit via SQLite's
+        // data_version, with a periodic unconditional rebuild as the floor.
+        if self.external_store_changed() {
+            self.rebuild_horizon()?;
+            result.refilled = true;
+        }
+
         // Global pause-all: the heap stays warm (so we wake up at the right
         // moments to clear it on resume), but nothing fires while paused.
         if self.pause_all {
@@ -328,6 +337,25 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             }
         }
         Ok(())
+    }
+
+    /// SCH2: true when another connection committed to the store since the
+    /// last horizon rebuild (`PRAGMA data_version` moved), or the periodic
+    /// rebuild floor elapsed. A failed probe answers false — the floor is the
+    /// backstop, and rebuilding on every tick would be a busy loop.
+    fn external_store_changed(&self) -> bool {
+        let floor_elapsed = self
+            .clock
+            .mono_now()
+            .saturating_sub(self.last_rebuild_mono)
+            >= self.config.external_rebuild_interval;
+        if floor_elapsed {
+            return true;
+        }
+        match self.store.data_version() {
+            Ok(v) => v != self.last_data_version,
+            Err(_) => false,
+        }
     }
 
     fn is_clock_jump(&self, wall: DateTime<Utc>, mono: MonoTime) -> bool {

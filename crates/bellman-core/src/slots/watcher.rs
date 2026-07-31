@@ -258,7 +258,10 @@ fn run_watch_loop(cfg: WatchConfig, stop_rx: mpsc::Receiver<()>) -> SlotResult<(
     }
 
     // Initial full pass (truth on startup), then the loop.
-    let _ = service.poll(&mut store);
+    match service.poll(&mut store) {
+        Ok(n) => refill_if_mutated(&cfg.scheduler, n),
+        Err(e) => eprintln!("bellman: watcher: initial slot poll: {e}"),
+    }
     if let Some(engine) = &cfg.reply_engine {
         let stats = crate::reply::poll_once(
             engine,
@@ -290,8 +293,9 @@ fn run_watch_loop(cfg: WatchConfig, stop_rx: mpsc::Receiver<()>) -> SlotResult<(
         }
 
         // Slot channel.
-        if let Err(e) = service.poll(&mut store) {
-            eprintln!("bellman: watcher: slot poll: {e}");
+        match service.poll(&mut store) {
+            Ok(n) => refill_if_mutated(&cfg.scheduler, n),
+            Err(e) => eprintln!("bellman: watcher: slot poll: {e}"),
         }
         // Reply channel + monotonic deadlines.
         if let Some(engine) = &cfg.reply_engine {
@@ -327,6 +331,17 @@ fn run_watch_loop(cfg: WatchConfig, stop_rx: mpsc::Receiver<()>) -> SlotResult<(
     Ok(())
 }
 
+/// SCH2 (Path A): a processed slot request may have added, modified or
+/// deleted a timer on this connection — the running scheduler's horizon heap
+/// is stale until it rebuilds. Refill only when a request was actually
+/// processed; idle polls must not cost the scheduler a store query.
+fn refill_if_mutated(scheduler: &Option<crate::scheduler::ControlHandle>, processed: usize) {
+    if processed > 0 {
+        if let Some(s) = scheduler {
+            s.refill();
+        }
+    }
+}
 
 fn build_debouncer(hint_tx: Sender<SlotWake>, debounce: Duration) -> SlotResult<SlotDebouncer> {
     new_debouncer(debounce, None, move |res: DebounceEventResult| match res {

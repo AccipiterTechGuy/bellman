@@ -60,6 +60,9 @@ impl Default for OpenOptions {
 pub struct Store {
     conn: Connection,
     path: PathBuf,
+    /// Count of horizon rebuild queries (`timers_due_by` + `list_timers`).
+    /// Lets tests assert the scheduler does not hit the store on idle ticks.
+    horizon_queries: std::cell::Cell<u64>,
 }
 
 impl Store {
@@ -89,12 +92,32 @@ impl Store {
         apply_pragmas(&conn, opts.busy_timeout_ms)?;
         migrate(&conn)?;
 
-        Ok(Self { conn, path })
+        Ok(Self {
+            conn,
+            path,
+            horizon_queries: std::cell::Cell::new(0),
+        })
     }
 
     /// Filesystem path of the database file.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// SQLite `PRAGMA data_version`: bumps only when ANOTHER connection
+    /// commits to the same database (own commits do not move it). The
+    /// scheduler polls it to notice foreign writers — e.g. `bellman
+    /// slot-submit`, which applies slot requests on its own connection —
+    /// without any control message.
+    pub fn data_version(&self) -> StoreResult<i64> {
+        let v: i64 = self.conn.query_row("PRAGMA data_version", [], |r| r.get(0))?;
+        Ok(v)
+    }
+
+    /// Number of horizon rebuild queries issued so far (`timers_due_by` +
+    /// `list_timers`). Test/ops observability for "no store traffic on idle".
+    pub fn horizon_query_count(&self) -> u64 {
+        self.horizon_queries.get()
     }
 
     /// Begin an IMMEDIATE transaction (crate-internal). The R10 fire
@@ -189,6 +212,7 @@ impl Store {
 
     /// List all timers (any enabled state), ordered by name then id.
     pub fn list_timers(&self) -> StoreResult<Vec<Timer>> {
+        self.horizon_queries.set(self.horizon_queries.get() + 1);
         let mut stmt = self.conn.prepare(
             "SELECT id, name, enabled, occurrence, tz, next_fire_utc, last_fired,
                     misfire_policy, overlap_policy, retry_policy,
@@ -233,6 +257,7 @@ impl Store {
     /// Ordered ascending by `next_fire_utc`, then id. Timers with a NULL
     /// next fire (exhausted / disabled schedule) are never returned.
     pub fn timers_due_by(&self, horizon: DateTime<Utc>) -> StoreResult<Vec<Timer>> {
+        self.horizon_queries.set(self.horizon_queries.get() + 1);
         let mut stmt = self.conn.prepare(
             "SELECT id, name, enabled, occurrence, tz, next_fire_utc, last_fired,
                     misfire_policy, overlap_policy, retry_policy,

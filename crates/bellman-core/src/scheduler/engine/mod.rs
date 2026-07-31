@@ -52,6 +52,13 @@ pub struct Scheduler<C: Clock, A: FireAction> {
     /// keeps the heap warm but does not deliver fires. Toggle via
     /// [`ControlHandle::set_pause_all`] or the env override at construction.
     pause_all: bool,
+    /// SCH2: store `PRAGMA data_version` snapshot taken at the last horizon
+    /// rebuild. A different value means another connection committed — the
+    /// heap may be stale even though no control message arrived.
+    last_data_version: i64,
+    /// SCH2: monotonic time of the last horizon rebuild (any cause); drives
+    /// the unconditional `external_rebuild_interval` floor.
+    last_rebuild_mono: MonoTime,
 }
 
 impl<C: Clock, A: FireAction> Scheduler<C, A> {
@@ -92,6 +99,8 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             control_rx,
             booted: false,
             pause_all,
+            last_data_version: 0,
+            last_rebuild_mono: mono,
         }
     }
 

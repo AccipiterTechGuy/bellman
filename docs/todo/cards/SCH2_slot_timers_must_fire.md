@@ -140,3 +140,34 @@ fire path directly rather than letting a clock do it, and because the demo
 was always fired by hand. Full-system validation should carry a standing
 item: **at least one test where nobody touches anything and the schedule does
 the work.**
+
+## Evidence notes (2026-07-31, train run 2026-07-31_0007)
+
+Fix: option 2 + option 1 floor from the card. The scheduler loop polls
+SQLite's `PRAGMA data_version` on every wake (a foreign commit — e.g.
+`bellman slot-submit` applying a request on its own connection — bumps it;
+own commits do not) and rebuilds the horizon heap when it moves, with an
+unconditional rebuild every `external_rebuild_interval` (default **60 s**) as
+the floor. The watcher refills immediately after any poll that processed a
+slot request (Path A). Idle ticks cost one pragma read and **zero** horizon
+queries (asserted via a store query counter). Detection bound for foreign
+writers: one `max_sleep` tick (**30 s**), 60 s worst case — now stated in
+`docs/INTEGRATION.md` rule 5.
+
+Automated tests (all in `crates/bellman-core`): both paths, slot modify,
+slot delete (no ghost fire), idle-no-rebuild, floor. The two regression
+tests were verified RED against pre-fix behaviour (fix temporarily disabled)
+and GREEN with it.
+
+Live lightbulb evidence — **every fire below was scheduled by the running
+Bellman desktop app itself on a real clock; `run-now` was never invoked**
+(full transcript: `docs/qa4-evidence/sch2-live-lightbulb-transcript.log`,
+harness: `docs/qa4-evidence/sch2-live-orchestrate.py`, isolated Xvfb +
+private D-Bus + XDG data dir, app built from this branch):
+
+| run | created via | scheduled_for | fired (lateness) | run completed |
+|---|---|---|---|---|
+| lightbulb `sch2-live-slot-submit` | `bellman slot-submit` (separate process) | 19:09:19.009 | 19:09:19.011 (**2 ms**) | fired→acknowledged→completed, one run_id |
+| lightbulb `sch2-live-free-publish` | publish to `free/`, running app claimed | 19:10:10.077 | 19:10:10.080 (**4 ms**) | fired→acknowledged→completed, one run_id |
+| lightbulb_gui (DEMO1) `lightbulb-gui-demo` | GUI's own slot-protocol create | 19:10:56 | 19:10:56 (**3 ms**) | fired→acknowledged→completed, one run_id |
+| lightbulb_gui `sch2-gui-slot-submit` | `bellman slot-submit`, GUI answered | 19:11:49 | 19:11:49 (**3 ms**) | fired→acknowledged→completed, one run_id |

@@ -1,0 +1,42 @@
+[
+  {
+    "phase": "PATH-B",
+    "timer": "sch2-live-slot-submit",
+    "run_id": "7fe70021-352c-4322-b4c2-3b7404606a51",
+    "scheduled_for": "2026-07-31 19:09:19.009009+00:00",
+    "fired": "2026-07-31T19:09:19.011160109Z",
+    "acknowledged": "2026-07-31T19:09:19Z",
+    "completed": "2026-07-31T19:09:24Z",
+    "fired_lateness_ms": 2.2
+  },
+  {
+    "phase": "PATH-A",
+    "timer": "sch2-live-free-publish",
+    "run_id": "a3451d02-48b2-4de6-a871-4b88742ceedb",
+    "scheduled_for": "2026-07-31 19:10:10.076556+00:00",
+    "fired": "2026-07-31T19:10:10.080278319Z",
+    "acknowledged": "2026-07-31T19:10:10Z",
+    "completed": "2026-07-31T19:10:15Z",
+    "fired_lateness_ms": 3.7
+  },
+  {
+    "phase": "GUI-A",
+    "timer": "lightbulb-gui-demo",
+    "run_id": "ea6454e0-18f7-4884-b761-e7cfa2ba113e",
+    "scheduled_for": "2026-07-31 19:10:56+00:00",
+    "fired": "2026-07-31T19:10:56.002629798Z",
+    "acknowledged": "2026-07-31T19:10:56Z",
+    "completed": "2026-07-31T19:11:01Z",
+    "fired_lateness_ms": 2.6
+  },
+  {
+    "phase": "GUI-B",
+    "timer": "sch2-gui-slot-submit",
+    "run_id": "ab3bfce6-6353-4173-994e-11f23011246d",
+    "scheduled_for": "2026-07-31 19:11:49+00:00",
+    "fired": "2026-07-31T19:11:49.003150667Z",
+    "acknowledged": "2026-07-31T19:11:49Z",
+    "completed": "2026-07-31T19:11:54Z",
+    "fired_lateness_ms": 3.1
+  }
+]
