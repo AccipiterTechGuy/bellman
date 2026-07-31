@@ -635,7 +635,9 @@ fn shutdown_drains_busy_lanes_and_outbox() {
 
     let disp = spawn_dispatcher(&e, 2);
     disp.begin_startup();
-    wait_status(&st, c.run_id, ClaimStatus::Active, Duration::from_secs(10));
+    // Generous activation bound: under full-suite load the pump tick and the
+    // worker's store open contend with many parallel test processes.
+    wait_status(&st, c.run_id, ClaimStatus::Active, Duration::from_secs(30));
 
     let t0 = Instant::now();
     disp.shutdown_drain();
