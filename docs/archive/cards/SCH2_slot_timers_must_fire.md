@@ -1,3 +1,5 @@
+> ARCHIVED 2026-07-31 — shipped; card bellman-sch2-slot-created-timers-must-actually-fire-fix-lightbulb-proof, run 2026-07-31_0007, merge 7a2163e.
+
 # SCH2 — A timer created through the slot channel must actually fire
 
 Repo: `~/bellman`. Fix **and** the end-to-end proof, in one card: the fix is
