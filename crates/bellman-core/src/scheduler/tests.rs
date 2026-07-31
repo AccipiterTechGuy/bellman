@@ -1066,3 +1066,276 @@ fn pickup_deadline_fires_from_the_scheduler_heap() {
     .unwrap();
     assert_eq!(status["state"], "no_ack");
 }
+
+// --- external store writers (SCH2) ---------------------------------------
+//
+// `bellman slot-submit` claims and applies slot requests ITSELF, on its own
+// connection, in its own process. The running scheduler gets no control
+// message and no slot request ever passes through its watcher — it must
+// notice the foreign commit on its own (PRAGMA data_version + a periodic
+// rebuild floor). These tests never send Refill: that is the whole point.
+
+/// SCH2 regression (Path B): a timer committed by another connection — the
+/// exact `bellman slot-submit` shape — must fire on a running scheduler with
+/// no refill, no GUI edit, no restart. Fails against the pre-fix engine,
+/// where the horizon heap was only rebuilt on an explicit Refill.
+#[test]
+fn external_writer_add_fires_without_refill() {
+    use std::thread;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("timers.db");
+    let store = Store::open(&path).unwrap();
+
+    let mut sched = Scheduler::new(
+        store,
+        SystemClock::new(),
+        RecordingAction::new(),
+        SchedulerConfig::default()
+            .with_max_sleep(Duration::from_millis(50))
+            // Disable the periodic floor: this test proves the data_version
+            // probe alone notices the foreign commit.
+            .with_external_rebuild_interval(Duration::from_secs(3600)),
+    );
+    sched.boot().unwrap();
+    assert_eq!(sched.heap_len(), 0);
+
+    let handle = sched.control_handle();
+    let path_bg = path.clone();
+    let bg = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(200));
+        // The "slot-submit process": its own connection, its own commit, and
+        // NO control message back to the running scheduler.
+        let mut ext = Store::open(&path_bg).unwrap();
+        let now = Utc::now();
+        let occ = Occurrence::new(
+            OccurrenceKind::Interval {
+                every_secs: 1,
+                anchor: now,
+            },
+            "UTC",
+        )
+        .unwrap();
+        let mut new = NewTimer::new("external-writer", occ);
+        new.last_fired = Some(now);
+        new.misfire = MisfirePolicy::Skip;
+        ext.create_timer(new).unwrap();
+        // Wait past two full intervals, then stop the loop.
+        thread::sleep(Duration::from_millis(2500));
+        handle.shutdown();
+    });
+
+    let result = sched.run_until_shutdown().unwrap();
+    bg.join().unwrap();
+
+    assert!(
+        result.fires.len() >= 2,
+        "externally-created timer must fire on its own interval (>=2 fires past two intervals), got {}",
+        result.fires.len()
+    );
+}
+
+/// SCH2 (Path B, modify): a slot MODIFY applied by another process moves the
+/// fire time; the running scheduler must pick up the new time with no restart.
+#[test]
+fn external_slot_modify_moves_fire_without_restart() {
+    use std::thread;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("timers.db");
+    let slots_root = dir.path().join("slots");
+    let store = Store::open(&db).unwrap();
+
+    let handle_holder;
+    let mut sched = Scheduler::new(
+        store,
+        SystemClock::new(),
+        RecordingAction::new(),
+        SchedulerConfig::default()
+            .with_max_sleep(Duration::from_millis(50))
+            .with_external_rebuild_interval(Duration::from_secs(3600)),
+    );
+    sched.boot().unwrap();
+    handle_holder = sched.control_handle();
+    let handle = handle_holder;
+
+    let db_bg = db.clone();
+    let slots_bg = slots_root.clone();
+    let bg = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(200));
+        // External process: create a timer whose first fire is an hour out.
+        let mut ext = Store::open(&db_bg).unwrap();
+        let ext_service =
+            crate::slots::SlotService::open(&slots_bg, crate::slots::SlotConfig::default())
+                .unwrap();
+        let now = Utc::now();
+        let occ = Occurrence::new(
+            OccurrenceKind::Interval {
+                every_secs: 3600,
+                anchor: now,
+            },
+            "UTC",
+        )
+        .unwrap();
+        let mut new = NewTimer::new("move-me", occ);
+        new.last_fired = Some(now);
+        new.misfire = MisfirePolicy::Skip;
+        let timer = ext.create_timer(new).unwrap();
+        ext.set_timer_owner(timer.id, "app-b").unwrap();
+
+        // Let the scheduler notice the add and load the far-future entry.
+        thread::sleep(Duration::from_millis(500));
+
+        // Slot MODIFY (applied by the external process, slot-submit shape):
+        // move the schedule to a 1 s interval.
+        let mod_req = crate::slots::SlotRequest {
+            schema: crate::slots::SCHEMA_V1.to_string(),
+            slot_id: String::new(),
+            request_id: Some(uuid::Uuid::new_v4().to_string()),
+            logged_at: Some(Utc::now()),
+            operation: Some(crate::slots::SlotOperation::Modify),
+            payload: Some(serde_json::json!({
+                "app_name": "app-b",
+                "timer_id": timer.id,
+                "every_secs": 1,
+                "occurrence": { "kind": "interval", "every_secs": 1 },
+                "tz": "UTC"
+            })),
+        };
+        ext_service.publish(mod_req).unwrap();
+        let n = ext_service.poll(&mut ext).unwrap();
+        assert_eq!(n, 1, "modify request must be processed");
+
+        thread::sleep(Duration::from_millis(2500));
+        handle.shutdown();
+    });
+
+    let start = std::time::Instant::now();
+    let result = sched.run_until_shutdown().unwrap();
+    let elapsed = start.elapsed();
+    bg.join().unwrap();
+
+    assert!(
+        !result.fires.is_empty(),
+        "slot-modified timer must fire at its NEW time without a restart"
+    );
+    // The only fire inside this window is the moved one (old schedule was
+    // an hour out). If the modify had not taken effect, fires would be empty.
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "moved fire took too long: {elapsed:?}"
+    );
+}
+
+/// SCH2 (Path B, delete): a timer deleted on another connection must not
+/// ghost-fire from a stale heap entry.
+#[test]
+fn external_delete_leaves_no_ghost_fire() {
+    use std::thread;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("timers.db");
+    let store = Store::open(&path).unwrap();
+
+    let mut sched = Scheduler::new(
+        store,
+        SystemClock::new(),
+        RecordingAction::new(),
+        SchedulerConfig::default()
+            .with_max_sleep(Duration::from_millis(50))
+            .with_external_rebuild_interval(Duration::from_secs(3600)),
+    );
+    sched.boot().unwrap();
+
+    let handle = sched.control_handle();
+    let path_bg = path.clone();
+    let bg = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(200));
+        let mut ext = Store::open(&path_bg).unwrap();
+        let now = Utc::now();
+        let occ = Occurrence::new(
+            OccurrenceKind::Interval {
+                every_secs: 2,
+                anchor: now,
+            },
+            "UTC",
+        )
+        .unwrap();
+        let mut new = NewTimer::new("doomed", occ);
+        new.last_fired = Some(now);
+        new.misfire = MisfirePolicy::Skip;
+        let timer = ext.create_timer(new).unwrap();
+        // Scheduler notices the add and loads the entry (fire due at +2 s)…
+        thread::sleep(Duration::from_millis(500));
+        // …then the timer is deleted BEFORE its first fire.
+        ext.delete_timer(timer.id).unwrap();
+        // Wait well past the deleted fire time.
+        thread::sleep(Duration::from_millis(3000));
+        handle.shutdown();
+    });
+
+    let result = sched.run_until_shutdown().unwrap();
+    bg.join().unwrap();
+
+    assert!(
+        result.fires.is_empty(),
+        "deleted timer must not ghost-fire from a stale heap entry, got {} fires",
+        result.fires.len()
+    );
+}
+
+/// SCH2 exit gate: idle loop iterations must NOT rebuild the horizon (the
+/// fix must not become a busy loop). Counted via the store's horizon query
+/// counter across an idle period with the floor disabled.
+#[test]
+fn idle_ticks_do_not_rebuild_horizon() {
+    let (_dir, store) = open_tmp();
+    let mut sched = Scheduler::new(
+        store,
+        SystemClock::new(),
+        RecordingAction::new(),
+        SchedulerConfig::default()
+            .with_max_sleep(Duration::from_millis(20))
+            .with_external_rebuild_interval(Duration::from_secs(3600)),
+    );
+    sched.boot().unwrap();
+    let q0 = sched.store().horizon_query_count();
+
+    let r = sched.run_for(Duration::from_millis(400)).unwrap();
+
+    assert!(!r.refilled, "idle loop must not refill");
+    assert_eq!(
+        sched.store().horizon_query_count(),
+        q0,
+        "idle ticks issued horizon queries (busy loop)"
+    );
+}
+
+/// SCH2 floor: even with nothing changing, the horizon is rebuilt at least
+/// once per `external_rebuild_interval` — the bounded safety net under the
+/// data_version probe.
+#[test]
+fn periodic_floor_rebuilds_even_when_idle() {
+    let (_dir, store) = open_tmp();
+    let mut sched = Scheduler::new(
+        store,
+        SystemClock::new(),
+        RecordingAction::new(),
+        SchedulerConfig::default()
+            .with_max_sleep(Duration::from_millis(20))
+            .with_external_rebuild_interval(Duration::from_millis(100)),
+    );
+    sched.boot().unwrap();
+    let q0 = sched.store().horizon_query_count();
+
+    let r = sched.run_for(Duration::from_millis(550)).unwrap();
+
+    assert!(r.refilled, "the floor must refill even when idle");
+    // Each rebuild is 2 horizon queries (timers_due_by + list_timers); 550 ms
+    // over a 100 ms floor is >= 4 rebuilds after boot.
+    assert!(
+        sched.store().horizon_query_count() >= q0 + 4,
+        "floor rebuilds missing: q0={q0} now={}",
+        sched.store().horizon_query_count()
+    );
+}

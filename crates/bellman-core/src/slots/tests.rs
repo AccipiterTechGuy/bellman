@@ -989,3 +989,77 @@ fn slot_delete_cancels_an_open_app_run_even_with_a_finished_claim() {
     assert!(row.pickup_deadline.is_none());
     assert!(row.watchdog_deadline.is_none());
 }
+
+// --- SCH2 Path A: watcher-processed slot requests refill the scheduler ---
+//
+// An external app publishes to free/ and the RUNNING Bellman's watcher
+// claims and applies the request. The watcher knows a mutation happened, so
+// it must refill the scheduler's horizon heap — before this fix nothing in
+// slots/ ever signalled the scheduler and the timer never fired.
+
+/// SCH2 regression (Path A): publish to free/, let the running watcher claim
+/// it, and the timer must fire on a running scheduler with no restart, no
+/// GUI edit and no manual refill. Fails against the pre-fix watcher.
+#[test]
+fn watcher_claimed_slot_add_fires_running_scheduler() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let data_dir = dir.path().to_path_buf();
+    let db = data_dir.join("timers.db");
+    let slots_root = data_dir.join("slots");
+
+    // The running Bellman: a scheduler thread with its own connection.
+    let sched_store = Store::open_with(
+        &db,
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
+    .unwrap();
+    let mut sched = crate::scheduler::Scheduler::new(
+        sched_store,
+        crate::scheduler::SystemClock::new(),
+        crate::scheduler::RecordingAction::new(),
+        crate::scheduler::SchedulerConfig::default()
+            .with_max_sleep(Duration::from_millis(50))
+            // Floor disabled: the ONLY thing that can load the timer is the
+            // watcher's refill after processing the slot request.
+            .with_external_rebuild_interval(Duration::from_secs(3600)),
+    );
+    let handle = sched.control_handle();
+    let sched_thread = thread::spawn(move || sched.run_until_shutdown());
+
+    // The running app's watcher (Path A): claims the request itself.
+    let watch = spawn_watch_thread(WatchConfig {
+        slots_root: slots_root.clone(),
+        data_dir: data_dir.clone(),
+        db_path: db.clone(),
+        reply_engine: None,
+        scheduler: Some(handle.clone()),
+        poll_interval: Duration::from_millis(50),
+    })
+    .expect("watch thread");
+
+    // External app publishes to free/ and waits — no slot-submit, no poll of
+    // its own. The running Bellman's watcher must claim it.
+    let ext_service = SlotService::open(&slots_root, SlotConfig::default()).unwrap();
+    ext_service
+        .publish(make_add_request("app-a", "watched", "interval", None, Some(1)))
+        .unwrap();
+
+    // Wait past two intervals, then shut everything down.
+    thread::sleep(Duration::from_millis(4000));
+    handle.shutdown();
+    let result = sched_thread.join().unwrap().unwrap();
+    watch.stop();
+
+    assert!(
+        result.refilled,
+        "the watcher must refill the scheduler after claiming a slot request"
+    );
+    assert!(
+        result.fires.len() >= 2,
+        "slot-created timer must fire on its own interval, got {}",
+        result.fires.len()
+    );
+}
