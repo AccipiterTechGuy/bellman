@@ -48,6 +48,7 @@ pub enum NeighbourRelation {
 }
 
 impl NeighbourRelation {
+    /// The camelCase spelling sent to the webview.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Collision => "collision",
@@ -60,12 +61,19 @@ impl NeighbourRelation {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NeighbourHitDto {
+    /// The existing timer that fires here.
     pub timer_id: String,
+    /// Its display name, so the warning can name it.
     pub name: String,
+    /// The fire instant, in UTC.
     pub fire_utc: DateTime<Utc>,
+    /// Its local date.
     pub local_date: String,
+    /// Its local time of day.
     pub local_time: String,
+    /// The UTC offset in force then.
     pub offset: String,
+    /// The zone abbreviation in force then.
     pub tz_name: String,
     /// Occurrence kind name: once|interval|daily|weekly|monthly|yearly|cron.
     pub occurrence_kind: String,
@@ -81,8 +89,11 @@ pub struct NeighbourHitDto {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CandidateNeighboursDto {
+    /// The instant the user's edit would fire at.
     pub candidate_utc: DateTime<Utc>,
+    /// Existing fires on the very same second.
     pub collisions: Vec<NeighbourHitDto>,
+    /// Existing fires close by but not identical.
     pub nearby: Vec<NeighbourHitDto>,
 }
 
@@ -90,27 +101,37 @@ pub struct CandidateNeighboursDto {
 #[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct NeighbourStatsDto {
+    /// Timers considered.
     pub timers_scanned: usize,
+    /// Skipped because they are paused.
     pub timers_skipped_disabled: usize,
+    /// Skipped because the caller excluded them (the timer being edited).
     pub timers_skipped_excluded: usize,
+    /// Fires expanded in total — the bound this query is kept inside.
     pub fires_expanded: usize,
 }
 
+/// Everything the edit dialog needs to warn about a crowded instant.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryNeighboursResponse {
+    /// Neighbours grouped under each candidate.
     pub by_candidate: Vec<CandidateNeighboursDto>,
     /// Flat union of all collisions (stable: by fire_utc then name).
     pub collisions: Vec<NeighbourHitDto>,
     /// Flat union of all nearby hits (not collisions).
     pub nearby: Vec<NeighbourHitDto>,
+    /// How much work this answer cost.
     pub stats: NeighbourStatsDto,
     /// Window used for this response (seconds).
     pub window_secs: i64,
+    /// How far ahead fires were expanded, in seconds.
     pub horizon_secs: i64,
+    /// Per-timer expansion cap, so one dense schedule cannot dominate.
     pub max_fires_per_timer: usize,
 }
 
+/// Arguments for the neighbour query.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryNeighboursArgs {

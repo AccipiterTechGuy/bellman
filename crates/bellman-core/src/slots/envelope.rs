@@ -15,12 +15,16 @@ pub const SCHEMA_V1: &str = "bellman-slot/1";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SlotOperation {
+    /// Create a timer owned by the requesting `app_name`.
     Add,
+    /// Change a timer the same `app_name` created.
     Modify,
+    /// Remove a timer the same `app_name` created.
     Delete,
 }
 
 impl SlotOperation {
+    /// The wire spelling.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Add => "add",
@@ -108,8 +112,11 @@ impl SlotRequest {
 /// Typed view of the request payload (tolerant extraction from JSON object).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SlotPayload {
+    /// The requesting app. Becomes the timer's integration owner on `add`,
+    /// and the ownership check on `modify` / `delete`.
     #[serde(default)]
     pub app_name: Option<String>,
+    /// Display name; required for `add`.
     #[serde(default)]
     pub timer_name: Option<String>,
     /// Timer id for modify/delete (and optional fixed id for add).
@@ -121,6 +128,7 @@ pub struct SlotPayload {
     /// Full [`crate::occurrence::OccurrenceKind`] JSON or a simplified object.
     #[serde(default)]
     pub occurrence: Option<Value>,
+    /// IANA timezone the occurrence's wall-clock times are in; UTC default.
     #[serde(default)]
     pub tz: Option<String>,
     /// Full [`crate::store::Action`] JSON.
@@ -129,22 +137,31 @@ pub struct SlotPayload {
     /// Convenience fields for launch actions (PLAN input schema).
     #[serde(default)]
     pub launch_command: Option<String>,
+    /// Arguments for `launch_command`, one per element. Never shell-split.
     #[serde(default)]
     pub args: Option<Vec<String>>,
+    /// Working directory for `launch_command`.
     #[serde(default)]
     pub workdir: Option<String>,
+    /// `"skip"` / `"coalesce"`, or the full policy object.
     #[serde(default)]
     pub misfire_policy: Option<Value>,
+    /// Wall-clock time for the simplified occurrence forms.
     #[serde(default)]
     pub time: Option<String>,
+    /// Period for the simplified `interval` form.
     #[serde(default)]
     pub every_secs: Option<u64>,
+    /// Weekdays for the simplified `weekly` form.
     #[serde(default)]
     pub days: Option<Value>,
+    /// Day of month for `monthly` / `yearly`.
     #[serde(default)]
     pub day: Option<u8>,
+    /// Month for the simplified `yearly` form.
     #[serde(default)]
     pub month: Option<u8>,
+    /// Expression for the simplified `cron` form.
     #[serde(default)]
     pub cron: Option<String>,
     /// Advance the durable un-acked run-event cursor through this sequence
@@ -173,11 +190,14 @@ impl SlotPayload {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SlotStatus {
+    /// The request was applied.
     Ok,
+    /// It was rejected; `error` says why.
     Error,
 }
 
 impl SlotStatus {
+    /// The wire spelling.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Ok => "ok",
@@ -191,14 +211,20 @@ impl SlotStatus {
 /// Until the JSONL event log lands, these are projected from the `runs` table.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SlotRunEvent {
+    /// Per-timer monotonic cursor; what `ack_through` advances past.
     pub event_sequence: u64,
+    /// The firing this event belongs to.
     pub run_id: Uuid,
+    /// Its timer.
     pub timer_id: Uuid,
+    /// The instant it was meant to fire.
     pub scheduled_for: DateTime<Utc>,
     /// Run state from the one R5 vocabulary ([`crate::events::RunState`]) —
     /// the same strings the event log uses in `kind`.
     pub status: crate::events::RunState,
+    /// When it actually fired.
     pub claimed_at: DateTime<Utc>,
+    /// When it reached a terminal state, if it has.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
 }
@@ -242,14 +268,21 @@ impl SlotRunEvent {
 /// Output envelope written by Bellman into `done/`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlotResponse {
+    /// Always [`SCHEMA_V1`].
     pub schema: String,
+    /// The slot this answers, matching the request's filename.
     pub slot_id: String,
+    /// Echo of the request's idempotency key.
     pub request_id: String,
+    /// Whether the request was applied.
     pub status: SlotStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The timer created or addressed. This is the id to keep for later
+    /// `modify` / `delete`.
     pub timer_id: Option<Uuid>,
+    /// When that timer next fires, so a producer need not compute it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_fire_at: Option<DateTime<Utc>>,
+    /// Why it was rejected, when it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Un-acknowledged run events with monotonic sequence (bounded).
@@ -258,6 +291,7 @@ pub struct SlotResponse {
 }
 
 impl SlotResponse {
+    /// A successful response for an applied request.
     pub fn ok(
         slot_id: impl Into<String>,
         request_id: impl Into<String>,
@@ -277,6 +311,9 @@ impl SlotResponse {
         }
     }
 
+    /// A rejection carrying the reason. Note this is a *response*: garbage
+    /// that could not be parsed at all is quarantined instead, with a
+    /// [`SlotErrSidecar`].
     pub fn err(
         slot_id: impl Into<String>,
         request_id: impl Into<String>,
@@ -298,15 +335,21 @@ impl SlotResponse {
 /// Quarantine sidecar written next to a bad input: `<name>.err.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlotErrSidecar {
+    /// Always [`SCHEMA_V1`].
     pub schema: String,
+    /// The slot id, when the bad input carried a usable one.
     pub slot_id: Option<String>,
+    /// Why the input was quarantined.
     pub reason: String,
+    /// When it was quarantined.
     pub logged_at: DateTime<Utc>,
+    /// The original filename, so the copy can be traced back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_name: Option<String>,
 }
 
 impl SlotErrSidecar {
+    /// Build a sidecar for a quarantined input.
     pub fn new(
         reason: impl Into<String>,
         slot_id: Option<String>,

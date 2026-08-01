@@ -42,13 +42,20 @@ pub const ARM_SLACK_SECS: i64 = 45;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WakeMechanism {
+    /// In-process `timerfd` with `CLOCK_REALTIME_ALARM` — the preferred
+    /// Linux path, and the one that needs `CAP_WAKE_ALARM`.
     LinuxAlarmTimerfd,
+    /// The cooperative `/sys/class/rtc/rtc0/wakealarm` fallback, used when
+    /// the process cannot hold that capability.
     LinuxWakealarmSysfs,
+    /// `SetWaitableTimer` with `fResume = TRUE`.
     WindowsWaitableTimer,
+    /// The bundled macOS root helper, over XPC.
     MacPmDaemon,
 }
 
 impl WakeMechanism {
+    /// Human name, as it appears in the Settings status line.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::LinuxAlarmTimerfd => "Linux timerfd (CLOCK_REALTIME_ALARM)",
@@ -80,6 +87,8 @@ pub enum Caveat {
 }
 
 impl Caveat {
+    /// The short parenthetical shown after the mechanism. Caveats qualify a
+    /// working feature; they never disable it.
     pub fn note(self) -> &'static str {
         match self {
             Self::ModernStandbyScreenOff => "wake runs screen-off (Modern Standby)",
@@ -94,11 +103,15 @@ impl Caveat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PowerRail {
+    /// Mains power.
     Ac,
+    /// Battery. Windows policy commonly excludes wake timers here, which is
+    /// why the probe reports which rail it answered for.
     Dc,
 }
 
 impl PowerRail {
+    /// Human name for the rail.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Ac => "AC",
@@ -111,20 +124,34 @@ impl PowerRail {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum DisabledReason {
+    /// This OS has no supported mechanism.
     UnsupportedOs,
+    /// No real-time clock to arm.
     NoRtc,
+    /// There is an RTC, but it cannot resume the machine.
     RtcNotWakeCapable,
+    /// The mechanism exists but this process may not use it.
     NoPermission {
+        /// What would grant it — shown verbatim as the fix-it hint.
         hint: String,
     },
+    /// Windows power policy has wake timers off for the active rail.
     WakeTimersDisabledByPolicy {
+        /// Which rail the probe answered for.
         rail: PowerRail,
+        /// The raw policy value read back.
         value: u8,
     },
+    /// The platform cannot arm a timer that survives suspend.
     ResumeTimersUnsupported,
+    /// macOS: the helper daemon is not registered.
     HelperNotInstalled,
+    /// macOS: registered, waiting for the user's Login Items approval —
+    /// optional, not broken.
     HelperAwaitingApproval,
+    /// The probe itself failed; `detail` says how.
     ProbeFailed {
+        /// Diagnostic text from the failed probe.
         detail: String,
     },
     /// Master config toggle is off (`wake.enabled = false`).
@@ -199,17 +226,23 @@ impl DisabledReason {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "state")]
 pub enum WakeCapability {
+    /// Wake works, by this mechanism.
     Enabled {
+        /// What will actually resume the machine.
         mechanism: WakeMechanism,
+        /// Qualifications that do not disable the feature.
         #[serde(default)]
         caveats: Vec<Caveat>,
     },
+    /// Wake does not work here; the misfire-on-resume pass covers the gap.
     Disabled {
+        /// Why, with a sentence for the user.
         reason: DisabledReason,
     },
 }
 
 impl WakeCapability {
+    /// Whether a wake can actually be armed.
     pub fn is_enabled(&self) -> bool {
         matches!(self, Self::Enabled { .. })
     }
@@ -240,8 +273,11 @@ pub fn status_line(cap: &WakeCapability) -> String {
 /// Errors from arm / cancel (never elevation prompts).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WakeError {
+    /// Wake is off, by capability or by the master toggle.
     Disabled,
+    /// The platform call failed; the string is its message.
     Io(String),
+    /// No implementation on this platform.
     Unsupported,
 }
 

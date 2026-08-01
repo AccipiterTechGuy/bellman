@@ -57,85 +57,104 @@ impl Occurrence {
         })
     }
 
+    /// Choose what happens when a wall-clock time falls in a spring-forward gap.
     pub fn with_dst_gap(mut self, policy: DstGapPolicy) -> Self {
         self.dst_gap = policy;
         self
     }
 
+    /// Choose what happens when a wall-clock time happens twice in a fold.
     pub fn with_dst_fold(mut self, policy: DstFoldPolicy) -> Self {
         self.dst_fold = policy;
         self
     }
 
+    /// Choose what happens when a schedule names a day the month lacks.
     pub fn with_invalid_monthday(mut self, policy: InvalidMonthDayPolicy) -> Self {
         self.invalid_monthday = policy;
         self
     }
 
+    /// Do not fire before this instant.
     pub fn with_valid_from(mut self, from: DateTime<Utc>) -> Self {
         self.valid_from = Some(from);
         self
     }
 
+    /// Do not fire after this instant.
     pub fn with_valid_until(mut self, until: DateTime<Utc>) -> Self {
         self.valid_until = Some(until);
         self
     }
 
+    /// Stop after this many delivered runs.
     pub fn with_max_runs(mut self, max: u64) -> Self {
         self.max_runs = Some(max);
         self
     }
 
+    /// Seed the delivered-run counter (recovery and tests).
     pub fn with_runs_done(mut self, n: u64) -> Self {
         self.runs_done = n;
         self
     }
 
+    /// The recurrence rule itself.
     pub fn kind(&self) -> &OccurrenceKind {
         &self.kind
     }
 
+    /// The IANA zone name the wall-clock fields are read in.
     pub fn tz_name(&self) -> &str {
         &self.tz
     }
 
+    /// The resolved timezone; every wall-clock computation goes through it.
     pub fn timezone(&self) -> Tz {
         Tz::from_str(&self.tz).expect("tz validated at construction")
     }
 
+    /// Dates this schedule deliberately skips.
     pub fn exclusions(&self) -> &BTreeSet<NaiveDate> {
         &self.exclusions
     }
 
+    /// How many upcoming fires are queued to be skipped.
     pub fn pending_skips(&self) -> u32 {
         self.pending_skips
     }
 
+    /// How many runs have been delivered so far.
     pub fn runs_done(&self) -> u64 {
         self.runs_done
     }
 
+    /// The run cap, if one was set.
     pub fn max_runs(&self) -> Option<u64> {
         self.max_runs
     }
 
+    /// The start of the validity window, if one was set.
     pub fn valid_from(&self) -> Option<DateTime<Utc>> {
         self.valid_from
     }
 
+    /// The end of the validity window, if one was set.
     pub fn valid_until(&self) -> Option<DateTime<Utc>> {
         self.valid_until
     }
 
+    /// The spring-forward-gap policy in force.
     pub fn dst_gap(&self) -> DstGapPolicy {
         self.dst_gap
     }
 
+    /// The fall-back-fold policy in force.
     pub fn dst_fold(&self) -> DstFoldPolicy {
         self.dst_fold
     }
 
+    /// The invalid-month-day policy in force.
     pub fn invalid_monthday(&self) -> InvalidMonthDayPolicy {
         self.invalid_monthday
     }
@@ -145,6 +164,7 @@ impl Occurrence {
         self.exclusions.insert(date);
     }
 
+    /// Stop skipping `date`; a no-op when it was not excluded.
     pub fn clear_exclusion(&mut self, date: NaiveDate) {
         self.exclusions.remove(&date);
     }

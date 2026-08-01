@@ -50,17 +50,29 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebTimerDto {
+    /// Timer id, as a string for the webview.
     pub id: String,
+    /// Display name.
     pub name: String,
+    /// `false` when paused.
     pub enabled: bool,
+    /// IANA zone the wall-clock fields are read in.
     pub tz: String,
+    /// Next scheduled instant; `null` when exhausted.
     pub next_fire_utc: Option<DateTime<Utc>>,
+    /// Last delivered instant.
     pub last_fired: Option<DateTime<Utc>>,
+    /// Recurrence kind discriminant, for grouping and icons.
     pub kind: String,
+    /// The schedule in English, ready to render.
     pub summary: String,
+    /// The action in English, ready to render.
     pub action: String,
+    /// Optimistic token; sent back on save to catch a lost update.
     pub revision: i64,
+    /// The full occurrence, flattened for the edit dialog.
     pub occurrence: WebOccurrenceDto,
+    /// The full action, tagged for the edit dialog.
     pub action_kind: WebActionDto,
     /// Participate in RTC single-next-wake election (default false).
     #[serde(default)]
@@ -72,6 +84,7 @@ pub struct WebTimerDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebOccurrenceDto {
+    /// Which occurrence kind this is.
     pub occ: String,
     pub tz: String,
     /// `{mon: true, tue: true, ...}` — booleans for the 7 ISO weekdays.
@@ -109,16 +122,24 @@ pub struct WebOccurrenceDto {
     rename_all_fields = "snake_case"
 )]
 pub enum WebActionDto {
+    /// Fire and record the run, but do nothing else.
     None,
+    /// Run a program.
     Launch {
+        /// The executable. No shell, so this is not a command line.
         command: String,
+        /// Arguments, one per element.
         #[serde(default)]
         args: Vec<String>,
+        /// Working directory, when the user set one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workdir: Option<String>,
     },
+    /// Post a desktop notification.
     Notify {
+        /// Notification title.
         title: String,
+        /// Notification body; may be empty.
         #[serde(default)]
         body: String,
     },
@@ -129,10 +150,15 @@ pub enum WebActionDto {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebTimerPatchDto {
+    /// Rename.
     pub name: Option<String>,
+    /// Pause or resume.
     pub enabled: Option<bool>,
+    /// Replace the schedule.
     pub occurrence: Option<WebOccurrenceDto>,
+    /// Replace the action.
     pub action_kind: Option<WebActionDto>,
+    /// Include or exclude from the wake election.
     pub wake_machine: Option<bool>,
 }
 
@@ -157,6 +183,7 @@ impl WebTimerPatchDto {
 }
 
 impl WebActionDto {
+    /// Convert the webview's tagged action into the core `Action`.
     pub fn into_core_action(self) -> Action {
         match self {
             Self::None => Action::None,

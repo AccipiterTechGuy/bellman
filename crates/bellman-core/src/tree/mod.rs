@@ -42,6 +42,7 @@ pub const TIMER_SCHEMA_V1: &str = "bellman-timer/1";
 pub const RUN_SCHEMA_V1: &str = "bellman-run/1";
 /// File names inside a timer folder.
 pub const TIMER_FILE_NAME: &str = "timer.json";
+/// The mirror of the current run — the file to read for "did it work?".
 pub const STATUS_FILE_NAME: &str = "status.json";
 /// Root explainer for whoever opens the folder in a file manager.
 pub const README_FILE_NAME: &str = "README.txt";
@@ -86,8 +87,11 @@ tree never loses it. Deleting a timer deletes its folder.
 /// database state is already committed when these run.
 #[derive(Debug)]
 pub enum TreeError {
+    /// A filesystem operation failed.
     Io(String),
+    /// A document could not be serialised.
     Serialize(String),
+    /// The database read behind the projection failed.
     Store(crate::store::StoreError),
 }
 
@@ -115,6 +119,7 @@ impl From<crate::store::StoreError> for TreeError {
     }
 }
 
+/// Result alias for tree projections.
 pub type TreeResult<T> = Result<T, TreeError>;
 
 // ── Slug rules ──────────────────────────────────────────────────────────
@@ -250,6 +255,7 @@ impl TimersTree {
         Self { root }
     }
 
+    /// The `timers/` root this tree projects into.
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -535,38 +541,61 @@ fn occurrence_view(kind: &OccurrenceKind) -> serde_json::Value {
 /// empty or "never".
 #[derive(Debug, Clone, Serialize)]
 pub struct RunStatus {
+    /// Always [`RUN_SCHEMA_V1`].
     pub schema: String,
+    /// Current R5 state — Bellman's or the app's, whichever spoke last.
     pub state: String,
+    /// This firing; matches the reply filename and the log.
     pub run_id: Uuid,
+    /// Its timer.
     pub timer_id: Uuid,
+    /// The timer's display name.
     pub timer_name: String,
+    /// The timer's recurrence type — `interval`, `daily`, … Not a per-firing
+    /// marker: branch on the notification's `kind` for that.
     pub occurrence_kind: String,
+    /// When it was meant to fire.
     pub scheduled_for: DateTime<Utc>,
+    /// When it actually fired.
     pub fired_at: DateTime<Utc>,
+    /// The integration owner, snapshotted at fire; absent when unowned.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_name: Option<String>,
+    /// When the app said it had picked the run up.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub acknowledged_at: Option<DateTime<Utc>>,
+    /// The app's own estimate; powers the GUI label and the watchdog.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_secs: Option<u64>,
+    /// Whether the app opted into the silence watchdog.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_detection: Option<bool>,
+    /// Last liveness ping — visible only here, never in the log.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub heartbeat_at: Option<DateTime<Utc>>,
+    /// The app's own progress text — also live-view only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub progress: Option<String>,
+    /// When the app reported success.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
+    /// The app's result, any JSON, capped at 32 KB here.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
+    /// Set when `result` was trimmed to fit that cap.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_truncated: Option<bool>,
+    /// When the run was recorded as failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failed_at: Option<DateTime<Utc>>,
+    /// The app's failure text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Who decided it failed: `reported` (the app) or `timed_out` (watchdog).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_kind: Option<String>,
+    /// When the pickup grace lapsed unanswered. Kept even after a late reply
+    /// revises the state, so the whole story stays visible.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub no_ack_at: Option<DateTime<Utc>>,
     /// IK6: the effective delivery transport of this run (`json` | `ipc` |

@@ -13,24 +13,40 @@ pub enum FireKind {
     /// Due and within grace (normal on-time or slightly late).
     OnTime,
     /// Delivered late but still within grace (single fire).
-    Late { lateness: ChronoDuration },
+    Late {
+        /// How far past `scheduled_for` it actually fired.
+        lateness: ChronoDuration,
+    },
     /// Coalesced backlog into one recovery fire.
-    Coalesced { missed_count: u32 },
+    Coalesced {
+        /// How many instants the single recovery fire stands in for.
+        missed_count: u32,
+    },
     /// One step of a catch-up burst.
-    CatchUp { index: u32 },
+    CatchUp {
+        /// 0-based position in the replayed backlog.
+        index: u32,
+    },
 }
 
 /// Context passed to [`FireAction::on_fire`].
 #[derive(Debug)]
 pub struct FireContext<'a> {
+    /// The timer as it stood at fire time.
     pub timer: &'a Timer,
+    /// The instant it was meant to fire.
     pub scheduled_for: DateTime<Utc>,
+    /// Identity of this firing; passed to launched programs as
+    /// `BELLMAN_RUN_ID`.
     pub run_id: Uuid,
+    /// Whether this was on time, late, coalesced or a catch-up replay.
     pub kind: FireKind,
+    /// When the claim committed — the real fire instant.
     pub claimed_at: DateTime<Utc>,
 }
 
 impl<'a> FireContext<'a> {
+    /// Build the context a fire action sees from the committed claim.
     pub fn from_claim(timer: &'a Timer, claim: &RunClaim, kind: FireKind) -> Self {
         Self {
             timer,
@@ -50,6 +66,8 @@ impl<'a> FireContext<'a> {
 /// the configured action (`Launch` / `Notify` / `None`) executes on a
 /// dispatcher worker, never here.
 pub trait FireAction {
+    /// Called once per delivered firing. Returning `Err` records
+    /// `wake_failed`; it never stops the scheduler.
     fn on_fire(&mut self, ctx: &FireContext<'_>) -> Result<(), String>;
 
     /// True when `on_fire` executed the action to completion on the caller's
@@ -83,16 +101,22 @@ impl FireAction for NopAction {
 /// Records every fire for assertions in tests / demos.
 #[derive(Debug, Default, Clone)]
 pub struct RecordingAction {
+    /// Every firing seen, in order.
     pub events: Vec<RecordedFire>,
 }
 
 /// One recorded fire event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordedFire {
+    /// Which timer fired.
     pub timer_id: uuid::Uuid,
+    /// Its name at the time.
     pub timer_name: String,
+    /// The instant it was meant to fire.
     pub scheduled_for: DateTime<Utc>,
+    /// Identity of the firing.
     pub run_id: Uuid,
+    /// On time, late, coalesced or catch-up.
     pub kind: FireKind,
 }
 
@@ -110,18 +134,22 @@ impl FireAction for RecordingAction {
 }
 
 impl RecordingAction {
+    /// An empty recorder.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// How many firings were recorded.
     pub fn len(&self) -> usize {
         self.events.len()
     }
 
+    /// Whether nothing fired.
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
 
+    /// Just the firings of one timer, in order.
     pub fn fires_for(&self, timer_id: uuid::Uuid) -> impl Iterator<Item = &RecordedFire> {
         self.events.iter().filter(move |e| e.timer_id == timer_id)
     }

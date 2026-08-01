@@ -66,6 +66,8 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Build the shared state: one store, one config, one notification sink.
+    /// The scheduler is not started here — see [`AppState::start_scheduler`].
     pub fn new(
         store: Store,
         data_dir: PathBuf,
@@ -98,14 +100,17 @@ impl AppState {
         *self.status_listener.lock() = Some(listener);
     }
 
+    /// Apply the wake master toggle (`config.json`'s `wake.enabled`).
     pub fn set_wake_master(&self, enabled: bool) {
         self.wake.set_master_enabled(enabled);
     }
 
+    /// The one wake sentence shown in Settings and written to the log.
     pub fn wake_status_line(&self) -> String {
         self.wake.status_line()
     }
 
+    /// Re-run the platform probe and return the fresh capability.
     pub fn wake_reprobe(&self) -> WakeCapability {
         self.wake.re_probe()
     }
@@ -119,6 +124,8 @@ impl AppState {
         }
     }
 
+    /// Every timer as a wake-election candidate. The election picks the
+    /// single earliest wake-enabled fire; this is its input.
     pub fn wake_candidates(&self) -> Vec<WakeCandidate> {
         let store = self.store.lock();
         match store.list_timers() {
@@ -141,6 +148,8 @@ impl AppState {
         }
     }
 
+    /// Write the `wake_capability` event once at startup, so the log always
+    /// records what this machine could do at the time.
     pub fn emit_wake_capability_startup(&self) {
         let line = self.wake.status_line();
         self.emit_wake_capability_line(&line);
@@ -159,6 +168,8 @@ impl AppState {
         log::info!("bellman: {line}");
     }
 
+    /// The wake snapshot the Settings page renders, including which fix-it
+    /// button (if any) applies on this platform.
     pub fn wake_status_dto(&self) -> crate::commands::WakeStatusDto {
         let cap = self.wake.capability();
         let master = self.wake.master_enabled();
@@ -364,6 +375,7 @@ impl AppState {
         let _ = crate::config::write_pause_all_flag(&self.data_dir, paused);
     }
 
+    /// Whether vacation mode is on.
     pub fn pause_all(&self) -> bool {
         *self.pause_all.lock()
     }
@@ -420,12 +432,20 @@ pub fn resolve_timer(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunNowResponse {
+    /// The timer that was run.
     pub timer_id: Uuid,
+    /// Its display name.
     pub name: String,
+    /// Identity of the run that was minted.
     pub run_id: Uuid,
+    /// The instant recorded as the intended one.
     pub scheduled_for: DateTime<Utc>,
+    /// Human summary of the outcome, shown in the row.
     pub message: String,
+    /// The timer's enabled state afterwards.
     pub enabled: bool,
+    /// Its next scheduled fire afterwards — a manual run does not consume
+    /// the next scheduled one.
     pub next_fire_utc: Option<DateTime<Utc>>,
 }
 
