@@ -242,15 +242,12 @@ impl AppState {
         let anchors = self.reply_anchors.clone();
         let deadlines = self.reply_deadlines.clone();
         let status_listener = self.status_listener.lock().clone();
-        let cfg = SchedulerConfig::from_app_config(&app_cfg)
-            .with_data_dir(self.data_dir.clone())
-            .with_anchors(anchors.clone())
-            .with_deadlines(deadlines.clone())
-            .with_status_listener(status_listener.clone());
         // IK6: the one IPC socket for all of Bellman. The handle is shared
         // by the fire path (per-firing transport selection), the dispatcher
         // (publication pump) and the reply engine (ingest context); the
         // server below drives the accept side on the same registry.
+        // It is built BEFORE the scheduler config because the scheduler's
+        // own fire path is one of those three consumers.
         let ipc_handle = if app_cfg.ipc_enabled {
             Some(bellman_core::ipc::IpcHandle::new(
                 bellman_core::ipc::default_socket_path(),
@@ -258,6 +255,12 @@ impl AppState {
         } else {
             None
         };
+        let cfg = SchedulerConfig::from_app_config(&app_cfg)
+            .with_data_dir(self.data_dir.clone())
+            .with_anchors(anchors.clone())
+            .with_deadlines(deadlines.clone())
+            .with_status_listener(status_listener.clone())
+            .with_ipc(ipc_handle.clone());
         // SCH1: the bounded dispatcher — worker lanes execute actions off the
         // scheduler loop, under the shared ActionLimiter. Scheduled fires and
         // `run_now` are producers of the same durable claims; the workers

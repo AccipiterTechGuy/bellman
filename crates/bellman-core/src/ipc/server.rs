@@ -77,6 +77,17 @@ struct ClientEntry {
     out: SyncSender<Vec<u8>>,
 }
 
+impl std::fmt::Debug for IpcHandle {
+    /// Identity and liveness only — never the client registry (it holds
+    /// live channel senders and would deadlock a debug print).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IpcHandle")
+            .field("socket_path", &self.socket_path)
+            .field("live", &self.is_live())
+            .finish_non_exhaustive()
+    }
+}
+
 impl IpcHandle {
     /// A handle with its own registry, not (yet) bound to a server. The
     /// engine holds this so transport selection and publication can send;

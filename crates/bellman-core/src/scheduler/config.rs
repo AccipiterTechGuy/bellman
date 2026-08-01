@@ -59,6 +59,12 @@ pub struct SchedulerConfig {
     /// IK5: invalidation sink wired into the reply engine this configuration
     /// builds (fire projections and scheduler-heap deadline expiries).
     pub status_listener: Option<crate::reply::StatusListener>,
+    /// IK6: the live local-socket handle, shared with the dispatcher's
+    /// publication pump. The scheduler's fire path needs it because the
+    /// per-firing transport choice (`select_transport`) tests it: without a
+    /// handle here every scheduled fire resolves to files, whatever the
+    /// timer's `transport.mode` says. `None` in headless unit tests.
+    pub ipc: Option<crate::ipc::IpcHandle>,
 }
 
 impl Default for SchedulerConfig {
@@ -94,6 +100,7 @@ impl SchedulerConfig {
             deadlines: crate::reply::new_deadlines(),
             fire_slot_file: None,
             status_listener: None,
+            ipc: None,
         }
     }
 
@@ -159,6 +166,14 @@ impl SchedulerConfig {
         self
     }
 
+    /// IK6: share the live IPC handle with the fire path so a timer whose
+    /// `transport.mode` is `ipc` / `auto` can actually be delivered over the
+    /// socket when a client holds it.
+    pub fn with_ipc(mut self, ipc: Option<crate::ipc::IpcHandle>) -> Self {
+        self.ipc = ipc;
+        self
+    }
+
     /// Build the IK3 reply engine for this configuration (None when no data
     /// dir is set — unit tests keep a pure store).
     pub fn reply_engine(&self) -> Option<crate::reply::ReplyEngine> {
@@ -172,7 +187,7 @@ impl SchedulerConfig {
             deadlines: self.deadlines.clone(),
             fire_slot_file: self.fire_slot_file.clone(),
             status_listener: self.status_listener.clone(),
-            ipc: None,
+            ipc: self.ipc.clone(),
         })
     }
 }

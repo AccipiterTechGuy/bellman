@@ -1020,3 +1020,94 @@ fn json_only_app_flow_unaffected_with_ipc_enabled() {
     assert_eq!(status["state"], json!("completed"));
     assert_eq!(status["result"], json!({"on_duration_secs": 15}));
 }
+
+/// C11 regression: **the engine the running scheduler actually fires with**
+/// must carry the IPC handle.
+///
+/// Every other test in this file hands `project_fire` an engine it built
+/// itself, with the handle wired in — so all of them passed while the
+/// product could not deliver a single scheduled firing over the socket.
+/// The desktop app's scheduler builds its engine from
+/// `SchedulerConfig::reply_engine()`, and that constructor hardcoded
+/// `ipc: None`, which makes `select_transport` degrade *every* clock-driven
+/// fire to files whatever the timer's `transport.mode` says. This test
+/// drives the same constructor the scheduler does.
+#[test]
+fn scheduler_config_engine_selects_the_socket_for_an_ipc_timer() {
+    use bellman_core::reply::{select_transport, SelectedTransport};
+    use bellman_core::scheduler::SchedulerConfig;
+
+    let e = env();
+    let mut st = store(&e);
+    let handle = IpcHandle::new(e.sock.clone());
+    let _server = spawn_server(
+        &e,
+        engine(&e, Some(&handle), Duration::from_secs(60)),
+        &handle,
+    );
+
+    // The construction path the desktop app uses (src-tauri/src/state.rs).
+    let sched_engine = SchedulerConfig::default()
+        .with_data_dir(e.data.clone())
+        .with_ipc(Some(handle.clone()))
+        .reply_engine()
+        .expect("a data dir was set");
+    assert!(
+        sched_engine.ipc.is_some(),
+        "the scheduler's own reply engine must hold the live IPC handle"
+    );
+
+    let explicit = owned_timer(&e, &mut st, "sched-ipc", TransportMode::Ipc);
+    let auto = owned_timer(&e, &mut st, "sched-auto", TransportMode::Auto);
+    let files = owned_timer(&e, &mut st, "sched-json", TransportMode::Json);
+
+    let mut client = connect(&e);
+    assert_eq!(client.claim(auto.id, APP)["ok"], json!(true));
+
+    assert_eq!(
+        select_transport(&explicit, &sched_engine),
+        SelectedTransport::Ipc,
+        "an explicit `ipc` timer must select the socket on a scheduled fire"
+    );
+    assert_eq!(
+        select_transport(&auto, &sched_engine),
+        SelectedTransport::Ipc,
+        "`auto` with a connected client must select the socket"
+    );
+    assert_eq!(
+        select_transport(&files, &sched_engine),
+        SelectedTransport::Json,
+        "`json` is always files"
+    );
+
+    // And the whole firing, end to end, through that engine.
+    let run = fire(&e, &mut st, &sched_engine, &explicit);
+    let frame = client_for(&e, explicit.id, run);
+    assert_eq!(frame["run_id"], json!(run.to_string()));
+    assert!(
+        frame.get("reply_path").is_none(),
+        "an IPC firing has no reply stub path"
+    );
+    assert_eq!(run_row(&st, run).selected_transport.as_deref(), Some("ipc"));
+
+    // Without the handle — the pre-fix construction — the very same timer
+    // silently degrades to files. That is the bug this test locks out.
+    let blind = SchedulerConfig::default()
+        .with_data_dir(e.data.clone())
+        .reply_engine()
+        .expect("a data dir was set");
+    assert_eq!(
+        select_transport(&explicit, &blind),
+        SelectedTransport::Json,
+        "no handle ⇒ files; this is why the handle has to be wired in"
+    );
+}
+
+/// Connect a fresh client, claim `timer_id`, and read the fire frame for
+/// `run_id` — used by the regression test above, where the claim has to
+/// happen after the fire to prove replay to a late client.
+fn client_for(e: &Env, timer_id: Uuid, run_id: Uuid) -> Value {
+    let mut c = connect(e);
+    assert_eq!(c.claim(timer_id, APP)["ok"], json!(true));
+    c.fire_for(run_id)
+}
