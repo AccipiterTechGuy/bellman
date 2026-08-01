@@ -1,3 +1,7 @@
+//! Serde wire-shape regression tests for every DTO that crosses the Tauri
+//! IPC boundary. The frontend reads these keys by name, so a rename here is
+//! a breaking change the compiler cannot see — these tests are the gate.
+
 // -----------------------------------------------------------
 // Real serde-shape regression tests.
 //

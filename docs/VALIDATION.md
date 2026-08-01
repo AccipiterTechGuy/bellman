@@ -844,7 +844,7 @@ minutes of thinking the binary was broken.
 
 ### Polish items (nothing broken, worth doing)
 
-All four were small enough to just do, in `1d1f8a1`:
+All four were small enough to just do, in `a9a9eaf`:
 
 | item | where | done |
 |---|---|---|
@@ -874,9 +874,29 @@ that was reviewed and kept. Headline: **zero logic-bearing code shared** with
   warnings` is clean, which covers unused code, unused imports and the naming
   lints. No `#[allow(dead_code)]` was added by this card.
 - **Formatting.** The workspace is rustfmt-clean and CI now enforces it.
-- **Module docs.** Every module touched here carries a `//!` header; the two
-  new functions and the new config field are documented with *why*, not just
-  *what*.
+- **Module docs: complete.** All 135 source files carry a `//!` header — two
+  did not (`src-tauri/src/main.rs`, `src-tauri/src/dto_serde_tests.rs`) and
+  now do.
+- **Item docs: measured, and written up as a follow-up card rather than
+  half-done.**
+
+  ```
+  $ RUSTFLAGS="-W missing_docs" cargo build -p bellman-core 2>&1 \
+      | grep -c '^warning: missing documentation'
+  593
+  ```
+
+  593 public functions, methods and struct fields in `bellman-core` have no
+  doc comment. Writing 593 sentences is a mechanical job an order of
+  magnitude larger than a validation card should absorb, and doing it badly
+  (restating names) would be worse than leaving it. Per this card's own rule
+  — "if a finding is larger than this card, write it up as a follow-up card
+  rather than half-fixing it" — it is
+  [`docs/todo/cards/DOC1_public_api_doc_coverage.md`](todo/cards/DOC1_public_api_doc_coverage.md),
+  registered in `CARD_INDEX.md`. The wire-shape types that integrators
+  actually read (`store::models`, `events::record`, `slots::envelope`,
+  `reply::document`) are already documented; the gap is on helpers and
+  builder setters.
 
 ## Reproducing this
 
