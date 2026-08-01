@@ -1,0 +1,133 @@
+{
+  "config": {
+    "wizard_completed": true,
+    "autostart_enabled": false,
+    "start_minimized": false,
+    "wake_enabled": false,
+    "log_rotation_max_bytes": 1048576,
+    "log_retention_budget_bytes": 4194304,
+    "retention_days": 30
+  },
+  "rotation_threshold_bytes": 1048576,
+  "retained_budget_bytes": 4194304,
+  "seeded_archives": [
+    {
+      "name": "events-2026-W10.jsonl.gz",
+      "bytes": 1051552,
+      "age_days": 45
+    },
+    {
+      "name": "events-2026-W11.jsonl.gz",
+      "bytes": 1051677,
+      "age_days": 39
+    },
+    {
+      "name": "events-2026-W12.jsonl.gz",
+      "bytes": 1051336,
+      "age_days": 33
+    },
+    {
+      "name": "events-2026-W13.jsonl.gz",
+      "bytes": 1051868,
+      "age_days": 27
+    },
+    {
+      "name": "events-2026-W14.jsonl.gz",
+      "bytes": 1051308,
+      "age_days": 21
+    },
+    {
+      "name": "events-2026-W15.jsonl.gz",
+      "bytes": 1051439,
+      "age_days": 15
+    }
+  ],
+  "seeded_current_bytes": 1101390,
+  "total_before": 7410570,
+  "new_archives_from_rotation": [
+    "events-2026-W31.jsonl.gz"
+  ],
+  "archives_after": [
+    {
+      "name": "events-2026-W13.jsonl.gz",
+      "bytes": 1051868,
+      "gzip_magic": true,
+      "lines": 13500,
+      "mtime_age_days": 27.0
+    },
+    {
+      "name": "events-2026-W14.jsonl.gz",
+      "bytes": 1051308,
+      "gzip_magic": true,
+      "lines": 13500,
+      "mtime_age_days": 21.0
+    },
+    {
+      "name": "events-2026-W15.jsonl.gz",
+      "bytes": 1051439,
+      "gzip_magic": true,
+      "lines": 13500,
+      "mtime_age_days": 15.0
+    },
+    {
+      "name": "events-2026-W31.jsonl.gz",
+      "bytes": 277105,
+      "gzip_magic": true,
+      "lines": 3500,
+      "mtime_age_days": 0.0
+    }
+  ],
+  "current_bytes_after": 1051,
+  "total_after": 3432771,
+  "budget_holds": true,
+  "current_below_threshold": true,
+  "dropped_by_retention": [
+    {
+      "name": "events-2026-W10.jsonl.gz",
+      "bytes": 1051552,
+      "age_days": 45
+    },
+    {
+      "name": "events-2026-W11.jsonl.gz",
+      "bytes": 1051677,
+      "age_days": 39
+    },
+    {
+      "name": "events-2026-W12.jsonl.gz",
+      "bytes": 1051336,
+      "age_days": 33
+    }
+  ],
+  "dropped_because_older_than_30_days": [
+    {
+      "name": "events-2026-W10.jsonl.gz",
+      "bytes": 1051552,
+      "age_days": 45
+    },
+    {
+      "name": "events-2026-W11.jsonl.gz",
+      "bytes": 1051677,
+      "age_days": 39
+    },
+    {
+      "name": "events-2026-W12.jsonl.gz",
+      "bytes": 1051336,
+      "age_days": 33
+    }
+  ],
+  "rotation_events": [
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:43:13.220156887Z",
+      "kind": "pruned",
+      "event_id": "9276c456-6ff5-467e-afe4-5abc6b42f986",
+      "message": "log_retention",
+      "detail": {
+        "aged_out": 3,
+        "budget_pruned": 0,
+        "bytes_removed": 3154565,
+        "reason": "log_retention"
+      }
+    }
+  ]
+}

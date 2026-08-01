@@ -542,7 +542,11 @@ everything your app has reported so far.
   `completed` after `no_ack` (or after a watchdog `failed`) moves the state
   to `completed`; the append-only log keeps the whole story. Once the timer
   has fired again, the old run is over: its reply is logged `superseded`
-  and not applied.
+  and not applied. That new firing also **removes the old run's reply
+  stub** — an app coming back to a `reply_path` from a superseded run finds
+  no file there. Writing the minimal composed reply (`schema` + `run_id` +
+  `app_name` + `state`) to that same path is fine and is what the log
+  records as `superseded`; there is simply nothing left to read first.
 - **Completion never auto-times out.** An app that acknowledged but never
   reports an ending stays `running` forever — an unfinished run is the
   truth, not a failure. **Nothing auto-completes**; `completed` and

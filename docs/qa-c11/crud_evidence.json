@@ -1,0 +1,313 @@
+{
+  "add_response": {
+    "events": [],
+    "next_fire_at": "2026-08-01T21:38:44Z",
+    "request_id": "a1298275-3e95-4b3f-a608-35a23fa39507",
+    "schema": "bellman-slot/1",
+    "slot_id": "0001",
+    "status": "ok",
+    "timer_id": "bfdbf1d6-166a-49a2-9ca4-bdd35eb0afe9"
+  },
+  "modify_original": {
+    "events": [],
+    "next_fire_at": "2026-08-01T21:46:54Z",
+    "request_id": "af097f64-872c-437b-8921-d46e37a48a6a",
+    "schema": "bellman-slot/1",
+    "slot_id": "0002",
+    "status": "ok",
+    "timer_id": "eb80f3b3-8db5-4e33-8fc7-64f1c1bc836f"
+  },
+  "delete_original": {
+    "events": [],
+    "next_fire_at": "2026-08-01T21:39:14Z",
+    "request_id": "e3150ca6-ecd4-4269-a960-aa8be892ab5d",
+    "schema": "bellman-slot/1",
+    "slot_id": "0003",
+    "status": "ok",
+    "timer_id": "e9b8a438-f58d-45b9-a7a5-b63eed32ab9d"
+  },
+  "modify_response": {
+    "events": [],
+    "next_fire_at": "2026-08-01T21:39:44Z",
+    "request_id": "68640e89-e452-493e-a5b1-2a19a317ff67",
+    "schema": "bellman-slot/1",
+    "slot_id": "0004",
+    "status": "ok",
+    "timer_id": "eb80f3b3-8db5-4e33-8fc7-64f1c1bc836f"
+  },
+  "modify_moved_to_local": "2026-08-02T00:39:44",
+  "delete_response": {
+    "events": [],
+    "request_id": "c4bd9554-cc8c-4661-a35d-21557988dac4",
+    "schema": "bellman-slot/1",
+    "slot_id": "0005",
+    "status": "ok",
+    "timer_id": "e9b8a438-f58d-45b9-a7a5-b63eed32ab9d"
+  },
+  "list_after_delete": {
+    "command": "list",
+    "count": 3,
+    "ok": true,
+    "timers": [
+      {
+        "accuracy_slack_secs": null,
+        "action": {
+          "type": "none"
+        },
+        "enabled": true,
+        "id": "bfdbf1d6-166a-49a2-9ca4-bdd35eb0afe9",
+        "jitter_secs": 0,
+        "last_fired": null,
+        "max_runs": null,
+        "misfire": {
+          "coalesce": {
+            "grace_secs": 3600
+          }
+        },
+        "name": "crud-add",
+        "next_fire_utc": "2026-08-01T21:38:44Z",
+        "occurrence": {
+          "dst_fold": "first_occurrence",
+          "dst_gap": "first_valid_after_gap",
+          "exclusions": [],
+          "invalid_monthday": "clamp",
+          "kind": {
+            "at": "2026-08-02T00:38:44",
+            "occ": "once"
+          },
+          "max_runs": null,
+          "pending_skips": 0,
+          "runs_done": 0,
+          "tz": "Europe/Helsinki",
+          "valid_from": null,
+          "valid_until": null
+        },
+        "overlap": "skip",
+        "retry": {
+          "delay_secs": 30,
+          "max_retries": 1
+        },
+        "revision": 1,
+        "tags": [],
+        "transport": "json",
+        "tz": "Europe/Helsinki",
+        "valid_from": null,
+        "valid_until": null,
+        "wake_machine": false
+      },
+      {
+        "accuracy_slack_secs": null,
+        "action": {
+          "type": "none"
+        },
+        "enabled": true,
+        "id": "eb80f3b3-8db5-4e33-8fc7-64f1c1bc836f",
+        "jitter_secs": 0,
+        "last_fired": null,
+        "max_runs": null,
+        "misfire": {
+          "coalesce": {
+            "grace_secs": 3600
+          }
+        },
+        "name": "crud-modify",
+        "next_fire_utc": "2026-08-01T21:39:44Z",
+        "occurrence": {
+          "dst_fold": "first_occurrence",
+          "dst_gap": "first_valid_after_gap",
+          "exclusions": [],
+          "invalid_monthday": "clamp",
+          "kind": {
+            "at": "2026-08-02T00:39:44",
+            "occ": "once"
+          },
+          "max_runs": null,
+          "pending_skips": 0,
+          "runs_done": 0,
+          "tz": "Europe/Helsinki",
+          "valid_from": null,
+          "valid_until": null
+        },
+        "overlap": "skip",
+        "retry": {
+          "delay_secs": 30,
+          "max_retries": 1
+        },
+        "revision": 2,
+        "tags": [],
+        "transport": "json",
+        "tz": "Europe/Helsinki",
+        "valid_from": null,
+        "valid_until": null,
+        "wake_machine": false
+      },
+      {
+        "accuracy_slack_secs": null,
+        "action": {
+          "type": "none"
+        },
+        "enabled": true,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "jitter_secs": 0,
+        "last_fired": null,
+        "max_runs": null,
+        "misfire": {
+          "coalesce": {
+            "grace_secs": 3600
+          }
+        },
+        "name": "system.prune",
+        "next_fire_utc": "2026-08-03T00:17:00Z",
+        "occurrence": {
+          "dst_fold": "first_occurrence",
+          "dst_gap": "first_valid_after_gap",
+          "exclusions": [],
+          "invalid_monthday": "clamp",
+          "kind": {
+            "at": "03:17:00",
+            "days": 1,
+            "occ": "weekly"
+          },
+          "max_runs": null,
+          "pending_skips": 0,
+          "runs_done": 0,
+          "tz": "Europe/Helsinki",
+          "valid_from": null,
+          "valid_until": null
+        },
+        "overlap": "skip",
+        "retry": {
+          "delay_secs": 0,
+          "max_retries": 0
+        },
+        "revision": 2,
+        "tags": [
+          "system",
+          "internal"
+        ],
+        "transport": "json",
+        "tz": "Europe/Helsinki",
+        "valid_from": null,
+        "valid_until": null,
+        "wake_machine": false
+      }
+    ]
+  },
+  "fired": {
+    "crud-add": {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:38:44.001924636Z",
+      "kind": "fired",
+      "event_id": "c0e17e9a-bcf0-4eaf-a3d6-ab4c656fe4f0",
+      "timer_id": "bfdbf1d6-166a-49a2-9ca4-bdd35eb0afe9",
+      "run_id": "d1b36dea-d990-46e9-9c17-0e2c70e280a4",
+      "timer_name": "crud-add",
+      "scheduled_for": "2026-08-01T21:38:44Z"
+    },
+    "crud-modify": {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:39:44.001877151Z",
+      "kind": "fired",
+      "event_id": "762056c8-20f2-48cc-bc24-cc77ea7dda50",
+      "timer_id": "eb80f3b3-8db5-4e33-8fc7-64f1c1bc836f",
+      "run_id": "cab8bf1c-bbbd-4251-a6a9-1c5415451adc",
+      "timer_name": "crud-modify",
+      "scheduled_for": "2026-08-01T21:39:44Z"
+    }
+  },
+  "deleted_timer_fired": false,
+  "all_events": [
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:36:54.021446680Z",
+      "kind": "registered",
+      "event_id": "fe7da49a-827c-4031-9701-3537d3e628f7",
+      "timer_id": "bfdbf1d6-166a-49a2-9ca4-bdd35eb0afe9",
+      "timer_name": "crud-add",
+      "message": "slot-submit a1298275-3e95-4b3f-a608-35a23fa39507"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:36:54.031024742Z",
+      "kind": "registered",
+      "event_id": "4b63193c-9abe-486c-9411-b5df186be6b2",
+      "timer_id": "eb80f3b3-8db5-4e33-8fc7-64f1c1bc836f",
+      "timer_name": "crud-modify",
+      "message": "slot-submit af097f64-872c-437b-8921-d46e37a48a6a"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:36:54.040966717Z",
+      "kind": "registered",
+      "event_id": "1ac42e72-da8b-4712-a4bb-6aac29b53ec5",
+      "timer_id": "e9b8a438-f58d-45b9-a7a5-b63eed32ab9d",
+      "timer_name": "crud-delete",
+      "message": "slot-submit e3150ca6-ecd4-4269-a960-aa8be892ab5d"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:37:14.051271245Z",
+      "kind": "registered",
+      "event_id": "00c806f6-b919-4ed8-9656-f77b2b6cb840",
+      "timer_id": "eb80f3b3-8db5-4e33-8fc7-64f1c1bc836f",
+      "timer_name": "crud-modify",
+      "message": "slot-submit 68640e89-e452-493e-a5b1-2a19a317ff67"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:38:44.001924636Z",
+      "kind": "fired",
+      "event_id": "c0e17e9a-bcf0-4eaf-a3d6-ab4c656fe4f0",
+      "timer_id": "bfdbf1d6-166a-49a2-9ca4-bdd35eb0afe9",
+      "run_id": "d1b36dea-d990-46e9-9c17-0e2c70e280a4",
+      "timer_name": "crud-add",
+      "scheduled_for": "2026-08-01T21:38:44Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:38:44.010433440Z",
+      "kind": "wake_delivered",
+      "event_id": "b21404bb-2296-48c9-b57b-eedcdd1e33a5",
+      "timer_id": "bfdbf1d6-166a-49a2-9ca4-bdd35eb0afe9",
+      "run_id": "d1b36dea-d990-46e9-9c17-0e2c70e280a4",
+      "timer_name": "crud-add",
+      "scheduled_for": "2026-08-01T21:38:44Z",
+      "count": 0,
+      "message": "action=none"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:39:44.001877151Z",
+      "kind": "fired",
+      "event_id": "762056c8-20f2-48cc-bc24-cc77ea7dda50",
+      "timer_id": "eb80f3b3-8db5-4e33-8fc7-64f1c1bc836f",
+      "run_id": "cab8bf1c-bbbd-4251-a6a9-1c5415451adc",
+      "timer_name": "crud-modify",
+      "scheduled_for": "2026-08-01T21:39:44Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:39:44.008693597Z",
+      "kind": "wake_delivered",
+      "event_id": "cb4c3b50-5c7a-4f4d-9a6f-4aac39af8931",
+      "timer_id": "eb80f3b3-8db5-4e33-8fc7-64f1c1bc836f",
+      "run_id": "cab8bf1c-bbbd-4251-a6a9-1c5415451adc",
+      "timer_name": "crud-modify",
+      "scheduled_for": "2026-08-01T21:39:44Z",
+      "count": 0,
+      "message": "action=none"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:39:44.012643579Z",
+      "kind": "no_ack",
+      "event_id": "8fc949f1-3990-42ba-bd76-0a24e24d2413",
+      "timer_id": "bfdbf1d6-166a-49a2-9ca4-bdd35eb0afe9",
+      "run_id": "d1b36dea-d990-46e9-9c17-0e2c70e280a4",
+      "timer_name": "crud-add",
+      "scheduled_for": "2026-08-01T21:38:44Z",
+      "message": "no acknowledgement was received"
+    }
+  ],
+  "restarts": 0
+}

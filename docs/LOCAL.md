@@ -22,6 +22,14 @@ reading this doc: the GUI shows its directory under **Settings → Data**, and
 `bellman --help` names the CLI's (override with `--db <PATH>` / `BELLMAN_DB`,
 which shifts the whole tree below to that database's parent directory).
 
+⚠️ **The scheduler lives in the desktop app.** A timer created with plain
+`bellman add` goes into the CLI store, and **nothing fires it** unless a
+Bellman process is driving *that* store — running the desktop app does not,
+because it drives its own. If you want a timer the desktop app will fire,
+create it against the app's data directory (`--db` / `BELLMAN_DB`, or the
+slot channel under its `slots/` root); the CLI store is for setups where
+something else drives it.
+
 ```
 <data dir>/
 ├─ timers.db (+ -wal, -shm)   your timers, runs, claim ledger

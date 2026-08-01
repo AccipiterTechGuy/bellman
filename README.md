@@ -226,9 +226,12 @@ are **two** data directories, one per interface:
 | Windows | `%USERPROFILE%\.bellman\` | `%APPDATA%\io.bellman.desktop\` (Roaming) |
 
 The GUI shows its active directory under **Settings → Data**; the CLI names its
-default in `bellman --help` (override with `--db` / `BELLMAN_DB`). See
-[docs/LOCAL.md](docs/LOCAL.md) for the data-dir layout and the ignored
-patterns for keeping private integrations out of git.
+default in `bellman --help` (override with `--db` / `BELLMAN_DB`). The
+scheduler runs inside the desktop app, so a timer created with plain
+`bellman add` sits in the CLI store and **nothing fires it** until something
+drives that store — point the CLI at the app's directory if you want the app
+to fire your timer. See [docs/LOCAL.md](docs/LOCAL.md) for the data-dir
+layout and the ignored patterns for keeping private integrations out of git.
 
 ## Status — what actually exists today
 
