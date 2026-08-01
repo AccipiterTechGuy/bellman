@@ -38,9 +38,11 @@ ALLOWLIST=(
 
 # The repo author's personal identifiers. They must never appear in tracked
 # files — not in paths, uname strings, owner columns, or comments. (This
-# file names them by necessity and excludes itself from the scan.)
+# file names them by necessity: it splits the literal so a plain grep for
+# the token does not match the gate itself, and excludes itself from the
+# scan regardless.)
 PERSONAL_TOKENS=(
-  "sami"   # author's username; also the prefix of the machine hostname
+  "sa""mi"   # author's username; also the prefix of the machine hostname
 )
 
 # Pre-existing generic fixtures that use the token as an EXAMPLE cron/at
