@@ -1915,7 +1915,8 @@ main {
   flex-wrap: wrap;
 }
 
-.settings-row label {
+.settings-row label,
+.settings-row .settings-label {
   flex: 1;
   min-width: 12rem;
   font-size: var(--text-sm);

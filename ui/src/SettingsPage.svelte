@@ -423,19 +423,19 @@
     </p>
     {#if info?.dataDir}
       <div class="settings-row">
-        <label>Data directory</label>
+        <span class="settings-label">Data directory</span>
         <code class="data-path" data-testid="settings-data-dir">{info.dataDir}</code>
       </div>
       <div class="settings-row">
-        <label>Database</label>
+        <span class="settings-label">Database</span>
         <code class="data-path">{info.dbPath}</code>
       </div>
       <div class="settings-row">
-        <label>Logs</label>
+        <span class="settings-label">Logs</span>
         <code class="data-path">{info.logsDir}</code>
       </div>
       <div class="settings-row">
-        <label>Slots</label>
+        <span class="settings-label">Slots</span>
         <code class="data-path">{info.slotsDir}</code>
       </div>
     {/if}
