@@ -65,8 +65,11 @@ Arch:
 
 ```sh
 sudo pacman -Syu --needed git base-devel webkit2gtk-4.1 curl wget file \
-  openssl libxdo libayatana-appindicator librsvg
+  openssl xdotool libayatana-appindicator librsvg
 ```
+
+Arch calls the `libxdo` library package **`xdotool`** — `pacman` has no
+`libxdo` target and stops the whole line with `error: target not found`.
 
 **2. Rust toolchain** (uses `curl` from step 1). `-y` accepts the standard
 install — without it rustup stops for a prompt, which a non-interactive
@@ -95,42 +98,82 @@ Any Node **24.x** works — `nvm install 24` resolves to the newest 24 release,
 so your version will not match anyone else's exactly. Verified on Ubuntu 24.04
 with rustc 1.97.1, tauri-cli 2.11.4, and Node 24.13.0 and 24.18.1.
 
-**This list is sufficient on its own.** It was checked by building both
-bundles from scratch in a clean `ubuntu:24.04` container with nothing else
-installed — no `patchelf`, `fakeroot`, `appstream` or `libfuse2`; Tauri's
-AppImage bundler brings its own tooling. (Running an `.AppImage` afterwards is
-a different matter and needs FUSE on the machine that runs it.)
+**Each list is sufficient on its own.** All three were checked by running the
+steps on this page verbatim in clean `ubuntu:24.04`, `fedora:latest` and
+`archlinux:latest` containers with nothing else installed — no `patchelf`,
+`fakeroot`, `appstream` or `libfuse2`; Tauri's AppImage bundler brings its own
+tooling. (Running an `.AppImage` afterwards is a different matter and needs
+FUSE on the machine that runs it.)
 
 `libgtk-3-dev` is listed explicitly even though `libwebkit2gtk-4.1-dev`
 depends on it today. Relying on that edge means the list is only complete for
 as long as someone else's packaging keeps it — naming it costs nothing (apt
 reports it already installed) and keeps this list self-contained.
 
-**4. Build the packages:**
+**4. Get the source, then build the package your distro can install.**
 
 ```sh
 git clone https://github.com/AccipiterTechGuy/bellman && cd bellman
 cd ui && npm ci && cd ..
-cargo tauri build --bundles deb,appimage --ci --no-sign
-# → target/release/bundle/deb/Bellman_*.deb
-# → target/release/bundle/appimage/Bellman_*.AppImage
 ```
 
 `npm ci` is the only manual front-end step: `cargo tauri build` runs the UI
 build and stages the `bellman` CLI sidecar itself (`beforeBuildCommand` in
 `src-tauri/tauri.conf.json`), but it never installs dependencies for you.
 
-**5. Install the deb** (or just run the AppImage):
+Debian / Ubuntu:
+
+```sh
+cargo tauri build --bundles deb,appimage --ci --no-sign
+# → target/release/bundle/deb/Bellman_*.deb
+# → target/release/bundle/appimage/Bellman_*.AppImage
+```
+
+Fedora:
+
+```sh
+cargo tauri build --bundles rpm --ci --no-sign
+# → target/release/bundle/rpm/Bellman-*.rpm
+```
+
+Arch:
+
+```sh
+cargo tauri build --no-bundle --ci
+# → target/release/bellman-app  (GUI)   target/release/bellman  (CLI)
+```
+
+**Why the AppImage is Debian/Ubuntu only.** Tauri's AppImage step shells out
+to `linuxdeploy`, whose bundled `strip` predates the `SHT_RELR` (`.relr.dyn`)
+section that current Fedora and Arch shared libraries carry; it fails to read
+them and the bundle aborts with `failed to run linuxdeploy`. That is upstream
+tooling, not Bellman — asking for `deb,appimage` on those distros will stop
+the build, so the recipes above do not. Arch has no native Tauri bundle
+target at all, so it builds the two binaries directly.
+
+**5. Install what you built.**
+
+Debian / Ubuntu — install the deb (or just run the AppImage):
 
 ```sh
 sudo apt install ./target/release/bundle/deb/Bellman_*.deb
 ```
 
-You get a **Bellman** entry in the app launcher, the `bellman` CLI on `PATH`,
-and the GUI binary `bellman-app`. Verify with
+Fedora — install the rpm:
+
+```sh
+sudo dnf install ./target/release/bundle/rpm/Bellman-*.rpm
+```
+
+Either way you get a **Bellman** entry in the app launcher, the `bellman` CLI
+on `PATH`, the GUI binary `bellman-app`, and the two demo apps under
+`/usr/share/bellman/testing_apps/`. Verify with
 `scripts/smoke_install_deb.sh` (add `SMOKE_MODE=docker` to check it in a
 container instead of on the host); the manual VM checklist is in
 [docs/QA_P6.md](docs/QA_P6.md).
+
+Arch — there is no package to install: run `./target/release/bellman-app`,
+and copy the two binaries onto your `PATH` yourself if you want them there.
 
 **Windows and macOS** packages (NSIS, MSI, dmg) build unsigned in CI and have
 **not** been validated on real hardware — treat them as unfinished.
