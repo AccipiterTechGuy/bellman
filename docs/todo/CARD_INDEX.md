@@ -40,6 +40,12 @@ Both demos live under `testing_apps/`. They share no code on purpose: the
 terminal one is what a developer copies, the GUI one is what everyone else
 watches. See `testing_apps/README.md`.
 
+## Ship readiness
+
+| card | scope | depends on |
+|---|---|---|
+| **SHIP1** | 🔴 Fixes from the R9 ship-readiness swarm, all hand-verified: fire-notification docs describe a **deleted** schema (`bellman-fire/1`) and the wrong `occurrence_kind` vocabulary; the wizard **falsely** claims XDG autostart grants `CAP_WAKE_ALARM`; §Install lacks `apt update` and uses `curl` before installing it; dual data dirs half-documented; CLI cannot set a launch action; CI never runs tests on macOS/Windows; missing community files + 11 tracked `/home/sami` paths. **`patchelf`/`libgtk-3-dev` are refuted — do not add them** | — |
+
 ## Scheduler internals
 
 | card | scope | depends on |
