@@ -75,6 +75,12 @@ pub fn run() {
             let slots_dir = data_dir.join("slots");
             std::fs::create_dir_all(&logs_dir).map_err(setup_err("create logs dir"))?;
             std::fs::create_dir_all(&slots_dir).map_err(setup_err("create slots dir"))?;
+            // The per-timer view root is created lazily by the first timer
+            // folder, but the background watcher watches it recursively from
+            // startup — so on a fresh data directory it has to exist before
+            // that thread starts, or the watch fails and the thread ends.
+            std::fs::create_dir_all(data_dir.join("timers"))
+                .map_err(setup_err("create timers dir"))?;
 
             // Load (or create) the user config — the wizard's persisted answer.
             let config = config::Config::load(&data_dir)?;

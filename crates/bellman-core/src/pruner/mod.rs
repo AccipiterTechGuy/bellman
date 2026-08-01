@@ -185,20 +185,33 @@ pub fn ensure_system_prune_timer(store: &mut Store) -> PruneResult<Timer> {
 
 fn iana_system_tz() -> String {
     // Prefer the local offset's common IANA guess; fall back to UTC.
-    // chrono's Local doesn't always expose the IANA name; use Etc/GMT when unknown.
-    std::env::var("TZ").unwrap_or_else(|_| {
+    // chrono's Local doesn't always expose the IANA name.
+    //
+    // Whatever this produces is fed straight to `Occurrence::new`, so it has
+    // to be a name chrono-tz can parse. A guess that is merely plausible is
+    // not good enough: `Occurrence::new` fails, `ensure_system_prune_timer`
+    // fails, and `startup_maintenance` aborts — which on a fresh data dir
+    // also leaves `timers/` uncreated and takes the whole background watcher
+    // with it. Seen for real on a container whose
+    // `/etc/localtime -> /usr/share/zoneinfo//UTC` (double slash) yields the
+    // unparseable name `/UTC`. So: normalise, then verify, then UTC.
+    let raw = std::env::var("TZ").ok().or_else(|| {
         // Best-effort: read /etc/localtime symlink target on Linux.
-        if let Ok(link) = std::fs::read_link("/etc/localtime") {
-            let s = link.to_string_lossy();
-            if let Some(idx) = s.find("zoneinfo/") {
-                let name = &s[idx + "zoneinfo/".len()..];
-                if !name.is_empty() {
-                    return name.to_string();
-                }
-            }
-        }
-        "UTC".into()
-    })
+        let link = std::fs::read_link("/etc/localtime").ok()?;
+        let s = link.to_string_lossy();
+        let idx = s.find("zoneinfo/")?;
+        Some(s[idx + "zoneinfo/".len()..].to_string())
+    });
+    usable_tz_name(raw)
+}
+
+/// Normalise a guessed zone name and keep it only if chrono-tz can parse it;
+/// anything else becomes `UTC`. Split out from [`iana_system_tz`] so it is
+/// testable without touching process environment.
+fn usable_tz_name(raw: Option<String>) -> String {
+    raw.map(|s| s.trim().trim_start_matches('/').to_string())
+        .filter(|s| !s.is_empty() && s.parse::<chrono_tz::Tz>().is_ok())
+        .unwrap_or_else(|| "UTC".into())
 }
 
 /// True when a prune pass should run now (startup catch-up or overdue).

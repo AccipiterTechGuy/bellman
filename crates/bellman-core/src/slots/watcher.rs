@@ -250,6 +250,15 @@ fn run_watch_loop(cfg: WatchConfig, stop_rx: mpsc::Receiver<()>) -> SlotResult<(
         .watch(service.layout().work_dir(), RecursiveMode::NonRecursive)
         .map_err(|e| SlotError::Io(format!("watch work/: {e}")))?;
     if let Some(engine) = &cfg.reply_engine {
+        // The tree root is created lazily by the first timer folder, so on a
+        // fresh data directory it may not exist yet — and `watch()` on a
+        // missing path is a hard error that would end this thread, taking
+        // reply ingest, the slot channel and the publisher tick with it for
+        // the life of the process while the app still looks healthy. Create
+        // it first; it is our directory either way.
+        if let Err(e) = engine.tree.ensure_readme() {
+            eprintln!("bellman: watcher: create timers/: {e}");
+        }
         debouncer
             .watch(engine.tree.root(), RecursiveMode::Recursive)
             .map_err(|e| SlotError::Io(format!("watch timers/: {e}")))?;

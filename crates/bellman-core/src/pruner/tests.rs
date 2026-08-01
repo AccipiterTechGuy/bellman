@@ -594,3 +594,44 @@ fn prune_with_lease_elsewhere_reports_skipped_and_never_stamps_last_prune() {
     );
     assert!(store.meta().unwrap().last_prune.is_some());
 }
+
+/// C11 regression: a system timezone name that chrono-tz cannot parse must
+/// not stop `system.prune` from being created.
+///
+/// `iana_system_tz()` guesses from `$TZ` or the `/etc/localtime` symlink.
+/// A container whose link was `/usr/share/zoneinfo//UTC` (double slash) made
+/// it return `/UTC`; `Occurrence::new` rejected that, `ensure_system_prune_timer`
+/// returned Err and `startup_maintenance` aborted — so nothing ever pruned,
+/// and on a fresh data directory nothing had created `timers/` either, which
+/// then killed the background watcher outright. A guess that does not parse
+/// is worse than no guess: fall back to UTC.
+#[test]
+fn unparseable_system_timezone_falls_back_to_utc() {
+    for bad in ["/UTC", "  /UTC ", "", "Not/A/Zone", "zoneinfo//UTC", "///"] {
+        let tz = super::usable_tz_name(Some(bad.to_string()));
+        assert_eq!(
+            tz, "UTC",
+            "a guess of {bad:?} must degrade to UTC, got {tz:?}"
+        );
+        assert!(tz.parse::<chrono_tz::Tz>().is_ok());
+    }
+    assert_eq!(super::usable_tz_name(None), "UTC");
+    // A leading slash on an otherwise good name is repaired, not discarded.
+    assert_eq!(
+        super::usable_tz_name(Some("/Europe/Helsinki".into())),
+        "Europe/Helsinki"
+    );
+    assert_eq!(
+        super::usable_tz_name(Some("Europe/Helsinki".into())),
+        "Europe/Helsinki"
+    );
+
+    // And the timer the pruner needs is creatable on this machine whatever
+    // its zone turns out to be.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = crate::store::Store::open(dir.path().join("timers.db")).unwrap();
+    let timer = super::ensure_system_prune_timer(&mut store)
+        .expect("system.prune must be creatable whatever the machine says its zone is");
+    assert_eq!(timer.name, super::SYSTEM_PRUNE_NAME);
+    assert!(timer.next_fire_utc.is_some());
+}

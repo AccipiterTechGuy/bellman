@@ -1110,3 +1110,120 @@ fn watcher_claimed_slot_add_fires_running_scheduler() {
         first.scheduled_for
     );
 }
+
+/// C11 regression: the ONE background watcher must survive a data directory
+/// whose `timers/` root does not exist yet.
+///
+/// `timers/` is created lazily by the first timer folder, but the watcher
+/// watches it **recursively from startup** — and `notify`'s `watch()` on a
+/// missing path is a hard error that ends the thread. When that happened the
+/// app kept running and looked healthy while reply ingest, the slot channel
+/// and the event publisher were all dead for the life of the process.
+///
+/// Seen for real: a container whose `/etc/localtime` pointed at
+/// `/usr/share/zoneinfo//UTC` made `startup_maintenance` abort, so nothing
+/// had created `timers/` by the time the watcher started; the packaged demo
+/// then answered its fire correctly and the run still went `no_ack`.
+#[test]
+fn watcher_starts_on_a_data_dir_with_no_timers_root_yet() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let data_dir = dir.path().to_path_buf();
+    let db = data_dir.join("timers.db");
+    // Only what the app creates up front — deliberately no `timers/`.
+    fs::create_dir_all(data_dir.join("logs")).unwrap();
+    fs::create_dir_all(data_dir.join("slots")).unwrap();
+    let _store = Store::open_with(
+        &db,
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        !data_dir.join("timers").exists(),
+        "precondition: the tree root must be missing"
+    );
+
+    let engine = crate::reply::ReplyEngine {
+        tree: crate::tree::TimersTree::new(&data_dir),
+        data_dir: data_dir.clone(),
+        pickup_grace: Duration::from_secs(60),
+        watchdog_factor: 2.0,
+        anchors: crate::reply::new_anchors(),
+        deadlines: crate::reply::new_deadlines(),
+        fire_slot_file: None,
+        status_listener: None,
+        ipc: None,
+    };
+    let stop = crate::slots::watcher::spawn_watch_thread(crate::slots::watcher::WatchConfig {
+        slots_root: data_dir.join("slots"),
+        data_dir: data_dir.clone(),
+        db_path: db.clone(),
+        reply_engine: Some(engine),
+        scheduler: None,
+        poll_interval: Duration::from_millis(100),
+    })
+    .expect("watcher spawns");
+
+    // Give the thread time to reach its watch calls and its first poll.
+    thread::sleep(Duration::from_millis(600));
+    assert!(
+        data_dir.join("timers").is_dir(),
+        "the watcher must create the tree root rather than die on it"
+    );
+
+    // Still alive and doing its job: publish a slot request and see it applied.
+    let service = SlotService::open(data_dir.join("slots"), SlotConfig::default()).unwrap();
+    let free = service.layout().free_dir();
+    let stub = fs::read_dir(&free)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "json"))
+        .expect("a free stub is pre-generated");
+    let slot_id = stub.file_stem().unwrap().to_string_lossy().to_string();
+    let slot_id = slot_id.trim_start_matches("slot-").to_string();
+    let req = serde_json::json!({
+        "schema": "bellman-slot/1",
+        "slot_id": slot_id,
+        "request_id": Uuid::new_v4().to_string(),
+        "operation": "add",
+        "payload": {
+            "app_name": "watcher-liveness",
+            "timer_name": "watcher-liveness-timer",
+            "tz": "UTC",
+            "occurrence": {"kind": "interval", "every_secs": 3600}
+        }
+    });
+    let tmp = free.join("publish.tmp");
+    fs::write(&tmp, serde_json::to_vec(&req).unwrap()).unwrap();
+    fs::rename(&tmp, &stub).unwrap();
+
+    let store = Store::open_with(
+        &db,
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
+    .unwrap();
+    let mut seen = false;
+    for _ in 0..100 {
+        thread::sleep(Duration::from_millis(100));
+        if store
+            .list_timers()
+            .unwrap()
+            .iter()
+            .any(|t| t.name == "watcher-liveness-timer")
+        {
+            seen = true;
+            break;
+        }
+    }
+    stop.stop();
+    assert!(
+        seen,
+        "a live watcher applies the request; a dead one silently never does"
+    );
+}
