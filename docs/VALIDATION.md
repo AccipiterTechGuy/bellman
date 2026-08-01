@@ -40,8 +40,7 @@ its script, and the Perl client. Originality is a separate document:
 | 3 | Rejection + quarantine under a live watcher (5 cases) | **PASS** |
 | 3 | Slot CRUD live, no restart (SCH2) | **PASS** |
 | 3 | A client in a language the docs do not cover | **PASS** (Perl) |
-| 4 | README §Install verbatim on Ubuntu | **PASS** |
-| 4 | README §Install verbatim on Fedora and Arch | **FAILED, then fixed** — two independent defects; both corrected recipes then re-run verbatim end to end, **PASS** |
+| 4 | README §Install verbatim on Ubuntu, Fedora and Arch | **FAILED, then fixed** — three defects (`sudo`, `libxdo`, `linuxdeploy`); all three recipes then re-run verbatim end to end with no bootstrap, **PASS** |
 | 4 | `.deb` installs; demos ship at the wizard's path; demo runs | **PASS** |
 | 4 | First-run wizard on a clean session, demo offer | **PASS** |
 | 4 | Both data directories | **PASS**, with a documentation gap |
@@ -49,7 +48,7 @@ its script, and the Perl client. Originality is a separate document:
 | 5 | Originality sweep | **PASS** — [ORIGINALITY.md](ORIGINALITY.md) |
 | 6 | Polish: personal-path gate, naming, dead code | **PASS** |
 
-Six defects were found and fixed on this card; each functional one has a
+Seven defects were found and fixed on this card; each functional one has a
 regression test that was verified to fail without its fix:
 
 | # | Defect | Fix |
@@ -60,6 +59,11 @@ regression test that was verified to fail without its fix:
 | D4 | Three documentation gaps: undocumented `config.json` clamps, and three slot payload fields missing from the INTEGRATION.md table | `0e65c98` |
 | D5 | The **one background watcher** (reply ingest + slot channel + event publisher) exits at startup if `<data dir>/timers/` does not exist yet, and the app carries on looking healthy | see below |
 | D6 | An unparseable system timezone name aborts startup maintenance, so `system.prune` is never created and nothing ever prunes | see below |
+| D7 | README §Install's first command assumes `sudo`, which `ubuntu:24.04` and `archlinux:latest` do not ship — the recipe stops before installing anything | see §4 |
+
+The walkthrough in §4 and *[Walkthrough](#walkthrough--what-this-was-like-to-use)*
+records how each was found, including the one this card's first pass papered
+over.
 
 ---
 
@@ -121,10 +125,27 @@ Harness: the release `bellman-app` on a private `Xvfb` display with an
 ephemeral `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_RUNTIME_DIR` and `HOME`,
 under `dbus-run-session` so it never touches the operator's session or data.
 Timers are created from **outside** the app with `bellman slot-submit`, which
-is also the SCH2 path. What each run did is described in full below and
-captured in the JSON under `docs/qa-c11/`.
+is also the SCH2 path.
+
+**Every script that produced the evidence below is committed** under
+[`docs/qa-c11/harness/`](qa-c11/harness/), with its own
+[README](qa-c11/harness/README.md) covering prerequisites, the container
+image for the DST and packaged-demo runs, and why the private D-Bus session
+is not optional. Each scenario names its exact command. After
+`cargo tauri build --no-bundle --ci`, the whole set re-runs with:
+
+```sh
+cd docs/qa-c11/harness
+for s in e2e_*.py; do python3 "$s" || echo "FAILED: $s"; done
+```
+
+Each script asserts its own outcome and exits non-zero on failure.
 
 ### All seven occurrence kinds fired on their own schedule
+
+```sh
+python3 docs/qa-c11/harness/e2e_kinds.py     # ~5 min, mostly waiting
+```
 
 The app was started first and stayed up for the whole run; all seven timers
 were submitted afterwards by a separate process, and nothing was restarted.
@@ -148,6 +169,10 @@ This same run is the SCH2 proof from the outside: seven timers created by a
 foreign process all fired in a scheduler that was never restarted.
 
 ### Misfire across a real stop and start — **found a defect**
+
+```sh
+python3 docs/qa-c11/harness/e2e_misfire.py   # ~6 min
+```
 
 Two daily timers were scheduled for the same instant with opposite policies,
 the app was stopped (SIGTERM, as closing it would) **before** that instant,
@@ -185,6 +210,14 @@ the fixed build:
 [`qa-c11/misfire_evidence.json`](qa-c11/misfire_evidence.json).
 
 ### DST and clock jumps against a real clock
+
+```sh
+# image build in docs/qa-c11/harness/README.md
+docker run --rm -v $PWD/docs/qa-c11/harness/dst_inner.py:/dst_inner.py:ro \
+  -v $PWD/target/release/bellman-app:/usr/bin/bellman-app:ro \
+  -v $PWD/target/release/bellman:/usr/bin/bellman:ro \
+  c11-dst python3 /dst_inner.py gap 1200      # and: fold 5100
+```
 
 Run in disposable containers with `libfaketime`, which shifts the *wall*
 clock of one process tree; the host clock was never touched and no clock was
@@ -261,6 +294,10 @@ container showed a spurious re-fire or a lost timer.
 
 ### Pruner, rotation and retention
 
+```sh
+python3 docs/qa-c11/harness/e2e_prune.py     # ~2 min
+```
+
 Thresholds came from the documented `config.json` keys, set to the smallest
 values the product accepts (see the friction note below). Seeded on disk
 before the app started: `events.current.jsonl` just over the 1 MiB rotation
@@ -294,6 +331,12 @@ out in that run).
 
 All of §3 ran against a **live** desktop app with its reply watcher running,
 and every scenario started from a scheduled fire.
+
+```sh
+python3 docs/qa-c11/harness/e2e_apps.py      # the two demo apps + both transports
+python3 docs/qa-c11/harness/e2e_reply.py     # no_ack, watchdog, rejections, superseded
+python3 docs/qa-c11/harness/e2e_crud.py      # slot add / modify / delete, live
+```
 
 ### A real app woken by a scheduled fire
 
@@ -467,7 +510,11 @@ already carries the identity fields.
 
 ### The GUI demo, driven by clicking
 
-`scripts/run_gui_qa.sh wiz1`, on an isolated `Xvfb` + private D-Bus, against
+```sh
+scripts/run_gui_qa.sh wiz1
+```
+
+On an isolated `Xvfb` + private D-Bus, against
 the release `bellman-app` from this tree. The Bellman window is driven through
 its own webview via WebDriver; the demo's tk window is driven with XTEST
 clicks on that display only.
@@ -494,16 +541,41 @@ phase 2: python3 present but tkinter missing → no Run button, python3-tk note 
 ## 4 — Install and packaging, as a stranger
 
 Each recipe was run **verbatim** in a clean container, as the only commands
-executed. Two adaptations, both stated up front and neither a workaround for
-a Bellman defect:
+executed, with `bash` as the shell (the README's steps 2 and 3 use `source`).
 
-- a two-line `sudo` shim (`exec "$@"`), because the base images run as root
-  and ship no `sudo` — on a real desktop these are the same commands;
-- `bash` as the shell, because the README's steps 2 and 3 use `source`.
+`git clone https://github.com/AccipiterTechGuy/bellman` was run for real on
+the first pass; at the time of the run the public `main` was `f5b56de`, the
+exact commit this branch started from, so what those containers built is what
+a stranger gets. The re-runs after the fixes clone this branch instead, since
+the fixes are not on public `main` yet — that substitution is named where it
+is used.
 
-`git clone https://github.com/AccipiterTechGuy/bellman` was run for real; at
-the time of the run the public `main` was `f5b56de`, the exact commit this
-branch started from, so what the containers built is what a stranger gets.
+### The first thing that failed was `sudo`
+
+The first pass wrapped every recipe in a two-line `sudo` shim. That was
+wrong: the card says install verbatim **with no bootstrap step you invented**,
+and a shim is exactly that. Removing it turns up a genuine defect:
+
+```
+$ docker run --rm ubuntu:24.04     sh -lc 'sudo true'   → exit 127  sudo: not found
+$ docker run --rm archlinux:latest sh -lc 'sudo true'   → exit 127  sudo: command not found
+$ docker run --rm fedora:latest    sh -lc 'sudo true'   → exit 0
+```
+
+`ubuntu:24.04` and `archlinux:latest` ship no `sudo` at all, and all three
+images run as uid 0 — so on two of the three the README stopped on its very
+first command, before installing anything. A desktop has `sudo`; a container,
+a chroot or a minimal image very often does not, and those are exactly where
+people build.
+
+**Fixed** in the README: step 1 now says it is the only part that needs root,
+that it is written with `sudo` because that is how a desktop user runs it, and
+that **if you are already root you drop the `sudo`** — naming the two images
+where the prefix fails. Steps 2 onward are explicitly not for root.
+
+Every run below then follows the README *including that sentence*: `sudo` is
+kept on Fedora, which has it, and dropped on Ubuntu and Arch, which do not.
+No shim, no invented step.
 
 ### Ubuntu 24.04 — **PASS, verbatim, no bootstrap**
 
@@ -576,41 +648,54 @@ correct. With `xdotool` substituted, prerequisites install and the build runs
 **Fixed** (`e151f11`): the package name is corrected, and Arch's build step is
 now `cargo tauri build --no-bundle --ci` (Tauri has no pacman target).
 
-### Both corrected recipes, re-run verbatim end to end
+### All three recipes, re-run verbatim end to end, no shim
 
-Not just the changed commands — the whole page again, from a clean
-`fedora:latest` and a clean `archlinux:latest`, with one further stated
-substitution: step 4's `git clone` points at this branch's checkout rather
-than the public URL, because the fixes under test are not on public `main`
-yet. Everything else is exactly what the README now says.
+The whole page again — every step, in order, in a fresh container each time,
+with nothing added.
 
 ```
-### fedora:latest — every step, no bootstrap
-dnf install … (README's Fedora list) → OK
-rustup, nvm, node 24, cargo install tauri-cli → OK
+### ubuntu:24.04                                                   exit 0
+apt update; apt install -y …            (no sudo: root, per the README)
+rustup -y; source ~/.cargo/env
+nvm install 24; cargo install tauri-cli --locked
+npm ci; cargo tauri build --bundles deb,appimage --ci --no-sign
+apt install -y ./target/release/bundle/deb/Bellman_*.deb
+  /usr/bin/bellman   /usr/bin/bellman-app   Bellman.desktop
+  /usr/share/bellman/testing_apps/{README.md,lightbulb/,lightbulb_gui/}
+  Bellman_0.1.0_amd64.deb        7 118 924 B
+  Bellman_0.1.0_amd64.AppImage  81 357 304 B
+  bellman --version → bellman 0.1.0
+OK-UBUNTU-VERBATIM
+
+### fedora:latest                                                  exit 0
+sudo dnf install -y …                   (sudo kept: this image has it)
+rustup -y; nvm install 24; cargo install tauri-cli --locked
 npm ci; cargo tauri build --bundles rpm --ci --no-sign
-  → Bundling Bellman-0.1.0-1.x86_64.rpm
-sudo dnf install ./target/release/bundle/rpm/Bellman-*.rpm → Complete!
-  /usr/sbin/bellman   /usr/sbin/bellman-app
-  /usr/share/applications/Bellman.desktop
+sudo dnf install -y ./target/release/bundle/rpm/Bellman-*.rpm
+  /usr/sbin/bellman   /usr/sbin/bellman-app   Bellman.desktop
   /usr/share/bellman/testing_apps/{README.md,lightbulb/,lightbulb_gui/}
   bellman --version → bellman 0.1.0
-OK-FEDORA-CORRECTED-RECIPE   (exit 0)
+OK-FEDORA-VERBATIM
 
-### archlinux:latest — every step, no bootstrap
-pacman -Syu --needed … xdotool …  (README's corrected Arch list) → OK
-rustup, nvm, node 24, cargo install tauri-cli → OK
+### archlinux:latest                                               exit 0
+pacman -Syu --needed … xdotool …        (no sudo: root, per the README)
+rustup -y; nvm install 24; cargo install tauri-cli --locked
 npm ci; cargo tauri build --no-bundle --ci
-  → Built application at: target/release/bellman-app
-  -rwxr-xr-x  7 489 000 target/release/bellman
-  -rwxr-xr-x 10 677 288 target/release/bellman-app
+  target/release/bellman       7 489 000 B
+  target/release/bellman-app  10 677 288 B
   ./target/release/bellman --version → bellman 0.1.0
-OK-ARCH-CORRECTED-RECIPE     (exit 0)
+OK-ARCH-VERBATIM
 ```
 
-**PASS on all three distributions** with the corrected recipes.
+**PASS on all three distributions**, verbatim, with no bootstrap step.
 
 ### The `.deb`'s own shipped demo — **found two more defects**
+
+```sh
+docker run --rm -v $PWD/docs/qa-c11/harness/deb_demo_inner.py:/d.py:ro \
+  -v $PWD/target/release/bundle/deb/Bellman_*.deb:/new.deb:ro \
+  c11-dst bash -c 'apt-get install -y /new.deb >/dev/null && python3 /d.py'
+```
 
 Run inside the container that `apt install`ed the deb, using **only** packaged
 files: `/usr/bin/bellman-app`, `/usr/bin/bellman`, and
@@ -696,6 +781,10 @@ wizard names — and the demo it ships completes a run from a scheduled fire
 using nothing but packaged files.
 
 ### Both data directories
+
+```sh
+python3 docs/qa-c11/harness/e2e_datadirs.py  # ~4 min
+```
 
 With the desktop app running on its own store, a timer was created the plain
 way the CLI's help suggests (`bellman add`, no flags):
@@ -813,7 +902,17 @@ why, and it warned me that `source "$HOME/.cargo/env"` cannot be skipped. All
 three warnings were about things that would otherwise have stopped me. It
 worked start to finish with nothing invented.
 
-**Then I tried Fedora and Arch, and both stopped.** On Arch the very first
+**I nearly papered over the first failure, and that is worth admitting.**
+`ubuntu:24.04` has no `sudo`, so the README's very first command died with
+`sudo: not found`. My first instinct was to drop in a two-line shim and carry
+on — which is precisely the move this card exists to forbid: *if a command
+fails, that is a finding, not something to work around*. With the shim gone
+it is a real, ordinary defect (the page never says step 1 needs root, or what
+to do when you already are), and the fix is one useful sentence rather than a
+private workaround. The lesson generalises: a shim is a way of not hearing
+what the machine just told you.
+
+**Then I tried Fedora and Arch, and both stopped again.** On Arch the very first
 command died on `libxdo`; I had to go and find out that Arch calls it
 `xdotool`. On both, the build command in the README aborted at the AppImage
 step with `failed to run linuxdeploy` and no explanation — I had to re-run
@@ -957,13 +1056,34 @@ that was reviewed and kept. Headline: **zero logic-bearing code shared** with
 
 ## Reproducing this
 
-The harness scripts used for §2 and §3 are not shipped in the repository (they
-hard-code this machine's scratch paths), but everything they do is described
-above precisely enough to redo by hand: start `bellman-app` with an ephemeral
-`XDG_DATA_HOME` under `dbus-run-session` on an `Xvfb` display, create timers
-with `bellman slot-submit --slots <appdata>/slots --db <appdata>/timers.db`,
-and read `logs/events.current.jsonl`, `timers/<name>-<id>/status.json` and
-`slots/fires/`. The two artefacts that *are* shipped, because they are useful
-beyond this run, are [`qa-c11/clock_in.pl`](qa-c11/clock_in.pl) (the Perl
-client) and [`qa-c11/originality_sweep.py`](qa-c11/originality_sweep.py) (the
-originality sweep, which takes `BELLMAN_REFERENCE_REPOS` and re-runs anywhere).
+Everything is committed. [`docs/qa-c11/harness/`](qa-c11/harness/) holds the
+script behind every scenario above, and
+[its README](qa-c11/harness/README.md) has the prerequisites, the container
+image recipe for the DST and packaged-demo runs, and the one environment
+variable (`FAKETIME_DONT_FAKE_MONOTONIC`) without which the DST runs look
+broken.
+
+```sh
+cd <repo>
+(cd ui && npm ci)
+cargo tauri build --no-bundle --ci        # target/release/{bellman,bellman-app}
+
+cd docs/qa-c11/harness
+for s in e2e_*.py; do python3 "$s" || echo "FAILED: $s"; done   # ~35 min total
+```
+
+Each script asserts its own outcome, exits non-zero on failure, and writes the
+JSON it is quoted from. They keep out of your way by construction: a private
+`Xvfb`, a private `XDG_DATA_HOME`/`HOME`, and a private D-Bus session, so your
+own Bellman and your own data directory are untouched. Paths are resolved from
+the script's location; `BELLMAN_ROOT` and `BELLMAN_QA_RUN_ROOT` override them.
+
+Two artefacts are useful beyond this run:
+[`qa-c11/clock_in.pl`](qa-c11/clock_in.pl) (the Perl client, written from
+INTEGRATION.md alone) and
+[`qa-c11/originality_sweep.py`](qa-c11/originality_sweep.py) (the originality
+sweep, which takes `BELLMAN_REFERENCE_REPOS` and re-runs anywhere).
+
+The install work in §4 is three shell transcripts rather than a script; the
+exact commands are the README's own, and the two stated substitutions are
+named where they are used.

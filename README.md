@@ -46,6 +46,13 @@ Linux is the only platform validated on real hardware today; see
 **1. System prerequisites** (one time). Refresh the package list first — on a
 fresh machine the list is empty and nothing below installs without it.
 
+Step 1 is the only part that needs root, and it is written with `sudo`
+because that is how a desktop user runs it. **If you are already root — a
+container, a chroot, a minimal image — drop the `sudo`**: `ubuntu:24.04` and
+`archlinux:latest` do not ship `sudo` at all, so the prefix fails with
+`sudo: command not found` before anything installs. Everything from step 2
+on runs as your normal user and must not be run as root.
+
 Debian / Ubuntu:
 
 ```sh
