@@ -334,23 +334,29 @@ older than 30 days (configurable) are deleted, then oldest archives until
 current + archives fit a 1 GB (configurable) retained-log budget. History is
 therefore 30-day history (configurable), not forever.
 
-## Fire notification (write-output-slot action)
+## Fire notification
 
-A timer whose action is **write output slot** publishes one JSON per firing
-into the configured output directory (`bellman-fire/1`):
+A timer with an **integration owner** (`payload.app_name` on the slot `add`
+request — see *Step 0* below) publishes one JSON per firing under
+`slots/fires/`. It carries the same `bellman-slot/1` schema tag as every
+slot-channel document:
 
 ```json
-{"schema":"bellman-fire/1","kind":"fired","timer_id":"…","timer_name":"morning-wake","run_id":"…","scheduled_for":"2026-07-28T08:00:00Z","fired_at":"2026-07-28T08:00:01Z","occurrence_kind":"on_time"}
+{"schema":"bellman-slot/1","kind":"fired","occurrence_kind":"interval","timer_id":"3f1a2b9c-…","timer_name":"morning-wake","app_name":"demo-app","run_id":"9f2c1d77-…","scheduled_for":"2026-07-28T08:00:00Z","fired_at":"2026-07-28T08:00:01Z","status_path":"/home/you/.bellman/timers/morning-wake-3f1a/status.json","reply_path":"/home/you/.bellman/timers/morning-wake-3f1a/reply-9f2c1d77-….json"}
 ```
 
 `kind` is the event kind (`fired` / `fired_late` / `coalesced`) — the same
-vocabulary as the event log. `occurrence_kind` describes the occurrence:
-`on_time` | `late` | `coalesced` | `catch_up_<n>`.
+vocabulary as the event log, and the field to branch on for *how this firing
+went*. `occurrence_kind` is the timer's **recurrence type** — `once` |
+`interval` | `daily` | `weekly` | `monthly` | `yearly` | `cron` — the same
+value `status.json` carries under the same key. The full field list is in
+*Step 1* below, whose example is pinned field-for-field against the producer
+by a golden test (`crates/bellman-core/tests/doc_fire_example.rs`).
 
 Wake actions: **launch** (arg array, no shell, `BELLMAN_RUN_ID` env, timeout
-kill, output cap), **write-output-slot**, **desktop notification** (stub until
-the GUI lands). Overlap default **skip**; failed wakes retry **1× after 30 s**,
-then log `wake_failed` with message `FAILED`.
+kill, output cap) and **desktop notification**; a timer with no action fires
+and records the run (`action=none`). Overlap default **skip**; failed wakes
+retry **1× after 30 s**, then log `wake_failed` with message `FAILED`.
 
 ---
 
@@ -421,12 +427,13 @@ Optional fields are **omitted, not null** — absence means "not reported",
 and fields accumulate across replies rather than being retracted. A run
 that is still open simply has fewer keys.
 
-> ⚠️ **`occurrence_kind` means two different things in two documents.** In
-> `status.json` (above) it is the *recurrence type* — `interval`, `daily`,
-> `cron`. In the **fire notification** it is the *timing of this
-> particular firing* — `on_time`, `late`, `coalesced`, `catch_up_<n>`.
-> Same key, different vocabularies; read it against the document you got
-> it from.
+> ⚠️ **Branch on `kind`, not `occurrence_kind`, for firing timing.** In
+> `status.json` (above) `occurrence_kind` is the *recurrence type* —
+> `interval`, `daily`, `cron`. The **fire notification** (Step 1) carries
+> that same recurrence-type value under the same key; it is *not* a
+> per-firing timing marker. What distinguishes an on-time firing from a late
+> or coalesced one is the notification's **`kind`** — `fired`, `fired_late`,
+> `coalesced` — the event-log vocabulary.
 
 `timer.json` beside it is the timer's definition (`bellman-timer/1`:
 `timer_id`, `name`, `enabled`, `tz`, `occurrence`, `action`, `transport`,
@@ -456,8 +463,8 @@ When the timer fires, Bellman writes `fires/fire-<run_id>.json` under the
 slots root (atomically, after `status.json` and the reply stub exist):
 
 ```json
-{"schema":"bellman-slot/1","kind":"fired","occurrence_kind":"on_time",
- "timer_id":"…","timer_name":"demo-wake","app_name":"demo-app",
+{"schema":"bellman-slot/1","kind":"fired","occurrence_kind":"interval",
+ "timer_id":"3f1a2b9c-5e7d-4c1a-9f2e-8b6d4a2c1e09","timer_name":"demo-wake","app_name":"demo-app",
  "run_id":"9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08",
  "scheduled_for":"2026-07-28T08:00:00Z","fired_at":"2026-07-28T08:00:01Z",
  "status_path":"/home/you/.bellman/timers/demo-wake-3f1a/status.json",
