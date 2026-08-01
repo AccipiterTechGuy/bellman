@@ -276,6 +276,19 @@ if ! echo "$MSG" | grep -q 'launch ok exit=0'; then
 fi
 ok "run-now launch ran (exit=0)"
 
+JSON="$(run_json add --name hyadd --occurrence interval --every-secs 60 \
+  --action launch --command /usr/local/bin/backup.sh --args --full --tz UTC)" \
+  || die "add launch hyphen arg" "$JSON"
+assert_ok "add launch hyphen arg" "$JSON"
+AARGS="$(jget "$JSON" 'obj["timer"]["action"].get("args")')"
+if [[ "$AARGS" != "['--full']" ]]; then
+  die "add launch hyphen arg" "expected ['--full'], got: $AARGS"
+fi
+ok "add --args --full (hyphen-leading, space form)"
+JSON="$(run_json rm hyadd)" || die "rm hyadd" "$JSON"
+assert_ok "rm hyadd" "$JSON"
+ok "rm hyadd"
+
 JSON="$(run_json edit launcher --action launch --command /bin/echo --args hello --args "two words")" \
   || die "edit launch args" "$JSON"
 assert_ok "edit launch args" "$JSON"
@@ -284,6 +297,33 @@ if [[ "$AARGS" != "['hello', 'two words']" ]]; then
   die "edit launch args" "expected ['hello', 'two words'], got: $AARGS"
 fi
 ok "edit --action launch --args (repeatable)"
+
+# Hyphen-leading args (audit REPRO): flags are what launch commands almost
+# always take; clap must accept them in the documented space form.
+JSON="$(run_json edit launcher --action launch --command /bin/echo --args -m --args "two words")" \
+  || die "edit launch hyphen args" "$JSON"
+assert_ok "edit launch hyphen args" "$JSON"
+AARGS="$(jget "$JSON" 'obj["timer"]["action"].get("args")')"
+if [[ "$AARGS" != "['-m', 'two words']" ]]; then
+  die "edit launch hyphen args" "expected ['-m', 'two words'], got: $AARGS"
+fi
+ok "edit --args -m (hyphen-leading, space form)"
+
+JSON="$(run_json edit launcher --action launch --command /bin/echo --args --full)" \
+  || die "edit launch double-dash arg" "$JSON"
+AARGS="$(jget "$JSON" 'obj["timer"]["action"].get("args")')"
+if [[ "$AARGS" != "['--full']" ]]; then
+  die "edit launch double-dash arg" "expected ['--full'], got: $AARGS"
+fi
+ok "edit --args --full (double-dash value)"
+
+JSON="$(run_json edit launcher --action launch --command /bin/echo --args=--full)" \
+  || die "edit launch equals arg" "$JSON"
+AARGS="$(jget "$JSON" 'obj["timer"]["action"].get("args")')"
+if [[ "$AARGS" != "['--full']" ]]; then
+  die "edit launch equals arg" "expected ['--full'], got: $AARGS"
+fi
+ok "edit --args=--full (equals form)"
 
 JSON="$(run_json edit launcher --action notify --title "Hi" --body "there")" \
   || die "edit notify" "$JSON"

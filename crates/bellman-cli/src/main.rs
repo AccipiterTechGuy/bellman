@@ -112,7 +112,8 @@ enum Commands {
 
         /// One argument for the launch command; repeat per argument
         /// (e.g. `--args -m --args "hello world"`). No shell splitting.
-        #[arg(long = "args", value_name = "ARG")]
+        /// Hyphen-leading values are accepted (each `--args` takes exactly one).
+        #[arg(long = "args", value_name = "ARG", allow_hyphen_values = true)]
         args: Vec<String>,
 
         /// Working directory for `--action launch`.
@@ -186,7 +187,8 @@ enum Commands {
         command: Option<String>,
 
         /// One argument for the launch command; repeat per argument.
-        #[arg(long = "args", value_name = "ARG")]
+        /// Hyphen-leading values are accepted (each `--args` takes exactly one).
+        #[arg(long = "args", value_name = "ARG", allow_hyphen_values = true)]
         args: Vec<String>,
 
         /// Working directory for `--action launch`.
