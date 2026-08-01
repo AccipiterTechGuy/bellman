@@ -16,7 +16,10 @@ tauri-cli 2.11.4). Container work used Docker 29.6.2 with `ubuntu:24.04`,
    including the parts that resolved fine.
 
 Raw evidence (JSON captured by each run) is under
-[`docs/qa-c11/`](qa-c11/). Originality is a separate document:
+[`docs/qa-c11/`](qa-c11/) — one file per scenario:
+`kinds`, `misfire`, `prune`, `reply`, `apps`, `crud`, `datadirs`,
+`dst_gap`, `dst_fold`, `deb_packaged_demo`, plus the originality sweep and
+its script, and the Perl client. Originality is a separate document:
 [`docs/ORIGINALITY.md`](ORIGINALITY.md).
 
 ## Summary
@@ -228,23 +231,27 @@ EVENT dst-control-daily    fired scheduled_for=2026-10-25T00:03:00Z logged_at=�
 EVENT dst-control-interval fired scheduled_for=2026-10-25T00:03:00.523Z logged_at=…00:03:00.524Z
 ```
 
-The run then kept going for another 50 fake minutes, straight through the
-transition and past `01:02:00Z` — the instant local 03:02 comes round the
-second time:
+The run then kept going for another 80 fake minutes — through the transition,
+past `01:02:00Z` (the instant local 03:02 comes round the second time), and on
+to `01:23:00Z`:
 
 ```
 EVENT dst-control-interval fired scheduled_for=2026-10-25T00:58:00.523Z
 EVENT dst-control-interval fired scheduled_for=2026-10-25T01:03:00.523Z   ← past the repeat
-dst-target fire count over the whole run: 1
+EVENT dst-control-interval fired scheduled_for=2026-10-25T01:18:00.523Z
+EVENT dst-control-interval fired scheduled_for=2026-10-25T01:23:00.523Z
+final tally: dst-target 1 · dst-control-daily 1 · dst-control-interval 17
 ```
 
 **PASS**: the ambiguous local time fired **exactly once**, at the earlier of
-its two instants, and did not fire again in the repeated hour.
+its two instants, and did not fire again in the repeated hour — with 21 fake
+minutes of margin past the second window.
 
-The 5-minute interval timer riding along fired 13 times at exactly 300 s
-spacing across both transitions (…00:48, 00:53, 00:58, 01:03…) with no gap
-and no doubling — elapsed-time schedules are anchored in UTC and the offset
-change does not touch them, as designed.
+The 5-minute interval timer riding along fired 17 times at exactly 300 s
+spacing straight through the transition (…00:48, 00:53, 00:58, 01:03…) with
+no gap and no doubling: elapsed-time schedules are anchored in UTC and the
+offset change does not touch them, as designed. The gap run's interval timer
+did the same across its transition.
 
 **Clock jumps.** The backward-jump and suspend-oversleep paths are covered by
 the simulated-clock acceptance tests (`scheduler::tests`, mock clock pair),

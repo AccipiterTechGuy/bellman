@@ -1,0 +1,24 @@
+{
+  "gui_data_dir": "/tmp/c11/datadirs/xdg/io.bellman.desktop",
+  "cli_data_dir": "/tmp/c11/datadirs/.bellman",
+  "help_names_cli_default": true,
+  "help_excerpt": [
+    "Data directory: ~/.bellman/ (timers.db, logs/, slots/, timers/; %USERPROFILE%\\.bellman\\ on Windows). The desktop app uses its own per-OS app-data dir instead \u2014 see docs/LOCAL.md.",
+    "          Defaults to `$BELLMAN_DB` when set, else `~/.bellman/timers.db`; the data directory (logs/, slots/, timers/) is the database's parent."
+  ],
+  "cli_store_exists": true,
+  "gui_sees_cli_timer": false,
+  "cli_sees_cli_timer": true,
+  "gui_timers": [
+    "system.prune"
+  ],
+  "cli_timers": [
+    "cli-default-timer"
+  ],
+  "cli_timer_last_fired_after_due": [
+    null
+  ],
+  "cli_log_lines": 1,
+  "cli_fired_events": [],
+  "gui_log_lines_for_cli_timer": []
+}
