@@ -1,3 +1,5 @@
+> ARCHIVED 2026-08-01 — shipped; card bellman-ship1-ship-readiness-fixes-fire-docs-wizard-wake-claim-install-hygiene, run 2026-08-01_0002, merge f7d1ed1.
+
 # SHIP1 — Ship-readiness fixes before strangers arrive
 
 Repo: `~/bellman`. Source: the R9 ship-readiness swarm (crew `2026-08-01_0001`,
