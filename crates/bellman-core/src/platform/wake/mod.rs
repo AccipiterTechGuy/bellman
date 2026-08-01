@@ -17,8 +17,8 @@ mod macos;
 mod windows;
 
 // Decision-tree helpers always compile so unit tests run on every host.
-pub mod windows_decision;
 pub mod macos_decision;
+pub mod windows_decision;
 
 #[cfg(target_os = "linux")]
 pub use linux::LinuxWake;
@@ -114,12 +114,19 @@ pub enum DisabledReason {
     UnsupportedOs,
     NoRtc,
     RtcNotWakeCapable,
-    NoPermission { hint: String },
-    WakeTimersDisabledByPolicy { rail: PowerRail, value: u8 },
+    NoPermission {
+        hint: String,
+    },
+    WakeTimersDisabledByPolicy {
+        rail: PowerRail,
+        value: u8,
+    },
     ResumeTimersUnsupported,
     HelperNotInstalled,
     HelperAwaitingApproval,
-    ProbeFailed { detail: String },
+    ProbeFailed {
+        detail: String,
+    },
     /// Master config toggle is off (`wake.enabled = false`).
     MasterDisabled,
 }
@@ -221,10 +228,7 @@ pub fn status_line(cap: &WakeCapability) -> String {
                 format!("Wake from sleep: ON via {mechanism}")
             } else {
                 let notes: Vec<&str> = caveats.iter().map(|c| c.note()).collect();
-                format!(
-                    "Wake from sleep: ON via {mechanism} ({})",
-                    notes.join("; ")
-                )
+                format!("Wake from sleep: ON via {mechanism} ({})", notes.join("; "))
             }
         }
         WakeCapability::Disabled { reason } => {

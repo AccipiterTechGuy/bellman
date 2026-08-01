@@ -71,8 +71,11 @@ jobs:
       - name: Stage CLI sidecar (required by tauri externalBin at compile time)
         run: bash scripts/stage_cli_sidecar.sh
 
+      - name: Cargo fmt (workspace)
+        # The tree was brought rustfmt-clean in C11; this gate keeps it that way.
+        run: cargo fmt --all --check
+
       - name: Cargo clippy (workspace)
-        # Pre-existing sources are not rustfmt-clean; packaging card does not reformat C1–C9.
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Cargo test (workspace)

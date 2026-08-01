@@ -72,12 +72,10 @@ pub fn read_log_history(logs_dir: &Path) -> std::io::Result<(Vec<EventRecord>, R
             .map(|e| e.path())
             .filter(|p| {
                 p.is_file()
-                    && p.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| {
-                            n.starts_with("events-")
-                                && (n.ends_with(".jsonl") || n.ends_with(".jsonl.gz"))
-                        })
+                    && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                        n.starts_with("events-")
+                            && (n.ends_with(".jsonl") || n.ends_with(".jsonl.gz"))
+                    })
             })
             .collect();
         paths.sort();
@@ -139,7 +137,7 @@ pub fn read_log_history(logs_dir: &Path) -> std::io::Result<(Vec<EventRecord>, R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::{RunState, EventLog, EventLogConfig, EventRecord};
+    use crate::events::{EventLog, EventLogConfig, EventRecord, RunState};
     use std::time::Duration;
     use tempfile::TempDir;
 

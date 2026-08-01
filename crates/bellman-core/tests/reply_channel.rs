@@ -4,8 +4,7 @@
 use bellman_core::events::{read_events, EventRecord};
 use bellman_core::occurrence::{Occurrence, OccurrenceKind};
 use bellman_core::reply::{
-    self, new_anchors, new_deadlines, ReplyEngine, SharedAnchors, SharedDeadlines,
-    REPLY_SCHEMA_V1,
+    self, new_anchors, new_deadlines, ReplyEngine, SharedAnchors, SharedDeadlines, REPLY_SCHEMA_V1,
 };
 use bellman_core::slots::{spawn_watch_thread, WatchConfig};
 use bellman_core::store::{NewTimer, OpenOptions, Store};
@@ -24,8 +23,7 @@ impl E2e {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("slots")).unwrap();
-        let store = Store::open_with(dir.path().join("timers.db"), OpenOptions::default())
-            .unwrap();
+        let store = Store::open_with(dir.path().join("timers.db"), OpenOptions::default()).unwrap();
         Self { dir, store }
     }
 
@@ -69,7 +67,9 @@ impl E2e {
     }
 
     fn status(&self, timer_id: uuid::Uuid) -> serde_json::Value {
-        let folder = TimersTree::new(self.data_dir()).folder_for(timer_id).unwrap();
+        let folder = TimersTree::new(self.data_dir())
+            .folder_for(timer_id)
+            .unwrap();
         let raw = std::fs::read_to_string(folder.join(STATUS_FILE_NAME)).unwrap();
         serde_json::from_str(&raw).unwrap()
     }
@@ -87,7 +87,10 @@ impl E2e {
             if pred(&s) {
                 return s;
             }
-            assert!(Instant::now() < deadline, "timed out waiting for status.json; last: {s}");
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for status.json; last: {s}"
+            );
             std::thread::sleep(Duration::from_millis(50));
         }
     }
@@ -96,13 +99,15 @@ impl E2e {
     /// watcher's publisher tick drains the outbox, so they can lag the
     /// status.json projection by a tick).
     fn log_kinds(&self, run_id: uuid::Uuid) -> (Vec<EventRecord>, Vec<String>) {
-        let (recs, _) = read_events(self.data_dir().join("logs/events.current.jsonl"))
-            .unwrap_or_default();
+        let (recs, _) =
+            read_events(self.data_dir().join("logs/events.current.jsonl")).unwrap_or_default();
         let kinds: Vec<String> = recs
             .iter()
             .filter(|r| r.run_id == Some(run_id))
             .map(|r| r.kind.as_str().to_string())
-            .filter(|k| ["acknowledged", "running", "completed", "failed", "no_ack"].contains(&k.as_str()))
+            .filter(|k| {
+                ["acknowledged", "running", "completed", "failed", "no_ack"].contains(&k.as_str())
+            })
             .collect();
         (recs, kinds)
     }
@@ -150,8 +155,7 @@ fn end_to_end_run_now_reply_mirror_and_fire_notification() {
         ..Default::default()
     };
     let db = e.data_dir().join("timers.db");
-    let outcome = run_now(&mut e.store, &db, timer.id, &opts)
-        .expect("run_now");
+    let outcome = run_now(&mut e.store, &db, timer.id, &opts).expect("run_now");
     let run_id = outcome.run_id;
 
     let stop = spawn_watch_thread(WatchConfig {
@@ -183,7 +187,10 @@ fn end_to_end_run_now_reply_mirror_and_fire_notification() {
     assert_eq!(fire["app_name"], "lightbulb");
     let reply_path = fire["reply_path"].as_str().unwrap().to_string();
     assert!(reply_path.ends_with(&reply_file_name(run_id)));
-    assert!(Path::new(&reply_path).exists(), "reply_path is projected before the notification");
+    assert!(
+        Path::new(&reply_path).exists(),
+        "reply_path is projected before the notification"
+    );
 
     // The app answers through the file named by the notification.
     let reply = serde_json::json!({
@@ -197,7 +204,9 @@ fn end_to_end_run_now_reply_mirror_and_fire_notification() {
     std::fs::write(&reply_path, serde_json::to_vec(&reply).unwrap()).unwrap();
 
     // The watcher folds it in: status.json mirrors completed.
-    let s = e.wait_status(timer.id, Duration::from_secs(5), |s| s["state"] == "completed");
+    let s = e.wait_status(timer.id, Duration::from_secs(5), |s| {
+        s["state"] == "completed"
+    });
     assert_eq!(s["expected_secs"], 5);
     assert_eq!(s["result"]["ok"], true);
 
@@ -240,8 +249,7 @@ fn end_to_end_no_ack_when_the_app_never_answers() {
         ..Default::default()
     };
     let db = e.data_dir().join("timers.db");
-    let outcome = run_now(&mut e.store, &db, timer.id, &opts)
-        .expect("run_now");
+    let outcome = run_now(&mut e.store, &db, timer.id, &opts).expect("run_now");
     let stop = spawn_watch_thread(WatchConfig {
         slots_root: e.data_dir().join("slots"),
         data_dir: e.data_dir().to_path_buf(),
@@ -275,10 +283,16 @@ fn end_to_end_no_ack_when_the_app_never_answers() {
         serde_json::to_vec(&reply).unwrap(),
     )
     .unwrap();
-    let s = e.wait_status(timer.id, Duration::from_secs(5), |s| s["state"] == "completed");
+    let s = e.wait_status(timer.id, Duration::from_secs(5), |s| {
+        s["state"] == "completed"
+    });
     assert_eq!(s["state"], "completed");
 
-    e.wait_log_kinds(outcome.run_id, Duration::from_secs(5), &["no_ack", "completed"]);
+    e.wait_log_kinds(
+        outcome.run_id,
+        Duration::from_secs(5),
+        &["no_ack", "completed"],
+    );
     let (_, kinds) = e.log_kinds(outcome.run_id);
     assert_eq!(kinds, vec!["no_ack", "completed"]);
 
@@ -333,7 +347,9 @@ fn end_to_end_overdue_label_writes_nothing_and_never_fails_without_opt_in() {
         serde_json::to_vec(&reply).unwrap(),
     )
     .unwrap();
-    let s = e.wait_status(timer.id, Duration::from_secs(5), |s| s["state"] == "running");
+    let s = e.wait_status(timer.id, Duration::from_secs(5), |s| {
+        s["state"] == "running"
+    });
     assert_eq!(s["expected_secs"], 1);
     e.wait_log_kinds(run_id, Duration::from_secs(5), &["acknowledged", "running"]);
 
@@ -370,8 +386,14 @@ fn end_to_end_overdue_label_writes_nothing_and_never_fails_without_opt_in() {
         serde_json::to_vec(&done).unwrap(),
     )
     .unwrap();
-    e.wait_status(timer.id, Duration::from_secs(5), |s| s["state"] == "completed");
-    e.wait_log_kinds(run_id, Duration::from_secs(5), &["acknowledged", "running", "completed"]);
+    e.wait_status(timer.id, Duration::from_secs(5), |s| {
+        s["state"] == "completed"
+    });
+    e.wait_log_kinds(
+        run_id,
+        Duration::from_secs(5),
+        &["acknowledged", "running", "completed"],
+    );
     // Exactly ONE new line across the whole log for the completion.
     assert_eq!(count_lines(e.data_dir()), before + 1);
 

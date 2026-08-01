@@ -59,7 +59,11 @@ pub struct ActionExecutor {
 }
 
 impl ActionExecutor {
-    pub fn new(config: ExecutorConfig, notify_sink: Arc<dyn NotifySink>, limiter: Arc<ActionLimiter>) -> Self {
+    pub fn new(
+        config: ExecutorConfig,
+        notify_sink: Arc<dyn NotifySink>,
+        limiter: Arc<ActionLimiter>,
+    ) -> Self {
         Self {
             config,
             notify_sink,
@@ -174,10 +178,7 @@ impl ActionExecutor {
                         ));
                     }
                     match outcome.exit_code {
-                        Some(0) => Ok(format!(
-                            "launch ok exit=0 duration={:?}",
-                            outcome.duration
-                        )),
+                        Some(0) => Ok(format!("launch ok exit=0 duration={:?}", outcome.duration)),
                         None => Err("launch exited by signal".into()),
                         Some(code) => Err(format!(
                             "launch exit={code} output={}",

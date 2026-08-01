@@ -9,12 +9,12 @@
 //! Confirmation is never the write: it is the first valid reply accepted by
 //! the shared ingest path, exactly like the file transport's pickup.
 
-use super::{set_advertised, CLAIM_SCHEMA_V1, OUT_QUEUE_DEPTH};
 #[cfg(unix)]
 use super::LOCK_FILE_NAME;
+use super::{set_advertised, CLAIM_SCHEMA_V1, OUT_QUEUE_DEPTH};
 use crate::reply::quarantine::fnv1a64_hex;
-use crate::reply::{gate, IngestOutcome, ReplyDocument, ReplyEngine, ReplyRejection};
 use crate::reply::MAX_REPLY_FILE_BYTES;
+use crate::reply::{gate, IngestOutcome, ReplyDocument, ReplyEngine, ReplyRejection};
 use crate::store::{Store, Timer, TimerId, TransportMode, TransportProjection};
 use chrono::Utc;
 use serde::Deserialize;
@@ -210,7 +210,9 @@ impl IpcServer {
         let dir = cfg
             .socket_path
             .parent()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "socket path has no parent"))?
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "socket path has no parent")
+            })?
             .to_path_buf();
         std::fs::create_dir_all(&dir)?;
         private_dir(&dir)?;
@@ -223,10 +225,7 @@ impl IpcServer {
             None => {
                 return Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
-                    format!(
-                        "another Bellman IPC server holds {}",
-                        lock_path.display()
-                    ),
+                    format!("another Bellman IPC server holds {}", lock_path.display()),
                 ))
             }
         };
@@ -563,14 +562,10 @@ fn handle_reply_frame(ctx: &ClientCtx, store: &Store, timer: &Timer, bytes: &[u8
             return;
         }
     };
-    match ctx.engine.ingest(
-        store,
-        timer,
-        &doc,
-        &digest,
-        Utc::now(),
-        Instant::now(),
-    ) {
+    match ctx
+        .engine
+        .ingest(store, timer, &doc, &digest, Utc::now(), Instant::now())
+    {
         Ok(IngestOutcome::Applied) => {
             if let Some(run_id) = doc.run_id {
                 if let Err(e) = ctx.engine.project_status(store, timer, &run_id) {
@@ -579,7 +574,9 @@ fn handle_reply_frame(ctx: &ClientCtx, store: &Store, timer: &Timer, bytes: &[u8
             }
         }
         Ok(IngestOutcome::Rejected(reason)) => {
-            if let Err(e) = ctx.engine.log_rejection(store, timer, doc.run_id, reason.as_str())
+            if let Err(e) = ctx
+                .engine
+                .log_rejection(store, timer, doc.run_id, reason.as_str())
             {
                 eprintln!("bellman: ipc rejection log: {e}");
             }
@@ -596,7 +593,11 @@ fn handle_reply_frame(ctx: &ClientCtx, store: &Store, timer: &Timer, bytes: &[u8
 /// `NoClient` immediately.
 fn writer_loop<W: Write>(mut writer: W, rx: Receiver<Vec<u8>>) {
     for frame in rx {
-        if writer.write_all(&frame).and_then(|_| writer.write_all(b"\n")).is_err() {
+        if writer
+            .write_all(&frame)
+            .and_then(|_| writer.write_all(b"\n"))
+            .is_err()
+        {
             break;
         }
     }
@@ -735,14 +736,13 @@ mod win_imp {
         SDDL_REVISION_1,
     };
     use windows::Win32::Security::{
-        GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TokenUser, TOKEN_QUERY,
+        GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY,
         TOKEN_USER,
     };
     use windows::Win32::Storage::FileSystem::{
         ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
         PIPE_ACCESS_DUPLEX,
     };
-    use windows::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
     use windows::Win32::System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
         PIPE_TYPE_BYTE, PIPE_WAIT,
@@ -751,6 +751,7 @@ mod win_imp {
         CreateEventW, CreateMutexW, GetCurrentProcess, OpenProcessToken, ResetEvent,
         WaitForSingleObject,
     };
+    use windows::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -856,7 +857,9 @@ mod win_imp {
                     None,
                 )
                 .map_err(|e| {
-                    io::Error::other(format!("ConvertStringSecurityDescriptorToSecurityDescriptorW: {e}"))
+                    io::Error::other(format!(
+                        "ConvertStringSecurityDescriptorToSecurityDescriptorW: {e}"
+                    ))
                 })?;
                 Ok(Self {
                     sd,

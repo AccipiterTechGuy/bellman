@@ -86,10 +86,7 @@ fn parse_atq_line(line: &str) -> Option<DiscoveredTask> {
 }
 
 fn fetch_at_command(job_id: &str) -> Option<String> {
-    let out = Command::new("at")
-        .args(["-c", job_id])
-        .output()
-        .ok()?;
+    let out = Command::new("at").args(["-c", job_id]).output().ok()?;
     if !out.status.success() {
         return None;
     }

@@ -110,7 +110,9 @@ impl Store {
     /// slot-submit`, which applies slot requests on its own connection —
     /// without any control message.
     pub fn data_version(&self) -> StoreResult<i64> {
-        let v: i64 = self.conn.query_row("PRAGMA data_version", [], |r| r.get(0))?;
+        let v: i64 = self
+            .conn
+            .query_row("PRAGMA data_version", [], |r| r.get(0))?;
         Ok(v)
     }
 
@@ -381,10 +383,7 @@ impl Store {
     pub fn repend_all_active(&mut self) -> StoreResult<u64> {
         let n = self.conn.execute(
             "UPDATE runs SET status = ?1 WHERE status = ?2",
-            params![
-                ClaimStatus::Pending.as_str(),
-                ClaimStatus::Active.as_str(),
-            ],
+            params![ClaimStatus::Pending.as_str(), ClaimStatus::Active.as_str(),],
         )?;
         Ok(n as u64)
     }
@@ -668,13 +667,9 @@ impl Store {
     }
 
     /// Last acked sequence inside an open transaction.
-    pub fn last_acked_sequence_in_tx(
-        tx: &Transaction<'_>,
-        timer_id: TimerId,
-    ) -> StoreResult<u64> {
-        let mut stmt = tx.prepare(
-            "SELECT last_acked_sequence FROM slot_event_acks WHERE timer_id = ?1",
-        )?;
+    pub fn last_acked_sequence_in_tx(tx: &Transaction<'_>, timer_id: TimerId) -> StoreResult<u64> {
+        let mut stmt =
+            tx.prepare("SELECT last_acked_sequence FROM slot_event_acks WHERE timer_id = ?1")?;
         let row: Option<i64> = stmt
             .query_row(params![timer_id.to_string()], |r| r.get(0))
             .optional()?;
@@ -1198,9 +1193,8 @@ fn ack_run_events_tx(
     through_sequence: u64,
 ) -> StoreResult<u64> {
     let current: i64 = {
-        let mut stmt = tx.prepare(
-            "SELECT last_acked_sequence FROM slot_event_acks WHERE timer_id = ?1",
-        )?;
+        let mut stmt =
+            tx.prepare("SELECT last_acked_sequence FROM slot_event_acks WHERE timer_id = ?1")?;
         stmt.query_row(params![timer_id.to_string()], |r| r.get(0))
             .optional()?
             .unwrap_or(0)
@@ -1271,13 +1265,8 @@ fn row_to_timer(r: &rusqlite::Row<'_>) -> rusqlite::Result<Timer> {
     })?;
 
     let jitter_secs = u32::try_from(jitter_secs_i.max(0)).unwrap_or(u32::MAX);
-    let accuracy_slack_secs = accuracy_slack_i.and_then(|n| {
-        if n < 0 {
-            None
-        } else {
-            u32::try_from(n).ok()
-        }
-    });
+    let accuracy_slack_secs =
+        accuracy_slack_i.and_then(|n| if n < 0 { None } else { u32::try_from(n).ok() });
 
     Ok(Timer {
         id,
@@ -1570,7 +1559,9 @@ impl<'c> ImmediateTx<'c> {
     }
 
     pub(crate) fn commit(mut self) -> StoreResult<()> {
-        self.conn.execute_batch("COMMIT").map_err(StoreError::from)?;
+        self.conn
+            .execute_batch("COMMIT")
+            .map_err(StoreError::from)?;
         self.done = true;
         Ok(())
     }
@@ -1655,9 +1646,7 @@ pub(crate) fn claim_run_conn(
 }
 
 pub(crate) fn get_run_conn(conn: &Connection, run_id: Uuid) -> StoreResult<Option<RunClaim>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {RUN_COLS} FROM runs WHERE run_id = ?1"
-    ))?;
+    let mut stmt = conn.prepare(&format!("SELECT {RUN_COLS} FROM runs WHERE run_id = ?1"))?;
     let row = stmt
         .query_row(params![run_id.to_string()], row_to_claim)
         .optional()?;
@@ -1759,9 +1748,7 @@ pub(crate) fn update_run_state_conn(conn: &Connection, row: &RunStateRow) -> Sto
             row.failed_at.map(fmt_dt),
             row.reason.as_deref(),
             row.failure_kind.map(|k| k.as_str()),
-            row.result_json
-                .as_ref()
-                .map(serde_json::Value::to_string),
+            row.result_json.as_ref().map(serde_json::Value::to_string),
             row.result_truncated,
             row.watchdog_deadline.map(fmt_dt),
             row.no_ack_at.map(fmt_dt),
@@ -1775,9 +1762,8 @@ pub(crate) fn update_run_state_conn(conn: &Connection, row: &RunStateRow) -> Sto
 }
 
 pub(crate) fn last_acked_sequence_conn(conn: &Connection, timer_id: TimerId) -> StoreResult<u64> {
-    let mut stmt = conn.prepare(
-        "SELECT last_acked_sequence FROM slot_event_acks WHERE timer_id = ?1",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT last_acked_sequence FROM slot_event_acks WHERE timer_id = ?1")?;
     let row: Option<i64> = stmt
         .query_row(params![timer_id.to_string()], |r| r.get(0))
         .optional()?;
@@ -2041,11 +2027,7 @@ impl Store {
              LIMIT ?3"
         ))?;
         let rows = stmt.query_map(
-            params![
-                TransportProjection::PENDING,
-                fmt_dt(now),
-                limit as i64
-            ],
+            params![TransportProjection::PENDING, fmt_dt(now), limit as i64],
             row_to_projection,
         )?;
         let mut out = Vec::new();

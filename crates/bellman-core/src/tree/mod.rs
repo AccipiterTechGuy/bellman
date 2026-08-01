@@ -449,9 +449,7 @@ impl TimersTree {
             // sharing between live timers must not keep a dead folder
             // alive); otherwise fall back to the suffix-prefix check.
             let alive = match folder_timer_id(&path) {
-                Some(tid) => live_ids
-                    .iter()
-                    .any(|id| id.to_string() == tid),
+                Some(tid) => live_ids.iter().any(|id| id.to_string() == tid),
                 None => live_ids
                     .iter()
                     .any(|id| id.simple().to_string().starts_with(suffix)),
@@ -699,10 +697,7 @@ fn current_unresolved_run(
 ) -> TreeResult<Option<RunClaim>> {
     let owner = store.get_timer_owner(timer.id)?;
     let runs = store.runs_for_timer(timer.id)?;
-    let latest = runs
-        .iter()
-        .rev()
-        .find(|r| Some(r.run_id) != exclude_run);
+    let latest = runs.iter().rev().find(|r| Some(r.run_id) != exclude_run);
     let Some(prev) = latest else {
         return Ok(None);
     };
@@ -785,10 +780,17 @@ pub fn project_fire(
     let claim = {
         let tx = store.transaction()?;
         // Barrier ingest: fold the previous run's final outcome in FIRST.
-        if let Some((prev, crate::reply::BarrierRead::Valid { doc, digest, bytes })) = &barrier
-        {
+        if let Some((prev, crate::reply::BarrierRead::Valid { doc, digest, bytes })) = &barrier {
             let outcome = engine
-                .ingest_as_current(&tx, timer, doc, digest, prev.run_id, now, std::time::Instant::now())
+                .ingest_as_current(
+                    &tx,
+                    timer,
+                    doc,
+                    digest,
+                    prev.run_id,
+                    now,
+                    std::time::Instant::now(),
+                )
                 .map_err(|e| TreeError::Io(e.to_string()))?;
             if let crate::reply::IngestOutcome::Rejected(reason) = outcome {
                 engine
@@ -963,20 +965,17 @@ fn apply_overlap_disposition(
     timer: &Timer,
     claim: RunClaim,
 ) -> crate::store::StoreResult<RunClaim> {
+    use crate::reply::RunDb;
     use crate::store::{
         finish_run_conn, get_run_conn, pending_claims_for_timer_conn, request_cancel_active_conn,
         unfinished_claims_count_conn, OverlapPolicy, RunOutcome,
     };
-    use crate::reply::RunDb;
 
     let skip_reason: Option<&'static str> = match &timer.overlap {
-        OverlapPolicy::Skip => {
-            (unfinished_claims_count_conn(tx, timer.id, claim.run_id)? >= 1).then_some("overlap_skip")
-        }
-        OverlapPolicy::QueueOne => {
-            (unfinished_claims_count_conn(tx, timer.id, claim.run_id)? >= 2)
-                .then_some("overlap_queue_full")
-        }
+        OverlapPolicy::Skip => (unfinished_claims_count_conn(tx, timer.id, claim.run_id)? >= 1)
+            .then_some("overlap_skip"),
+        OverlapPolicy::QueueOne => (unfinished_claims_count_conn(tx, timer.id, claim.run_id)? >= 2)
+            .then_some("overlap_queue_full"),
         OverlapPolicy::Parallel { cap } => {
             (unfinished_claims_count_conn(tx, timer.id, claim.run_id)? >= *cap as usize)
                 .then_some("overlap_parallel_cap")
@@ -985,7 +984,12 @@ fn apply_overlap_disposition(
             for p in pending_claims_for_timer_conn(tx, timer.id, claim.run_id)? {
                 // Loses the race to a worker that already committed — the
                 // worker's truthful outcome stands, no replace event.
-                if finish_run_conn(tx, p.run_id, RunOutcome::WakeFailed, "overlap_replace_before_start")? {
+                if finish_run_conn(
+                    tx,
+                    p.run_id,
+                    RunOutcome::WakeFailed,
+                    "overlap_replace_before_start",
+                )? {
                     tx.enqueue_event(
                         &EventRecord::new(RunState::WakeFailed)
                             .with_timer(timer.id, timer.name.clone())

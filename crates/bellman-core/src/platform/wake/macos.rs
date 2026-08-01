@@ -157,12 +157,19 @@ fn xpc_cancel_mine() -> Result<(), String> {
 
 impl MachineWake for MacosWake {
     fn capability(&self) -> WakeCapability {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).capability.clone()
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .capability
+            .clone()
     }
 
     fn re_probe(&self) -> WakeCapability {
         let cap = probe_live();
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).capability = cap.clone();
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .capability = cap.clone();
         cap
     }
 

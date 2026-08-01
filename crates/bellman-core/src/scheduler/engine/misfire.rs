@@ -4,12 +4,12 @@
 //! near-horizon heap, and the two free helpers the misfire policies rely on:
 //! the grace window for a policy and the walk over missed instants.
 
+use super::types::{DeliveredFire, SchedulerError, SchedulerResult};
 use super::Scheduler;
+use crate::occurrence::OccurrenceKind;
 use crate::scheduler::action::FireAction;
 use crate::scheduler::clock::Clock;
-use crate::occurrence::OccurrenceKind;
 use crate::store::{MisfirePolicy, Timer};
-use super::types::{DeliveredFire, SchedulerError, SchedulerResult};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::cmp::Reverse;
 
@@ -84,14 +84,16 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             let exec_at = apply_execution_jitter(timer.id, nf, timer.jitter_secs);
             if exec_at > now {
                 // Positive jitter still in the future — requeue at exec time.
-                self.heap.push(Reverse(super::types::HeapEntry::fire(exec_at, timer.id)));
+                self.heap
+                    .push(Reverse(super::types::HeapEntry::fire(exec_at, timer.id)));
                 resolved.insert(timer.id);
                 continue;
             }
             // For negative jitter, exec_at can be before nf. handle_due still
             // requires nf <= now to deliver; if only jitter is past, wait for nf.
             if nf > now {
-                self.heap.push(Reverse(super::types::HeapEntry::fire(nf, timer.id)));
+                self.heap
+                    .push(Reverse(super::types::HeapEntry::fire(nf, timer.id)));
                 resolved.insert(timer.id);
                 continue;
             }
@@ -134,8 +136,9 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
             let wall_at = now
                 + chrono::Duration::from_std(remaining)
                     .unwrap_or_else(|_| chrono::Duration::seconds(1));
-            self.heap
-                .push(Reverse(super::types::HeapEntry::deadline(wall_at, run_id, kind)));
+            self.heap.push(Reverse(super::types::HeapEntry::deadline(
+                wall_at, run_id, kind,
+            )));
             return Ok(());
         }
         let Some(row) = self.store.get_run_state(run_id)? else {
@@ -196,8 +199,9 @@ pub(super) fn grace_for(timer: &Timer) -> ChronoDuration {
             | OccurrenceKind::Yearly { .. }
             | OccurrenceKind::Cron { .. } => ChronoDuration::zero(),
         },
-        MisfirePolicy::Coalesce { grace_secs }
-        | MisfirePolicy::CatchUp { grace_secs, .. } => saturating_secs(*grace_secs),
+        MisfirePolicy::Coalesce { grace_secs } | MisfirePolicy::CatchUp { grace_secs, .. } => {
+            saturating_secs(*grace_secs)
+        }
     }
 }
 
@@ -244,9 +248,7 @@ mod tests {
     use crate::scheduler::action::RecordingAction;
     use crate::scheduler::clock::SimulatedClock;
     use crate::scheduler::config::SchedulerConfig;
-    use crate::store::{
-        Action, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy, Store, Timer,
-    };
+    use crate::store::{Action, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy, Store, Timer};
     use chrono::{Duration as ChronoDuration, NaiveTime, TimeZone, Utc};
 
     fn timer_with(kind: OccurrenceKind, misfire: MisfirePolicy) -> Timer {
@@ -281,8 +283,14 @@ mod tests {
         let mut prev = ChronoDuration::zero();
         for secs in [0u64, 1, 3600, 86_400, huge - 1, huge, u64::MAX] {
             let d = saturating_secs(secs);
-            assert!(d >= ChronoDuration::zero(), "{secs}s produced {d} (negative)");
-            assert!(d >= prev, "{secs}s produced {d}, below the previous step {prev}");
+            assert!(
+                d >= ChronoDuration::zero(),
+                "{secs}s produced {d} (negative)"
+            );
+            assert!(
+                d >= prev,
+                "{secs}s produced {d}, below the previous step {prev}"
+            );
             prev = d;
         }
         assert_eq!(saturating_secs(u64::MAX), ChronoDuration::MAX);

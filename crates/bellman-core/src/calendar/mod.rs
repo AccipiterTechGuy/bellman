@@ -19,14 +19,12 @@ mod types;
 #[cfg(test)]
 mod tests;
 
-pub use build::{
-    build_snapshot, snapshot_month_from_store, tasks_from_store, ExpandableTask,
-};
+pub use build::{build_snapshot, snapshot_month_from_store, tasks_from_store, ExpandableTask};
 pub use period::{
     local_date, month_bounds, parse_date, parse_tz, resolve_day_phrase, resolve_month,
     system_tz_name,
 };
-pub use png::{count_dark_pixels, count_pixels_near, svg_to_png, svg_to_pixmap};
+pub use png::{count_dark_pixels, count_pixels_near, svg_to_pixmap, svg_to_png};
 pub use svg::render_svg;
 pub use truth::{
     build_truth_window, OutcomeLabel, TruthBuildOptions, TruthEntry, TruthSource, TruthWindow,

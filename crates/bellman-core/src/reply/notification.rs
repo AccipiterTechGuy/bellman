@@ -129,8 +129,7 @@ pub fn write_fire_notification(slots_root: &Path, n: &FireNotification) -> io::R
     }
     let dir = fires_dir(slots_root);
     let name = fire_notification_name(n.run_id);
-    crate::slots::atomic_write_json(&dir, &name, n)
-        .map_err(|e| io::Error::other(e.to_string()))
+    crate::slots::atomic_write_json(&dir, &name, n).map_err(|e| io::Error::other(e.to_string()))
 }
 
 #[cfg(test)]
@@ -139,9 +138,8 @@ mod tests {
 
     fn sample(slots_root: &Path) -> FireNotification {
         let status_path = slots_root.join("timers/t-bulb/status.json");
-        let reply_path = slots_root.join(
-            "timers/t-bulb/reply-9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08.json",
-        );
+        let reply_path =
+            slots_root.join("timers/t-bulb/reply-9f2c1d77-4e8a-4b02-9f61-77aa3e5c1d08.json");
         std::fs::create_dir_all(status_path.parent().unwrap()).unwrap();
         std::fs::write(&status_path, b"{}").unwrap();
         std::fs::write(&reply_path, b"{}").unwrap();
@@ -184,7 +182,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let n = sample(tmp.path());
         let written = write_fire_notification(tmp.path(), &n).unwrap();
-        assert_eq!(written, fires_dir(tmp.path()).join(fire_notification_name(n.run_id)));
+        assert_eq!(
+            written,
+            fires_dir(tmp.path()).join(fire_notification_name(n.run_id))
+        );
 
         let bytes = std::fs::read(&written).unwrap();
         let parsed: FireNotification = serde_json::from_slice(&bytes).unwrap();
@@ -210,7 +211,9 @@ mod tests {
         std::fs::remove_file(n.reply_path.as_ref().unwrap()).unwrap();
         let err = write_fire_notification(tmp.path(), &n).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
-        assert!(!fires_dir(tmp.path()).join(fire_notification_name(n.run_id)).exists());
+        assert!(!fires_dir(tmp.path())
+            .join(fire_notification_name(n.run_id))
+            .exists());
 
         // Same for a missing status_path.
         n.reply_path = Some(tmp.path().join("timers/t-bulb/reply-back.json"));

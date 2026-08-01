@@ -253,9 +253,7 @@ impl Dispatcher {
         match try_take_lock(&self.inner) {
             Ok(true) => {}
             Ok(false) => {
-                eprintln!(
-                    "bellman: dispatcher lock held by another process; follower stays idle"
-                );
+                eprintln!("bellman: dispatcher lock held by another process; follower stays idle");
                 return;
             }
             Err(e) => {
@@ -455,10 +453,9 @@ fn pump_once(inner: &Arc<Inner>) {
         'timers: for (timer_id, claims) in per_timer {
             for claim in claims {
                 // Skip claims this process already reserved.
-                let reserved = lanes
-                    .per_timer
-                    .get(&timer_id)
-                    .is_some_and(|l| l.queued.contains(&claim.run_id) || l.active.contains(&claim.run_id));
+                let reserved = lanes.per_timer.get(&timer_id).is_some_and(|l| {
+                    l.queued.contains(&claim.run_id) || l.active.contains(&claim.run_id)
+                });
                 if reserved {
                     continue;
                 }
@@ -584,10 +581,7 @@ fn run_job(inner: &Arc<Inner>, store: &mut Store, run_id: Uuid) {
         let lane = lanes.per_timer.entry(timer_id).or_default();
         lane.queued.retain(|id| *id != run_id);
         lane.active.insert(run_id);
-        lane.tokens
-            .entry(run_id)
-            .or_default()
-            .clone()
+        lane.tokens.entry(run_id).or_default().clone()
     };
 
     let timer = match store.get_timer(timer_id) {

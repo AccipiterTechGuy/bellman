@@ -38,8 +38,7 @@ impl Harness {
     fn with_grace(pickup_grace_secs: u64, watchdog_factor: f64) -> Self {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("slots")).unwrap();
-        let store =
-            Store::open_with(dir.path().join("timers.db"), OpenOptions::default()).unwrap();
+        let store = Store::open_with(dir.path().join("timers.db"), OpenOptions::default()).unwrap();
         let engine = ReplyEngine {
             tree: TimersTree::new(dir.path()),
             data_dir: dir.path().to_path_buf(),
@@ -215,8 +214,7 @@ impl Harness {
     /// Drain the outbox through the elected publisher, then read the log.
     fn events(&mut self) -> Vec<EventRecord> {
         let mut publisher =
-            EventPublisher::with_config(EventLogConfig::new(self.dir.path().join("logs")))
-                .unwrap();
+            EventPublisher::with_config(EventLogConfig::new(self.dir.path().join("logs"))).unwrap();
         publisher.publish_cycle(&self.store);
         let (recs, _) = read_events(publisher.current_path()).unwrap();
         recs
@@ -315,7 +313,10 @@ fn full_chain_logged_with_app_timestamps_and_mirrored_at_every_step() {
     let s = h.status(&timer);
     assert_eq!(s["state"], "completed");
     assert_eq!(s["result"]["on_duration_secs"], 13.0);
-    assert_eq!(s["expected_secs"], 15, "accumulated fields are never retracted");
+    assert_eq!(
+        s["expected_secs"], 15,
+        "accumulated fields are never retracted"
+    );
 
     // The log: the app transitions, one run_id, app's own timestamps.
     let evs: Vec<_> = h
@@ -326,14 +327,20 @@ fn full_chain_logged_with_app_timestamps_and_mirrored_at_every_step() {
     let kinds: Vec<RunState> = evs.iter().map(|e| e.kind).collect();
     assert_eq!(
         kinds,
-        vec![RunState::Acknowledged, RunState::Running, RunState::Completed]
+        vec![
+            RunState::Acknowledged,
+            RunState::Running,
+            RunState::Completed
+        ]
     );
     assert_eq!(evs[0].logged_at, at(&h, 2), "acknowledged uses the app ts");
     assert_eq!(evs[1].logged_at, at(&h, 7), "running uses the app ts");
     assert_eq!(evs[2].logged_at, at(&h, 15), "completed uses the app ts");
     assert_eq!(evs[0].detail.as_ref().unwrap()["app_name"], "lightbulb");
     assert_eq!(evs[0].detail.as_ref().unwrap()["expected_secs"], 15);
-    let dur = evs[2].duration_ms.expect("terminal event carries duration_ms");
+    let dur = evs[2]
+        .duration_ms
+        .expect("terminal event carries duration_ms");
     assert!((0..60_000).contains(&dur), "sane monotonic duration: {dur}");
 }
 
@@ -362,7 +369,11 @@ fn missed_transition_is_reconstructed_from_accumulated_timestamps() {
         .into_iter()
         .filter(|e| e.kind != RunState::Fired)
         .collect();
-    assert_eq!(evs[0].logged_at, at(&h, 2), "reconstructed from the file, not the tick");
+    assert_eq!(
+        evs[0].logged_at,
+        at(&h, 2),
+        "reconstructed from the file, not the tick"
+    );
     assert_eq!(evs[1].logged_at, at(&h, 15));
     // Bellman never invents `running`.
     assert!(!kinds.contains(&RunState::Running));
@@ -390,7 +401,11 @@ fn direct_terminal_without_acknowledged_at_logs_no_invented_acknowledged() {
 
     // Same for a direct running with no acknowledged_at: running only.
     let claim2 = h.fire(&timer, 1, at(&h, 20));
-    h.write_reply(&timer, claim2.run_id, h.reply_json(claim2.run_id, "lightbulb", "running"));
+    h.write_reply(
+        &timer,
+        claim2.run_id,
+        h.reply_json(claim2.run_id, "lightbulb", "running"),
+    );
     assert_eq!(h.poll(21).applied, 1);
     assert_eq!(
         h.kinds_for(claim2.run_id)
@@ -460,7 +475,11 @@ fn minimal_from_scratch_reply_works_like_an_edited_stub() {
     let claim = h.fire(&timer, 0, at(&h, 0));
 
     // Identity fields + state, nothing else — no stub edit.
-    h.write_reply(&timer, claim.run_id, h.reply_json(claim.run_id, "lightbulb", "completed"));
+    h.write_reply(
+        &timer,
+        claim.run_id,
+        h.reply_json(claim.run_id, "lightbulb", "completed"),
+    );
     assert_eq!(h.poll(5).applied, 1);
     assert_eq!(h.status(&timer)["state"], "completed");
     assert_eq!(
@@ -473,10 +492,16 @@ fn minimal_from_scratch_reply_works_like_an_edited_stub() {
 
     // And {"state": "completed"} alone is NOT a reply — no run_id.
     let claim2 = h.fire(&timer, 1, at(&h, 10));
-    h.write_reply(&timer, claim2.run_id, serde_json::json!({ "state": "completed" }));
+    h.write_reply(
+        &timer,
+        claim2.run_id,
+        serde_json::json!({ "state": "completed" }),
+    );
     let stats = h.poll(11);
     assert_eq!(stats.rejected, 1);
-    assert!(h.kinds_for(claim2.run_id).contains(&RunState::ReplyRejected));
+    assert!(h
+        .kinds_for(claim2.run_id)
+        .contains(&RunState::ReplyRejected));
     assert_ne!(h.status(&timer)["state"], "completed");
 }
 
@@ -525,7 +550,10 @@ fn deadlines_run_on_the_monotonic_clock_never_the_wall() {
         .engine
         .expire_pickups(&h.store, jumped_wall, mono(&h, 30))
         .unwrap();
-    assert!(transitioned.is_empty(), "a wall jump must never fire a deadline early");
+    assert!(
+        transitioned.is_empty(),
+        "a wall jump must never fire a deadline early"
+    );
     assert_eq!(h.status(&timer)["state"], "fired");
 
     // The monotonic deadline is what expires it.
@@ -600,7 +628,9 @@ fn ack_through_counts_as_pickup_and_revises_no_ack_symmetrically() {
         .on_ack_through(&h.store, &timer, claim.event_sequence, at(&h, 5))
         .unwrap();
     assert!(transitioned);
-    h.engine.project_status(&h.store, &timer, &claim.run_id).unwrap();
+    h.engine
+        .project_status(&h.store, &timer, &claim.run_id)
+        .unwrap();
     assert_eq!(h.status(&timer)["state"], "acknowledged");
     assert_eq!(
         h.kinds_for(claim.run_id)
@@ -636,7 +666,11 @@ fn ack_through_counts_as_pickup_and_revises_no_ack_symmetrically() {
             .collect::<Vec<_>>(),
         // Leading SCH1 overlap skip (the previous claim was unfinished at
         // this fire's commit) — the lifecycle transitions are unaffected.
-        vec![RunState::SkippedMisfire, RunState::NoAck, RunState::Acknowledged],
+        vec![
+            RunState::SkippedMisfire,
+            RunState::NoAck,
+            RunState::Acknowledged
+        ],
         "late cursor revises no_ack to acknowledged — never running/completed"
     );
 }
@@ -705,7 +739,11 @@ fn a_distinct_heartbeat_rearms_and_a_duplicate_never_extends() {
     h.poll(10);
     h.poll(18);
     assert_eq!(h.expire_watchdogs(19), 0);
-    assert_eq!(h.expire_watchdogs(21), 1, "duplicates never extended the original deadline");
+    assert_eq!(
+        h.expire_watchdogs(21),
+        1,
+        "duplicates never extended the original deadline"
+    );
 
     // Rearm, then a distinct heartbeat at t0+15 rearms from THAT receipt.
     let claim2 = h.fire(&timer, 1, at(&h, 100));
@@ -753,7 +791,11 @@ fn watchdog_opt_in_requires_an_estimate_and_false_cancels() {
     h.write_reply(&timer, claim.run_id, doc);
     h.poll(4);
     assert_eq!(h.expire_watchdogs(500), 0);
-    assert_eq!(h.status(&timer)["expected_secs"], 10, "advisory estimate retained");
+    assert_eq!(
+        h.status(&timer)["expected_secs"],
+        10,
+        "advisory estimate retained"
+    );
 }
 
 #[test]
@@ -830,7 +872,11 @@ fn terminal_report_never_moves_backwards_but_provisional_states_may() {
     h.poll(3);
 
     // running after an app-authored completed → rejected.
-    h.write_reply(&timer, claim.run_id, h.reply_json(claim.run_id, "lightbulb", "running"));
+    h.write_reply(
+        &timer,
+        claim.run_id,
+        h.reply_json(claim.run_id, "lightbulb", "running"),
+    );
     assert_eq!(h.poll(4).rejected, 1);
     let evs = h.events_for(claim.run_id);
     assert!(evs.iter().any(|e| e.kind == RunState::ReplyRejected));
@@ -882,13 +928,21 @@ fn wrong_app_name_and_reserved_states_are_rejected_and_quarantined() {
     let claim = h.fire(&timer, 0, at(&h, 0));
 
     // A different app is rejected (no first-responder claim on a shared file).
-    h.write_reply(&timer, claim.run_id, h.reply_json(claim.run_id, "intruder", "running"));
+    h.write_reply(
+        &timer,
+        claim.run_id,
+        h.reply_json(claim.run_id, "intruder", "running"),
+    );
     assert_eq!(h.poll(1).rejected, 1);
     assert_eq!(h.status(&timer)["state"], "fired");
 
     // Reserved states an app may never write.
     for reserved in ["fired", "no_ack", "cancelled"] {
-        h.write_reply(&timer, claim.run_id, h.reply_json(claim.run_id, "lightbulb", reserved));
+        h.write_reply(
+            &timer,
+            claim.run_id,
+            h.reply_json(claim.run_id, "lightbulb", reserved),
+        );
         assert_eq!(h.poll(2).rejected, 1, "{reserved} must be rejected");
     }
     let rejected: Vec<_> = h
@@ -916,7 +970,11 @@ fn an_unknown_run_id_is_rejected_never_confused_with_superseded() {
     let claim = h.fire(&timer, 0, at(&h, 0));
 
     let fabricated = Uuid::new_v4();
-    h.write_reply_named(&timer, fabricated, h.reply_json(fabricated, "lightbulb", "completed"));
+    h.write_reply_named(
+        &timer,
+        fabricated,
+        h.reply_json(fabricated, "lightbulb", "completed"),
+    );
     assert_eq!(h.poll(1).rejected, 1);
     let kinds = h.kinds_for(fabricated);
     assert_eq!(kinds, vec![RunState::ReplyRejected]);
@@ -942,7 +1000,10 @@ fn a_document_naming_a_different_run_than_its_filename_is_rejected() {
     let mismatched = h.reply_bytes(&timer, claim_b.run_id);
 
     let stats = h.poll(150);
-    assert_eq!(stats.rejected, 1, "filename/document identity mismatch is a rejection");
+    assert_eq!(
+        stats.rejected, 1,
+        "filename/document identity mismatch is a rejection"
+    );
     assert_eq!(stats.superseded, 0);
     assert!(
         h.reply_path(&timer, claim_b.run_id).exists(),
@@ -992,7 +1053,9 @@ fn a_stub_shaped_forgery_is_rejected_not_ignored() {
     assert_eq!(stats.rejected, 0, "…once per distinct content");
     let evs = h.events_for(claim.run_id);
     assert_eq!(
-        evs.iter().filter(|e| e.kind == RunState::ReplyRejected).count(),
+        evs.iter()
+            .filter(|e| e.kind == RunState::ReplyRejected)
+            .count(),
         1
     );
 
@@ -1039,7 +1102,11 @@ fn previous_run_reply_is_superseded_stale_file_deleted_current_untouched() {
 
     // The slow app writes again (its process still alive): superseded again,
     // deleted again — never applied.
-    h.write_reply(&timer, claim_a.run_id, h.reply_json(claim_a.run_id, "lightbulb", "failed"));
+    h.write_reply(
+        &timer,
+        claim_a.run_id,
+        h.reply_json(claim_a.run_id, "lightbulb", "failed"),
+    );
     let stats = h.poll(160);
     assert_eq!(stats.superseded, 1);
     assert!(!h.reply_path(&timer, claim_a.run_id).exists());
@@ -1092,7 +1159,10 @@ fn a_crash_between_commit_and_projection_is_repaired_by_the_reconciler() {
 
     // The database is the truth; the reconciler re-projects everything.
     let repaired = h.reconcile();
-    assert!(repaired >= 2, "status + stub (+ notification) repaired, got {repaired}");
+    assert!(
+        repaired >= 2,
+        "status + stub (+ notification) repaired, got {repaired}"
+    );
     let s = h.status(&timer);
     assert_eq!(s["state"], "fired");
     assert_eq!(s["run_id"], claim.run_id.to_string());
@@ -1182,7 +1252,10 @@ fn a_mid_write_file_is_not_quarantined_but_stable_garbage_is() {
     let path = h.reply_path(&timer, claim.run_id);
     std::fs::write(&path, &full[..full.len() / 2]).unwrap();
     let stats = h.poll(1);
-    assert_eq!(stats.rejected, 0, "first sight of partial bytes only starts the debounce");
+    assert_eq!(
+        stats.rejected, 0,
+        "first sight of partial bytes only starts the debounce"
+    );
     std::fs::write(&path, &full).unwrap();
     assert_eq!(h.poll(2).applied, 1);
     assert_eq!(h.status(&timer)["state"], "completed");
@@ -1196,11 +1269,18 @@ fn a_mid_write_file_is_not_quarantined_but_stable_garbage_is() {
     assert_eq!(stats.rejected, 0, "still within the debounce window");
     let stats = h.poll(102);
     assert_eq!(stats.rejected, 1, "stable invalid bytes past the debounce");
-    assert!(path2.exists(), "quarantine COPIES — the live file is left in place");
+    assert!(
+        path2.exists(),
+        "quarantine COPIES — the live file is left in place"
+    );
     assert_eq!(std::fs::read(&path2).unwrap(), b"{ not json");
 
     // The app may still overwrite with a valid reply — and it is ingested.
-    h.write_reply(&timer, claim2.run_id, h.reply_json(claim2.run_id, "lightbulb", "completed"));
+    h.write_reply(
+        &timer,
+        claim2.run_id,
+        h.reply_json(claim2.run_id, "lightbulb", "completed"),
+    );
     assert_eq!(h.poll(103).applied, 1);
     assert_eq!(h.status(&timer)["state"], "completed");
 }
@@ -1269,7 +1349,10 @@ fn a_symlinked_reply_path_is_rejected_without_following() {
             "a symlink is never followed — no payload may be copied"
         );
     }
-    assert!(h.poll(2).rejected == 0, "one bounded rejection, not a stream");
+    assert!(
+        h.poll(2).rejected == 0,
+        "one bounded rejection, not a stream"
+    );
 }
 
 #[test]
@@ -1286,7 +1369,10 @@ fn duration_uses_bellmans_clock_never_the_apps() {
     let evs = h.events_for(claim.run_id);
     let completed = evs.iter().find(|e| e.kind == RunState::Completed).unwrap();
     let dur = completed.duration_ms.unwrap();
-    assert!((0..60_000).contains(&dur), "no negative or absurd duration: {dur}");
+    assert!(
+        (0..60_000).contains(&dur),
+        "no negative or absurd duration: {dur}"
+    );
 
     // After a restart the monotonic anchor is gone: wall-clock fallback,
     // marked as the estimate it is.
@@ -1300,7 +1386,8 @@ fn duration_uses_bellmans_clock_never_the_apps() {
     let evs = h.events_for(claim2.run_id);
     let completed = evs.iter().find(|e| e.kind == RunState::Completed).unwrap();
     assert_eq!(
-        completed.detail.as_ref().unwrap()["duration_source"], "wall_clock",
+        completed.detail.as_ref().unwrap()["duration_source"],
+        "wall_clock",
         "the fallback is identifiable"
     );
     assert!(completed.duration_ms.unwrap() >= 0);
@@ -1318,7 +1405,10 @@ fn a_reply_is_data_never_a_command() {
     doc["result"] = serde_json::json!({ "path": marker, "summary": "stored elsewhere" });
     h.write_reply(&timer, claim.run_id, doc);
     h.poll(1);
-    assert!(!marker.exists(), "R9: nothing a reply carries is ever executed");
+    assert!(
+        !marker.exists(),
+        "R9: nothing a reply carries is ever executed"
+    );
     assert_eq!(h.status(&timer)["state"], "completed");
 }
 
@@ -1355,9 +1445,17 @@ fn an_owner_change_applies_at_the_next_firing() {
     h.store.set_timer_owner(timer.id, "new-owner").unwrap();
 
     // The new owner cannot answer this run; the original can.
-    h.write_reply(&timer, claim.run_id, h.reply_json(claim.run_id, "new-owner", "completed"));
+    h.write_reply(
+        &timer,
+        claim.run_id,
+        h.reply_json(claim.run_id, "new-owner", "completed"),
+    );
     assert_eq!(h.poll(1).rejected, 1);
-    h.write_reply(&timer, claim.run_id, h.reply_json(claim.run_id, "lightbulb", "completed"));
+    h.write_reply(
+        &timer,
+        claim.run_id,
+        h.reply_json(claim.run_id, "lightbulb", "completed"),
+    );
     assert_eq!(h.poll(2).applied, 1);
 
     // The next firing's stub carries only the new owner.
@@ -1418,8 +1516,7 @@ fn a_failed_transition_commits_nothing_atomically() {
 
     // A second connection holds the write lock: the transition (outbox row +
     // lifecycle update) cannot commit, and must leave NO partial state.
-    let blocker = Store::open_with(h.dir.path().join("timers.db"), OpenOptions::default())
-        .unwrap();
+    let blocker = Store::open_with(h.dir.path().join("timers.db"), OpenOptions::default()).unwrap();
     let _hold = blocker.immediate_tx().unwrap();
 
     let doc: ReplyDocument =
@@ -1435,7 +1532,11 @@ fn a_failed_transition_commits_nothing_atomically() {
         0,
         "no orphaned outbox row — the rollback was total"
     );
-    assert_eq!(h.row(claim.run_id).state, "fired", "no partial lifecycle update");
+    assert_eq!(
+        h.row(claim.run_id).state,
+        "fired",
+        "no partial lifecycle update"
+    );
 
     // After the blocker: the same transition succeeds and logs exactly once.
     let outcome = h
@@ -1472,7 +1573,8 @@ fn the_barrier_quarantines_a_forged_run_id_instead_of_ingesting_it() {
         "the forged document was rejected"
     );
     assert!(
-        !evs.iter().any(|e| e.kind == RunState::Completed && e.run_id == Some(fabricated)),
+        !evs.iter()
+            .any(|e| e.kind == RunState::Completed && e.run_id == Some(fabricated)),
         "never ingested"
     );
     let bad = super::quarantine::quarantine_dir(h.engine.tree.root());
@@ -1481,7 +1583,11 @@ fn the_barrier_quarantines_a_forged_run_id_instead_of_ingesting_it() {
         .flatten()
         .any(|e| e.file_name().to_string_lossy().ends_with(".payload"));
     assert!(has_payload, "the forged bytes were quarantined (copy)");
-    assert_eq!(h.status(&timer)["state"], "fired", "the new run proceeds untouched");
+    assert_eq!(
+        h.status(&timer)["state"],
+        "fired",
+        "the new run proceeds untouched"
+    );
 }
 
 #[test]
@@ -1508,7 +1614,10 @@ fn armed_deadlines_produce_heap_hints_for_the_scheduler() {
     assert_eq!(hints[0].1, DeadlineKind::Watchdog);
     let expected_wall = at(&h, 1) + chrono::Duration::seconds(20);
     let delta = (hints[0].2 - expected_wall).num_seconds().abs();
-    assert!(delta <= 1, "wall estimate matches receipt + expected × factor");
+    assert!(
+        delta <= 1,
+        "wall estimate matches receipt + expected × factor"
+    );
 }
 
 /// IK5: every accepted status projection fires exactly one invalidation with

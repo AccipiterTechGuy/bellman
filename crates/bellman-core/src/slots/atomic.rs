@@ -165,8 +165,7 @@ pub fn refuse_symlink(path: &Path) -> SlotResult<()> {
 
 /// True when `path` is a regular file (not a symlink).
 pub fn is_regular_file(path: &Path) -> bool {
-    fs::symlink_metadata(path)
-        .is_ok_and(|m| m.file_type().is_file())
+    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file())
 }
 
 /// Open options used when creating free stubs (exclusive create when possible).

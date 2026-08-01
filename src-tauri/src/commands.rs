@@ -156,7 +156,10 @@ fn collect_run_states(
     };
     let mut out = Vec::new();
     for timer in &timers {
-        if let Some(row) = store.current_run_state(timer.id).map_err(|e| e.to_string())? {
+        if let Some(row) = store
+            .current_run_state(timer.id)
+            .map_err(|e| e.to_string())?
+        {
             out.push(RunStateDto::from_row(timer, &row));
         }
     }
@@ -315,8 +318,7 @@ fn do_list_calendar_truth(
     // Current + retained archives (rotation must not erase Week/Month truth).
     let logs_dir = state.data_dir.join("logs");
     let events = {
-        let (evs, _) =
-            bellman_core::read_log_history(&logs_dir).map_err(|e| e.to_string())?;
+        let (evs, _) = bellman_core::read_log_history(&logs_dir).map_err(|e| e.to_string())?;
         evs
     };
 
@@ -679,9 +681,10 @@ pub fn dependency_check() -> DependencyCheckDto {
             hint: None,
         });
         // AppIndicator: best-effort via presence of the shared lib.
-        let indicator = std::path::Path::new("/usr/lib/x86_64-linux-gnu/libayatana-appindicator3.so.1")
-            .exists()
-            || std::path::Path::new("/usr/lib/libayatana-appindicator3.so.1").exists();
+        let indicator =
+            std::path::Path::new("/usr/lib/x86_64-linux-gnu/libayatana-appindicator3.so.1")
+                .exists()
+                || std::path::Path::new("/usr/lib/libayatana-appindicator3.so.1").exists();
         items.push(DepItemDto {
             name: "tray AppIndicator".into(),
             ok: indicator,
@@ -777,7 +780,10 @@ pub fn create_timer(
     do_create_timer(&state, input)
 }
 
-pub(crate) fn do_create_timer(state: &AppState, input: CreateTimerInput) -> Result<TimerDto, String> {
+pub(crate) fn do_create_timer(
+    state: &AppState,
+    input: CreateTimerInput,
+) -> Result<TimerDto, String> {
     let cfg = state.config.lock().clone();
     let new = input.into_new_timer_with_config(&cfg)?;
     let timer = {
@@ -800,12 +806,7 @@ pub(crate) fn do_create_timer(state: &AppState, input: CreateTimerInput) -> Resu
     // IK2: project the per-timer folder (README + timer.json). View-only.
     {
         let tree = bellman_core::TimersTree::new(&state.data_dir);
-        let owner = state
-            .store
-            .lock()
-            .get_timer_owner(timer.id)
-            .ok()
-            .flatten();
+        let owner = state.store.lock().get_timer_owner(timer.id).ok().flatten();
         if let Err(e) = tree.create_for_timer(&timer, owner.as_deref()) {
             log::warn!("bellman: timer folder projection failed: {e}");
         }
@@ -982,7 +983,11 @@ fn preview_fires_from_occurrence(
         .with_timezone(&occ.timezone())
         .naive_utc()
         .and_local_timezone(occ.timezone())
-        .single().map_or_else(|| Utc::now().with_timezone(&occ.timezone()), |d| d.with_timezone(&occ.timezone()));
+        .single()
+        .map_or_else(
+            || Utc::now().with_timezone(&occ.timezone()),
+            |d| d.with_timezone(&occ.timezone()),
+        );
     occ.preview(after, n)
         .into_iter()
         .map(|local_dt| {
@@ -1047,12 +1052,12 @@ fn apply_autostart(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bellman_core::NotifySink;
     use crate::config::Config;
-    use tempfile::tempdir;
+    use bellman_core::NotifySink;
     use std::fs;
-    use std::sync::Arc;
     use std::io::Read;
+    use std::sync::Arc;
+    use tempfile::tempdir;
 
     struct DummySink;
     impl NotifySink for DummySink {
@@ -1126,8 +1131,14 @@ mod tests {
         let mut content = String::new();
         file.read_to_string(&mut content).unwrap();
 
-        assert!(content.contains("\"registered\""), "should contain registered event");
-        assert!(content.contains("\"gui create\""), "should contain gui create message");
+        assert!(
+            content.contains("\"registered\""),
+            "should contain registered event"
+        );
+        assert!(
+            content.contains("\"gui create\""),
+            "should contain gui create message"
+        );
         assert!(content.contains(&dto.id), "should contain timer id");
         assert!(content.contains(&dto.name), "should contain timer name");
     }
@@ -1240,7 +1251,7 @@ mod tests {
     /// Production path: archive JSONL + claim ledger through list_calendar_truth.
     #[test]
     fn list_calendar_truth_merges_archive_and_ledger() {
-        use bellman_core::events::{RunState, EventRecord};
+        use bellman_core::events::{EventRecord, RunState};
         use bellman_core::store::NewTimer;
         use bellman_core::{Occurrence, OccurrenceKind, OutcomeLabel, TruthSource};
         use chrono::{NaiveTime, TimeZone, Utc};
@@ -1354,7 +1365,13 @@ mod run_states_tests {
 
     fn make_state(data_dir: std::path::PathBuf) -> AppState {
         let store = bellman_core::open_store(&data_dir.join("timers.db")).unwrap();
-        AppState::new(store, data_dir, Config::default(), false, Arc::new(DummySink))
+        AppState::new(
+            store,
+            data_dir,
+            Config::default(),
+            false,
+            Arc::new(DummySink),
+        )
     }
 
     fn add_timer(state: &AppState, name: &str, owner: Option<&str>) -> bellman_core::Timer {
@@ -1373,7 +1390,11 @@ mod run_states_tests {
         timer
     }
 
-    fn fire_run(state: &AppState, timer: &bellman_core::Timer, app: &str) -> bellman_core::RunStateRow {
+    fn fire_run(
+        state: &AppState,
+        timer: &bellman_core::Timer,
+        app: &str,
+    ) -> bellman_core::RunStateRow {
         let mut store = state.store.lock();
         let claim = store.claim_run(timer.id, Utc::now()).unwrap();
         let row = bellman_core::RunStateRow::fired(

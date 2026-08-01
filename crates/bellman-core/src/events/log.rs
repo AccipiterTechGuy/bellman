@@ -173,10 +173,7 @@ impl EventLog {
     pub fn open(config: EventLogConfig) -> EventLogResult<Self> {
         fs::create_dir_all(&config.logs_dir)?;
         fs::create_dir_all(config.logs_dir.join("archive"))?;
-        let mut log = Self {
-            config,
-            file: None,
-        };
+        let mut log = Self { config, file: None };
         log.ensure_open()?;
         Ok(log)
     }
@@ -502,12 +499,9 @@ impl EventLog {
 /// live current file, never temps).
 fn is_archive_file(path: &Path) -> bool {
     path.is_file()
-        && path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| {
-                n.starts_with("events-") && (n.ends_with(".jsonl") || n.ends_with(".jsonl.gz"))
-            })
+        && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+            n.starts_with("events-") && (n.ends_with(".jsonl") || n.ends_with(".jsonl.gz"))
+        })
 }
 
 /// Archive files with (path, mtime, len).
@@ -540,7 +534,8 @@ pub(crate) fn gz_path_for(plain: &Path) -> PathBuf {
 pub(crate) fn gzip_file(src: &Path, dst: &Path) -> EventLogResult<()> {
     let input = File::open(src)?;
     let output = File::create(dst)?;
-    let mut encoder = flate2::write::GzEncoder::new(BufWriter::new(output), flate2::Compression::default());
+    let mut encoder =
+        flate2::write::GzEncoder::new(BufWriter::new(output), flate2::Compression::default());
     io::copy(&mut BufReader::new(input), &mut encoder)?;
     let writer = encoder.finish()?;
     let file = writer
@@ -551,7 +546,10 @@ pub(crate) fn gzip_file(src: &Path, dst: &Path) -> EventLogResult<()> {
 }
 
 /// Build `archive_dir/events-YYYY-Www.jsonl`, adding `.N` before `.jsonl` on clash.
-pub(crate) fn unique_archive_path(archive_dir: &Path, now: chrono::DateTime<Utc>) -> EventLogResult<PathBuf> {
+pub(crate) fn unique_archive_path(
+    archive_dir: &Path,
+    now: chrono::DateTime<Utc>,
+) -> EventLogResult<PathBuf> {
     let iso = now.iso_week();
     let base = format!("events-{}-W{:02}", iso.year(), iso.week());
     let candidate = archive_dir.join(format!("{base}.jsonl"));

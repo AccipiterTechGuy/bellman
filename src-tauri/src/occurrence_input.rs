@@ -60,8 +60,6 @@ pub struct OccurrenceInput {
     pub invalid_monthday: Option<InvalidMonthDayPolicy>,
 }
 
-
-
 impl OccurrenceInput {
     /// Build a fresh `Occurrence` honoring all policies. Validates early so
     /// the dialog rejects malformed input before it hits the store.
@@ -744,7 +742,10 @@ mod tests {
         );
         let msg = w.unwrap();
         assert!(
-            msg.contains("gap") || msg.contains("DST") || msg.contains("not exist") || msg.contains("skipped"),
+            msg.contains("gap")
+                || msg.contains("DST")
+                || msg.contains("not exist")
+                || msg.contains("skipped"),
             "warning should mention DST / gap / non-existence / skipped; got: {msg}"
         );
         // Cross-check that the schedule actually resolves to a valid
@@ -753,14 +754,15 @@ mod tests {
         // the preview-from-now call returns a non-empty list; today
         // (2026-07-27) the 2026-03-29 03:30 time is already in the past.
         let tz = chrono_tz::Tz::from_str("Europe/Helsinki").unwrap();
-        let at_future = NaiveDateTime::parse_from_str("2027-03-28T03:30:00", "%Y-%m-%dT%H:%M:%S").unwrap();
-        let preview = Occurrence::new(
-            OccurrenceKind::Once { at: at_future },
-            "Europe/Helsinki",
-        )
-        .unwrap()
-        .preview(chrono::Utc::now().with_timezone(&tz), 1);
-        assert!(!preview.is_empty(), "core preview returned nothing for in-gap 03:30 (future date)");
+        let at_future =
+            NaiveDateTime::parse_from_str("2027-03-28T03:30:00", "%Y-%m-%dT%H:%M:%S").unwrap();
+        let preview = Occurrence::new(OccurrenceKind::Once { at: at_future }, "Europe/Helsinki")
+            .unwrap()
+            .preview(chrono::Utc::now().with_timezone(&tz), 1);
+        assert!(
+            !preview.is_empty(),
+            "core preview returned nothing for in-gap 03:30 (future date)"
+        );
         // Resolves to the first valid second after the gap, 04:00:00.
         let first = preview[0];
         assert_eq!(

@@ -99,9 +99,7 @@ fn occurrence_expr(kind: &OccurrenceKind, tz: &str) -> String {
 
 fn action_command(action: &Action) -> String {
     match action {
-        Action::Launch {
-            command, args, ..
-        } => {
+        Action::Launch { command, args, .. } => {
             if args.is_empty() {
                 command.clone()
             } else {

@@ -151,9 +151,7 @@ pub fn gather(opt_in: bool, slots_dir: &Path) -> DemoInfoDto {
     DemoInfoDto {
         opt_in,
         available: demo_dir.is_some(),
-        command: demo_dir
-            .as_ref()
-            .map(|dir| display_command(dir, slots_dir)),
+        command: demo_dir.as_ref().map(|dir| display_command(dir, slots_dir)),
         demo_dir: demo_dir.map(|dir| dir.display().to_string()),
         can_launch,
         python3_present,
@@ -173,8 +171,8 @@ pub fn gather(opt_in: bool, slots_dir: &Path) -> DemoInfoDto {
 /// closing or killing Bellman leaves the demo running — it is a separate
 /// application and behaves like one.
 pub fn launch_demo(slots_dir: &Path) -> Result<u32, String> {
-    let demo_dir = resolve_demo_dir()
-        .ok_or_else(|| "demo files not found on this machine".to_string())?;
+    let demo_dir =
+        resolve_demo_dir().ok_or_else(|| "demo files not found on this machine".to_string())?;
     let demo_py = demo_dir.join(DEMO_PY_REL);
     let (python3_present, tkinter_present) = probe_python_tkinter(Path::new("python3"));
     if !python3_present {
@@ -270,7 +268,10 @@ mod tests {
         assert_eq!(resolve_demo_dir_in(&[a.clone(), b.clone()]), None);
         // Only the dev tree has it → dev wins.
         write_demo(&b);
-        assert_eq!(resolve_demo_dir_in(&[a.clone(), b.clone()]), Some(b.clone()));
+        assert_eq!(
+            resolve_demo_dir_in(&[a.clone(), b.clone()]),
+            Some(b.clone())
+        );
         // Installed location appears → it wins over the source tree.
         write_demo(&a);
         assert_eq!(resolve_demo_dir_in(&[a.clone(), b.clone()]), Some(a));

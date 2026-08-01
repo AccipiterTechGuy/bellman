@@ -207,7 +207,10 @@ fn malformed_input_quarantined_to_bad() {
     let _ = name;
     service.poll(&mut store).unwrap();
     let bad = service.layout().bad_dir();
-    let entries: Vec<_> = fs::read_dir(&bad).unwrap().filter_map(std::result::Result::ok).collect();
+    let entries: Vec<_> = fs::read_dir(&bad)
+        .unwrap()
+        .filter_map(std::result::Result::ok)
+        .collect();
     assert!(
         !entries.is_empty(),
         "expected quarantine files in bad/, got none"
@@ -269,7 +272,10 @@ fn symlink_input_quarantined() {
         fs::symlink_metadata(&link).is_err(),
         "live-target symlink must leave free/"
     );
-    assert!(outside.exists(), "quarantine must not delete the link target");
+    assert!(
+        outside.exists(),
+        "quarantine must not delete the link target"
+    );
     let bad_entries: Vec<_> = fs::read_dir(service.layout().bad_dir())
         .unwrap()
         .filter_map(std::result::Result::ok)
@@ -302,7 +308,10 @@ fn dangling_symlink_input_quarantined() {
         return;
     }
     assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
-    assert!(!link.exists(), "precondition: dangling (exists follows target)");
+    assert!(
+        !link.exists(),
+        "precondition: dangling (exists follows target)"
+    );
 
     service.poll(&mut store).unwrap();
 
@@ -573,8 +582,7 @@ fn concurrent_duplicate_request_id_single_side_effect() {
             .iter()
             .find(|p| {
                 let b = read_capped(p, DEFAULT_MAX_READ_BYTES).unwrap();
-                serde_json::from_slice::<SlotRequest>(&b)
-                    .is_ok_and(|r| r.is_free_stub())
+                serde_json::from_slice::<SlotRequest>(&b).is_ok_and(|r| r.is_free_stub())
             })
             .unwrap()
             .clone();
@@ -703,9 +711,14 @@ fn unacked_events_drain_via_ack_through() {
     let m1id = m1.request_id.clone().unwrap();
     service.publish(m1).unwrap();
     service.poll(&mut store).unwrap();
-    let r1: SlotResponse =
-        serde_json::from_str(&store.get_slot_request(&m1id).unwrap().unwrap().response_json)
-            .unwrap();
+    let r1: SlotResponse = serde_json::from_str(
+        &store
+            .get_slot_request(&m1id)
+            .unwrap()
+            .unwrap()
+            .response_json,
+    )
+    .unwrap();
     assert_eq!(r1.events.len(), 2);
     assert_eq!(r1.events[0].event_sequence, 1);
     assert_eq!(r1.events[1].event_sequence, 2);
@@ -728,9 +741,14 @@ fn unacked_events_drain_via_ack_through() {
     let m2id = m2.request_id.clone().unwrap();
     service.publish(m2).unwrap();
     service.poll(&mut store).unwrap();
-    let r2: SlotResponse =
-        serde_json::from_str(&store.get_slot_request(&m2id).unwrap().unwrap().response_json)
-            .unwrap();
+    let r2: SlotResponse = serde_json::from_str(
+        &store
+            .get_slot_request(&m2id)
+            .unwrap()
+            .unwrap()
+            .response_json,
+    )
+    .unwrap();
     assert_eq!(r2.events.len(), 2);
     assert_eq!(r2.events[0].event_sequence, 3);
     assert_eq!(r2.events[1].event_sequence, 4);
@@ -864,7 +882,9 @@ fn slot_id_path_traversal_quarantined_no_escape_write() {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     assert!(
-        bad.iter().any(|n| n.contains(&format!("slot-{reserved}")) || n.contains(&name) || n.ends_with(".err.json")),
+        bad.iter().any(|n| n.contains(&format!("slot-{reserved}"))
+            || n.contains(&name)
+            || n.ends_with(".err.json")),
         "expected quarantine in bad/, got {bad:?}"
     );
 }
@@ -1056,7 +1076,13 @@ fn watcher_claimed_slot_add_fires_running_scheduler() {
     let ext_service = SlotService::open(&slots_root, SlotConfig::default()).unwrap();
     let t_publish = Utc::now();
     ext_service
-        .publish(make_add_request("app-a", "watched", "interval", None, Some(1)))
+        .publish(make_add_request(
+            "app-a",
+            "watched",
+            "interval",
+            None,
+            Some(1),
+        ))
         .unwrap();
 
     // Wait past two intervals, then shut everything down.

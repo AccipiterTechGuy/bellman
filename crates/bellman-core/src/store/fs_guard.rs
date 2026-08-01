@@ -54,8 +54,20 @@ pub fn is_network_fs_type(fs_type: &str) -> bool {
     }
     matches!(
         lower.as_str(),
-        "nfs" | "nfs4" | "cifs" | "smb" | "smb3" | "smbfs" | "afs" | "ceph" | "lustre" | "9p"
-            | "afpfs" | "webdav" | "remote" | "network"
+        "nfs"
+            | "nfs4"
+            | "cifs"
+            | "smb"
+            | "smb3"
+            | "smbfs"
+            | "afs"
+            | "ceph"
+            | "lustre"
+            | "9p"
+            | "afpfs"
+            | "webdav"
+            | "remote"
+            | "network"
     )
 }
 
@@ -187,7 +199,7 @@ fn path_is_under(path: &Path, mount: &Path) -> bool {
 /// macOS: `statfs` via libc (always linked on Darwin).
 #[cfg(target_os = "macos")]
 fn detect_fs_type_macos(path: &Path) -> Option<String> {
-    use std::ffi::{CString, CStr};
+    use std::ffi::{CStr, CString};
     use std::mem::MaybeUninit;
     use std::os::unix::ffi::OsStrExt;
 
@@ -293,9 +305,25 @@ mod tests {
     #[test]
     fn classifies_known_network_types() {
         for t in [
-            "nfs", "nfs4", "cifs", "smb", "smb3", "smbfs", "fuse.sshfs", "fuse.rclone",
-            "fuse.davfs2", "afs", "ceph", "lustre", "9p", "afpfs", "webdav", "remote",
-            "network", "NFS", "CIFS",
+            "nfs",
+            "nfs4",
+            "cifs",
+            "smb",
+            "smb3",
+            "smbfs",
+            "fuse.sshfs",
+            "fuse.rclone",
+            "fuse.davfs2",
+            "afs",
+            "ceph",
+            "lustre",
+            "9p",
+            "afpfs",
+            "webdav",
+            "remote",
+            "network",
+            "NFS",
+            "CIFS",
         ] {
             assert!(is_network_fs_type(t), "{t} should be network");
         }
@@ -303,7 +331,10 @@ mod tests {
 
     #[test]
     fn classifies_local_types() {
-        for t in ["ext4", "xfs", "btrfs", "zfs", "apfs", "hfs", "ntfs", "exfat", "tmpfs", "overlay", "local"] {
+        for t in [
+            "ext4", "xfs", "btrfs", "zfs", "apfs", "hfs", "ntfs", "exfat", "tmpfs", "overlay",
+            "local",
+        ] {
             assert!(!is_network_fs_type(t), "{t} should be local");
         }
     }
@@ -311,10 +342,7 @@ mod tests {
     #[test]
     fn unc_paths_are_refused() {
         let err = refuse_network_fs(Path::new(r"\\fileserver\share\timers.db")).unwrap_err();
-        assert!(
-            matches!(err, StoreError::NetworkFilesystem(_)),
-            "got {err}"
-        );
+        assert!(matches!(err, StoreError::NetworkFilesystem(_)), "got {err}");
         let err2 = refuse_network_fs(Path::new("//fileserver/share/timers.db")).unwrap_err();
         assert!(matches!(err2, StoreError::NetworkFilesystem(_)));
     }

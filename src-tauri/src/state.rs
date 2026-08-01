@@ -150,10 +150,8 @@ impl AppState {
     fn emit_wake_capability_line(&self, line: &str) {
         let store = self.store.lock();
         if let Err(e) = store.enqueue_event(
-            &bellman_core::events::EventRecord::new(
-                bellman_core::events::RunState::WakeCapability,
-            )
-            .with_message(line),
+            &bellman_core::events::EventRecord::new(bellman_core::events::RunState::WakeCapability)
+                .with_message(line),
         ) {
             log::warn!("bellman: wake_capability enqueue failed: {e}");
         }
@@ -180,9 +178,8 @@ impl AppState {
         };
 
         #[cfg(target_os = "linux")]
-        let udev_snippet = Some(
-            bellman_core::platform::wake::linux::udev_rule_snippet().to_string(),
-        );
+        let udev_snippet =
+            Some(bellman_core::platform::wake::linux::udev_rule_snippet().to_string());
         #[cfg(not(target_os = "linux"))]
         let udev_snippet = None;
 
@@ -280,8 +277,8 @@ impl AppState {
         // (SQLite is happy with multiple readers + one writer; WAL mode is
         // enabled by `Store::open_with`.)
         let scheduler_store_path = self.data_dir.join("timers.db");
-        let sched_store = bellman_core::open_store(&scheduler_store_path)
-            .expect("scheduler store open");
+        let sched_store =
+            bellman_core::open_store(&scheduler_store_path).expect("scheduler store open");
         let pause_all = *self.pause_all.lock();
         let mut sched = if pause_all {
             Scheduler::new_paused(sched_store, SystemClock::new(), dispatcher, cfg)
@@ -378,8 +375,13 @@ impl AppState {
             dispatcher: self.dispatcher.lock().clone(),
             ..Default::default()
         };
-        let outcome = bellman_core::run_now(&mut store, &self.data_dir.join("timers.db"), timer.id, &opts)
-            .map_err(|e| e.to_string())?;
+        let outcome = bellman_core::run_now(
+            &mut store,
+            &self.data_dir.join("timers.db"),
+            timer.id,
+            &opts,
+        )
+        .map_err(|e| e.to_string())?;
         // Wake the scheduler so any UI-driven run-now is also visible to it.
         if let Some(h) = self.control_handle.lock().as_ref() {
             h.refill();

@@ -20,7 +20,7 @@ pub use year::{
     needs_year_recalibration, run_year_recalibration, year_start, YearRecalibrateReport,
 };
 
-use crate::events::{EventPublisher, RunState, EventRecord};
+use crate::events::{EventPublisher, EventRecord, RunState};
 use crate::occurrence::{Occurrence, OccurrenceKind};
 use crate::store::{
     Action, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy, Store, StoreError, StoreResult,
@@ -202,7 +202,11 @@ fn iana_system_tz() -> String {
 }
 
 /// True when a prune pass should run now (startup catch-up or overdue).
-pub fn prune_is_due(last_prune: Option<DateTime<Utc>>, now: DateTime<Utc>, interval: Duration) -> bool {
+pub fn prune_is_due(
+    last_prune: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    interval: Duration,
+) -> bool {
     match last_prune {
         None => true,
         Some(lp) => {
@@ -314,11 +318,8 @@ pub fn run_prune(
 
     // Folder tree maintenance: sweep orphans, then reconcile the view.
     if let Some(tree) = tree {
-        let live_ids: std::collections::HashSet<TimerId> = store
-            .list_timers()?
-            .iter()
-            .map(|t| t.id)
-            .collect();
+        let live_ids: std::collections::HashSet<TimerId> =
+            store.list_timers()?.iter().map(|t| t.id).collect();
         match tree.sweep_orphans(&live_ids) {
             Ok(removed) => {
                 report.orphan_folders_removed = removed.len();
@@ -344,9 +345,9 @@ pub fn run_prune(
         // oldest payload/sidecar pairs first. Shares the quarantine lock
         // with artifact creation (the pruner holds no timer shard here).
         let bad = crate::reply::quarantine::quarantine_dir(tree.root());
-        if let Ok(_lock) = crate::reply::gate::acquire_quarantine(
-            tree.root().parent().unwrap_or(tree.root()),
-        ) {
+        if let Ok(_lock) =
+            crate::reply::gate::acquire_quarantine(tree.root().parent().unwrap_or(tree.root()))
+        {
             match crate::reply::quarantine::prune(
                 &bad,
                 config.retention,
@@ -435,9 +436,7 @@ pub fn is_terminal_oneshot(
     // 2) Skipped / validity ended: next_fire is None (or past), and either
     //    disabled, past valid_until, or last_fired set with max_runs done.
     let fired = timer.last_fired.is_some() && timer.next_fire_utc.is_none();
-    let past_validity = timer
-        .valid_until
-        .is_some_and(|until| now >= until)
+    let past_validity = timer.valid_until.is_some_and(|until| now >= until)
         || timer
             .occurrence
             .valid_until()

@@ -6,7 +6,7 @@
 
 use super::build::ExpandableTask;
 use super::types::CalendarCaps;
-use crate::events::{RunState, EventRecord};
+use crate::events::{EventRecord, RunState};
 use crate::store::RunClaim;
 use chrono::{DateTime, Duration, NaiveDate, Timelike, Utc};
 use chrono_tz::Tz;
@@ -271,10 +271,10 @@ pub fn build_truth_window(
         // Recorded history must never rewrite from the live timer definition
         // (rename / edit recurrence / pause). Only immutable event fields are
         // allowed; otherwise stable id and null kind/enabled.
-        let name = b.name.clone().unwrap_or_else(|| {
-            tid.map(short_id)
-                .unwrap_or_else(|| "(unknown)".into())
-        });
+        let name = b
+            .name
+            .clone()
+            .unwrap_or_else(|| tid.map(short_id).unwrap_or_else(|| "(unknown)".into()));
         let kind = None;
         let enabled = None;
         let time = format!(

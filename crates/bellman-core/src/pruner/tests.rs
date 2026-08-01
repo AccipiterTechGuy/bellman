@@ -10,17 +10,19 @@ use std::time::{Duration, SystemTime};
 
 fn open_store() -> (tempfile::TempDir, Store) {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open_with(dir.path().join("timers.db"), OpenOptions {
-        refuse_network_fs: false,
-        ..OpenOptions::default()
-    })
+    let store = Store::open_with(
+        dir.path().join("timers.db"),
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
     .unwrap();
     (dir, store)
 }
 
 fn once_at(days_ago: i64) -> Occurrence {
-    let at = (Utc::now() - ChronoDuration::days(days_ago))
-        .naive_utc();
+    let at = (Utc::now() - ChronoDuration::days(days_ago)).naive_utc();
     Occurrence::new(OccurrenceKind::Once { at }, "UTC").unwrap()
 }
 
@@ -33,17 +35,23 @@ fn system_prune_timer_is_created_once() {
     assert_eq!(t1.name, SYSTEM_PRUNE_NAME);
     assert!(is_system_prune_timer(&t1));
     let all = store.list_timers().unwrap();
-    assert_eq!(all.iter().filter(|t| t.name == SYSTEM_PRUNE_NAME).count(), 1);
+    assert_eq!(
+        all.iter().filter(|t| t.name == SYSTEM_PRUNE_NAME).count(),
+        1
+    );
 }
 
 #[test]
 fn prune_rotates_jsonl_and_respects_retention_edges() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path();
-    let mut store = Store::open_with(data.join("timers.db"), OpenOptions {
-        refuse_network_fs: false,
-        ..OpenOptions::default()
-    })
+    let mut store = Store::open_with(
+        data.join("timers.db"),
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
     .unwrap();
 
     let mut publisher = EventPublisher::with_config(
@@ -101,10 +109,13 @@ fn filetime_set_mtime(path: &std::path::Path, mtime: SystemTime) {
 fn prune_deletes_terminal_oneshots_and_writes_tombstones() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path();
-    let mut store = Store::open_with(data.join("timers.db"), OpenOptions {
-        refuse_network_fs: false,
-        ..OpenOptions::default()
-    })
+    let mut store = Store::open_with(
+        data.join("timers.db"),
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
     .unwrap();
 
     // Terminal fired one-shot: last_fired set, next_fire None (exhausted).
@@ -182,7 +193,15 @@ fn prune_deletes_terminal_oneshots_and_writes_tombstones() {
         ack_grace: Duration::from_secs(0),
         ..PruneConfig::default()
     };
-    let report = run_prune(&mut store, &mut publisher, &cfg, Utc::now(), true, Some(&tree)).unwrap();
+    let report = run_prune(
+        &mut store,
+        &mut publisher,
+        &cfg,
+        Utc::now(),
+        true,
+        Some(&tree),
+    )
+    .unwrap();
     assert_eq!(report.timers_pruned, 1);
     assert!(report.pruned_timer_ids.contains(&fired_id));
     assert!(store.get_timer(fired_id).unwrap().is_none());
@@ -204,10 +223,13 @@ fn prune_deletes_terminal_oneshots_and_writes_tombstones() {
 fn prune_preserves_oneshot_with_pending_claim() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path();
-    let mut store = Store::open_with(data.join("timers.db"), OpenOptions {
-        refuse_network_fs: false,
-        ..OpenOptions::default()
-    })
+    let mut store = Store::open_with(
+        data.join("timers.db"),
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
     .unwrap();
 
     let past = Utc::now() - ChronoDuration::hours(3);
@@ -259,10 +281,13 @@ fn prune_preserves_oneshot_with_pending_claim() {
 fn prune_not_due_skips_when_recent() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path();
-    let mut store = Store::open_with(data.join("timers.db"), OpenOptions {
-        refuse_network_fs: false,
-        ..OpenOptions::default()
-    })
+    let mut store = Store::open_with(
+        data.join("timers.db"),
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
     .unwrap();
     store.set_last_prune(Utc::now()).unwrap();
     let mut publisher =
@@ -281,10 +306,13 @@ fn prune_not_due_skips_when_recent() {
 fn prune_sweeps_orphan_timer_folders_and_logs() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path();
-    let mut store = Store::open_with(data.join("timers.db"), OpenOptions {
-        refuse_network_fs: false,
-        ..OpenOptions::default()
-    })
+    let mut store = Store::open_with(
+        data.join("timers.db"),
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
     .unwrap();
 
     // A live timer and an orphan: folder exists but the database row is gone
@@ -326,7 +354,15 @@ fn prune_sweeps_orphan_timer_folders_and_logs() {
         interval: Duration::from_secs(1),
         ..PruneConfig::default()
     };
-    let report = run_prune(&mut store, &mut publisher, &cfg, Utc::now(), true, Some(&tree)).unwrap();
+    let report = run_prune(
+        &mut store,
+        &mut publisher,
+        &cfg,
+        Utc::now(),
+        true,
+        Some(&tree),
+    )
+    .unwrap();
     assert_eq!(report.orphan_folders_removed, 1);
     assert!(!orphan_folder.exists(), "orphan folder must be swept");
     assert!(tree.folder_for(live.id).is_some(), "live folder stays");
@@ -336,7 +372,9 @@ fn prune_sweeps_orphan_timer_folders_and_logs() {
     let (recs, _) = read_events(publisher.current_path()).unwrap();
     let orphan_notes: Vec<_> = recs
         .iter()
-        .filter(|r| r.kind == RunState::Pruned && r.message.as_deref() == Some("orphan_timer_folder"))
+        .filter(|r| {
+            r.kind == RunState::Pruned && r.message.as_deref() == Some("orphan_timer_folder")
+        })
         .collect();
     assert_eq!(orphan_notes.len(), 1);
 }
@@ -345,10 +383,13 @@ fn prune_sweeps_orphan_timer_folders_and_logs() {
 fn year_recalibrate_is_idempotent_within_year() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path();
-    let mut store = Store::open_with(data.join("timers.db"), OpenOptions {
-        refuse_network_fs: false,
-        ..OpenOptions::default()
-    })
+    let mut store = Store::open_with(
+        data.join("timers.db"),
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
     .unwrap();
     store
         .create_timer(NewTimer::new(
@@ -377,7 +418,10 @@ fn year_recalibrate_is_idempotent_within_year() {
     // Next year forces a fresh pass.
     let next_year = Utc.with_ymd_and_hms(2027, 1, 2, 0, 0, 0).unwrap();
     assert!(needs_year_recalibration(&store, next_year).unwrap());
-    assert_eq!(year_start(next_year).date_naive(), NaiveDate::from_ymd_opt(2027, 1, 1).unwrap());
+    assert_eq!(
+        year_start(next_year).date_naive(),
+        NaiveDate::from_ymd_opt(2027, 1, 1).unwrap()
+    );
 
     publisher.publish_cycle(&store);
     let (recs, _) = read_events(publisher.current_path()).unwrap();
@@ -394,10 +438,13 @@ fn year_recalibrate_is_idempotent_within_year() {
 fn startup_year_recalibration_honors_configured_log_cap() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path();
-    let mut store = Store::open_with(data.join("timers.db"), OpenOptions {
-        refuse_network_fs: false,
-        ..OpenOptions::default()
-    })
+    let mut store = Store::open_with(
+        data.join("timers.db"),
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
     .unwrap();
     store
         .create_timer(NewTimer::new(
@@ -422,10 +469,8 @@ fn startup_year_recalibration_honors_configured_log_cap() {
         max_current_bytes: cap,
         ..PruneConfig::default()
     };
-    let mut seed = EventLog::open(
-        EventLogConfig::new(data.join("logs")).with_max_current_bytes(cap),
-    )
-    .unwrap();
+    let mut seed =
+        EventLog::open(EventLogConfig::new(data.join("logs")).with_max_current_bytes(cap)).unwrap();
     while std::fs::metadata(seed.current_path()).unwrap().len() < cap - 300 {
         seed.emit(EventRecord::new(RunState::Fired).with_message("x".repeat(200)))
             .unwrap();
@@ -466,10 +511,13 @@ fn startup_year_recalibration_honors_configured_log_cap() {
 fn startup_catchup_when_last_prune_stale() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path();
-    let mut store = Store::open_with(data.join("timers.db"), OpenOptions {
-        refuse_network_fs: false,
-        ..OpenOptions::default()
-    })
+    let mut store = Store::open_with(
+        data.join("timers.db"),
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
     .unwrap();
     // last_prune 10 days ago → due.
     store
@@ -485,10 +533,13 @@ fn startup_catchup_when_last_prune_stale() {
 fn prune_with_lease_elsewhere_reports_skipped_and_never_stamps_last_prune() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path();
-    let mut store = Store::open_with(data.join("timers.db"), OpenOptions {
-        refuse_network_fs: false,
-        ..OpenOptions::default()
-    })
+    let mut store = Store::open_with(
+        data.join("timers.db"),
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
     .unwrap();
 
     // The "live watcher" publisher holds the lease across the whole test.
@@ -508,7 +559,15 @@ fn prune_with_lease_elsewhere_reports_skipped_and_never_stamps_last_prune() {
         interval: Duration::from_secs(0),
         ..PruneConfig::default()
     };
-    let report = run_prune(&mut store, &mut prune_publisher, &cfg, Utc::now(), true, None).unwrap();
+    let report = run_prune(
+        &mut store,
+        &mut prune_publisher,
+        &cfg,
+        Utc::now(),
+        true,
+        None,
+    )
+    .unwrap();
     assert!(report.skipped_not_leader, "follower prune reports the skip");
     assert!(report.archived.is_none(), "nothing was rotated");
     assert!(
@@ -519,8 +578,19 @@ fn prune_with_lease_elsewhere_reports_skipped_and_never_stamps_last_prune() {
     // The watcher releases at the end of its cycle; the next scheduled
     // prune wins the lease and really rotates.
     watcher_publisher.publish_cycle(&store);
-    let report = run_prune(&mut store, &mut prune_publisher, &cfg, Utc::now(), true, None).unwrap();
+    let report = run_prune(
+        &mut store,
+        &mut prune_publisher,
+        &cfg,
+        Utc::now(),
+        true,
+        None,
+    )
+    .unwrap();
     assert!(!report.skipped_not_leader);
-    assert!(report.archived.is_some(), "rotation happened once the lease was free");
+    assert!(
+        report.archived.is_some(),
+        "rotation happened once the lease was free"
+    );
     assert!(store.meta().unwrap().last_prune.is_some());
 }

@@ -23,7 +23,9 @@ pub fn next_cron_run(
         tz_name,
     )?;
     let after_local = after.with_timezone(&tz);
-    Ok(occ.peek_next_fire(after_local).map(|t| t.with_timezone(&Utc)))
+    Ok(occ
+        .peek_next_fire(after_local)
+        .map(|t| t.with_timezone(&Utc)))
 }
 
 /// Next run from a parsed [`CronSchedule`].

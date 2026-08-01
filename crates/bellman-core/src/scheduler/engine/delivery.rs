@@ -210,12 +210,16 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 let _ = self.store.fail_run(claim.run_id);
                 continue;
             };
-            if let Some(d) = self.act_and_close(&timer, &claim, FireKind::Late {
-                lateness: self
-                    .clock
-                    .wall_now()
-                    .signed_duration_since(claim.scheduled_for),
-            })? {
+            if let Some(d) = self.act_and_close(
+                &timer,
+                &claim,
+                FireKind::Late {
+                    lateness: self
+                        .clock
+                        .wall_now()
+                        .signed_duration_since(claim.scheduled_for),
+                },
+            )? {
                 out.push(d);
             }
         }
@@ -291,7 +295,9 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                     }
                     // The gate is required and the transaction is atomic: a
                     // failure here means the fire did not half-happen.
-                    Err(e) => return Err(SchedulerError::Internal(format!("fire transaction: {e}"))),
+                    Err(e) => {
+                        return Err(SchedulerError::Internal(format!("fire transaction: {e}")))
+                    }
                 }
             }
             None => {
@@ -383,9 +389,13 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                     quarantine_budget_bytes: self.config.quarantine_budget_bytes,
                 };
                 let now = self.clock.wall_now();
-                if let Err(e) =
-                    crate::pruner::run_prune_under(&mut self.store, &data_dir, &prune_cfg, now, true)
-                {
+                if let Err(e) = crate::pruner::run_prune_under(
+                    &mut self.store,
+                    &data_dir,
+                    &prune_cfg,
+                    now,
+                    true,
+                ) {
                     eprintln!("bellman: system.prune fire failed: {e}");
                 }
             }
@@ -409,7 +419,11 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         // and the claim ledger's outcome is delivery bookkeeping. The
         // dispatcher's workers never touch these files.
         if let Some(data_dir) = self.config.data_dir.clone() {
-            refresh_timer_json(&crate::tree::TimersTree::new(&data_dir), &self.store, timer.id);
+            refresh_timer_json(
+                &crate::tree::TimersTree::new(&data_dir),
+                &self.store,
+                timer.id,
+            );
         }
 
         if let Some(e) = inline_error {

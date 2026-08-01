@@ -291,12 +291,7 @@ fn linux_power_watch_loop(app: &tauri::AppHandle) -> Result<(), String> {
         proxy
             .call_method(
                 "Inhibit",
-                &(
-                    "sleep",
-                    "Bellman",
-                    "Rearm RTC wake before suspend",
-                    "delay",
-                ),
+                &("sleep", "Bellman", "Rearm RTC wake before suspend", "delay"),
             )
             .and_then(|m| m.body().deserialize())
             .map_err(|e| format!("Inhibit: {e}"))

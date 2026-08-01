@@ -131,7 +131,10 @@ pub fn cap_result(value: &serde_json::Value, cap: usize) -> (serde_json::Value, 
     if serialized.len() <= cap {
         return (value.clone(), false);
     }
-    (serde_json::Value::String(truncate_text(&serialized, cap)), true)
+    (
+        serde_json::Value::String(truncate_text(&serialized, cap)),
+        true,
+    )
 }
 
 #[cfg(test)]

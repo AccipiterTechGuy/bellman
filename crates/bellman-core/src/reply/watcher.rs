@@ -32,9 +32,7 @@ use super::gate;
 use super::notification::{
     fire_notification_name, fires_dir, write_fire_notification, FireNotification,
 };
-use super::quarantine::{
-    fnv1a64_hex, quarantine_bytes, quarantine_dir, quarantine_unread,
-};
+use super::quarantine::{fnv1a64_hex, quarantine_bytes, quarantine_dir, quarantine_unread};
 
 /// Reuse the slot watcher's debounce: a parse failure is usually a file
 /// being written, so identical invalid bytes must be stable across this
@@ -165,12 +163,15 @@ pub fn poll_once(
         }
     };
     for timer in &timers {
-        if let Err(e) = poll_timer(engine, store, timer, now_wall, mono_now, tracker, &mut stats) {
+        if let Err(e) = poll_timer(
+            engine, store, timer, now_wall, mono_now, tracker, &mut stats,
+        ) {
             eprintln!("bellman: reply watcher: timer {}: {e}", timer.id);
             stats.errors += 1;
         }
     }
-    stats.deadline_transitions += expire_all_deadlines(engine, store, now_wall, mono_now, &mut stats);
+    stats.deadline_transitions +=
+        expire_all_deadlines(engine, store, now_wall, mono_now, &mut stats);
     stats
 }
 
@@ -202,7 +203,16 @@ fn poll_timer(
         match read_reply_file(&path) {
             Ok(ReplyRead::Missing) => {}
             Ok(ReplyRead::Oversize(len)) => {
-                condemn_unread(engine, store, timer, &path, file_run_id, len, "oversize", stats);
+                condemn_unread(
+                    engine,
+                    store,
+                    timer,
+                    &path,
+                    file_run_id,
+                    len,
+                    "oversize",
+                    stats,
+                );
             }
             Ok(ReplyRead::Special(kind)) => {
                 condemn_unread(engine, store, timer, &path, file_run_id, 0, kind, stats);
@@ -278,7 +288,16 @@ fn handle_bytes(
         Ok(d) => d,
         Err(_) => {
             track_invalid(
-                engine, store, timer, path, file_run_id, &bytes, digest, now_wall, tracker, stats,
+                engine,
+                store,
+                timer,
+                path,
+                file_run_id,
+                &bytes,
+                digest,
+                now_wall,
+                tracker,
+                stats,
             );
             return;
         }
@@ -324,7 +343,10 @@ fn handle_bytes(
             // The current run's file is never touched by this path — the
             // filename/document identity check above guarantees it.
             if let Err(e) = std::fs::remove_file(path) {
-                eprintln!("bellman: reply watcher: remove stale {}: {e}", path.display());
+                eprintln!(
+                    "bellman: reply watcher: remove stale {}: {e}",
+                    path.display()
+                );
             }
             stats.superseded += 1;
         }
@@ -371,7 +393,16 @@ fn track_invalid(
                 .unwrap_or_default()
                 >= DEFAULT_DEBOUNCE
             {
-                condemn_bytes(engine, store, timer, path, run_id, bytes, "invalid JSON", stats);
+                condemn_bytes(
+                    engine,
+                    store,
+                    timer,
+                    path,
+                    run_id,
+                    bytes,
+                    "invalid JSON",
+                    stats,
+                );
                 entry.condemned = true;
             }
         }
@@ -512,9 +543,7 @@ fn expire_all_deadlines(
         };
         for (run_id, kind) in runs {
             let transitioned = match kind {
-                DeadlineKind::Pickup => {
-                    engine.expire_pickup_one(store, &timer, run_id, now_wall)
-                }
+                DeadlineKind::Pickup => engine.expire_pickup_one(store, &timer, run_id, now_wall),
                 DeadlineKind::Watchdog => {
                     engine.expire_watchdog_one(store, &timer, run_id, now_wall)
                 }
@@ -766,7 +795,9 @@ fn reconcile_timer(
     let fresh = serde_json::to_vec_pretty(&status).map_err(|e| {
         super::engine::ReplyError::Tree(crate::tree::TreeError::Serialize(e.to_string()))
     })?;
-    let stale = std::fs::read(&status_path).map(|b| b != fresh).unwrap_or(true);
+    let stale = std::fs::read(&status_path)
+        .map(|b| b != fresh)
+        .unwrap_or(true);
     if stale {
         crate::tree::write_status(&engine.tree, timer, &status)?;
         *repaired += 1;
@@ -776,8 +807,7 @@ fn reconcile_timer(
     // IK6: an IPC-selected run deliberately has no stub; never repair one
     // into existence (the folder README explains its absence).
     let stub_path = folder.join(reply_file_name(claim.run_id));
-    let ipc_selected =
-        row.selected_transport.as_deref() == Some(crate::store::TRANSPORT_IPC);
+    let ipc_selected = row.selected_transport.as_deref() == Some(crate::store::TRANSPORT_IPC);
     if !ipc_selected && !stub_path.exists() {
         engine
             .tree
@@ -812,7 +842,14 @@ fn reconcile_timer(
             let fire_path = fires_dir(&engine.data_dir.join("slots"))
                 .join(fire_notification_name(claim.run_id));
             if !fire_path.exists() && stub_path.exists() {
-                publish_fire_notification(engine, timer, &claim, &row.state, &folder, &row.app_name)?;
+                publish_fire_notification(
+                    engine,
+                    timer,
+                    &claim,
+                    &row.state,
+                    &folder,
+                    &row.app_name,
+                )?;
                 *repaired += 1;
             }
         }

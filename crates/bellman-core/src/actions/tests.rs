@@ -121,10 +121,7 @@ fn launch_sets_bellman_run_id_env() {
     let run_id = Uuid::new_v4();
     let cfg = LaunchConfig {
         command: "sh".into(),
-        args: vec![
-            "-c".into(),
-            "printf '%s' \"$BELLMAN_RUN_ID\"".into(),
-        ],
+        args: vec!["-c".into(), "printf '%s' \"$BELLMAN_RUN_ID\"".into()],
         workdir: None,
         timeout: Duration::from_secs(5),
         output_cap: 1024,

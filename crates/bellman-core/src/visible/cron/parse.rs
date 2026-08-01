@@ -316,7 +316,10 @@ fn parse_env_assignment(trimmed: &str) -> Option<(String, String)> {
         return None;
     }
     // Heuristic: if key looks like a schedule field, not env.
-    if key.chars().any(|c| c == '*' || c == '/' || c == ',' || c == '-') {
+    if key
+        .chars()
+        .any(|c| c == '*' || c == '/' || c == ',' || c == '-')
+    {
         return None;
     }
     Some((key.to_string(), trimmed[eq + 1..].to_string()))
@@ -532,9 +535,7 @@ mod tests {
         let text = "17 * * * * root cd / && run-parts --report /etc/cron.hourly\n";
         let lines = parse_crontab(text, CrontabMode::System);
         match &lines[0] {
-            CrontabLine::Job {
-                user, command, ..
-            } => {
+            CrontabLine::Job { user, command, .. } => {
                 assert_eq!(user.as_deref(), Some("root"));
                 assert!(command.contains("run-parts"));
             }
@@ -594,7 +595,10 @@ mod tests {
         assert!(matches!(lines[1], CrontabLine::Blank { .. }));
         assert!(matches!(lines[2], CrontabLine::Env { .. }));
         let rebuilt = join_lines(
-            &lines.iter().map(|l| l.raw().to_string()).collect::<Vec<_>>(),
+            &lines
+                .iter()
+                .map(|l| l.raw().to_string())
+                .collect::<Vec<_>>(),
             true,
         );
         assert_eq!(rebuilt, text);
@@ -605,7 +609,10 @@ mod tests {
         let text = "# hand comment\n\n0 1 * * * /bin/true\n# trailing\n";
         let lines = parse_crontab(text, CrontabMode::User);
         let rebuilt = join_lines(
-            &lines.iter().map(|l| l.raw().to_string()).collect::<Vec<_>>(),
+            &lines
+                .iter()
+                .map(|l| l.raw().to_string())
+                .collect::<Vec<_>>(),
             had_trailing_newline(text),
         );
         assert_eq!(rebuilt, text);

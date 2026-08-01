@@ -23,7 +23,7 @@
 //! first, then the target shard — no path ever acquires them in reverse.
 
 use super::gate;
-use super::notification::{fires_dir, fire_notification_name, FireNotification, IpcEndpoint};
+use super::notification::{fire_notification_name, fires_dir, FireNotification, IpcEndpoint};
 use super::ReplyEngine;
 use crate::store::{
     RunClaim, RunStateRow, Store, Timer, TimerId, TransportMode, TransportProjection,
@@ -114,12 +114,9 @@ pub fn new_projection(
     now: DateTime<Utc>,
     selected: SelectedTransport,
 ) -> Result<TransportProjection, String> {
-    let ipc_endpoint = engine
-        .ipc
-        .as_ref()
-        .map(|h| IpcEndpoint {
-            socket: h.socket_path().to_path_buf(),
-        });
+    let ipc_endpoint = engine.ipc.as_ref().map(|h| IpcEndpoint {
+        socket: h.socket_path().to_path_buf(),
+    });
     let (reply_path, kind, target) = match selected {
         SelectedTransport::Json => {
             let fires = fires_dir(&engine.data_dir.join("slots"));
@@ -198,7 +195,10 @@ pub fn attempt(
         Err(e) => {
             // Our own payload should always parse; if it does not, retrying
             // cannot help — mark obsolete rather than spin.
-            eprintln!("bellman: transport projection {} payload invalid: {e}", proj.run_id);
+            eprintln!(
+                "bellman: transport projection {} payload invalid: {e}",
+                proj.run_id
+            );
             let _ = store.mark_transport_obsolete(proj.run_id);
             return Attempt::Obsolete;
         }
@@ -450,7 +450,12 @@ fn defer(store: &Store, proj: &TransportProjection) -> Attempt {
 /// The publication pump: attempt every due pending projection (bounded).
 /// Runs on the dispatcher tick and at startup — never on an action worker.
 /// `ipc` is the live IPC handle for socket-kind projections.
-pub fn pump(data_dir: &Path, store: &Store, limit: usize, ipc: Option<&crate::ipc::IpcHandle>) -> usize {
+pub fn pump(
+    data_dir: &Path,
+    store: &Store,
+    limit: usize,
+    ipc: Option<&crate::ipc::IpcHandle>,
+) -> usize {
     let due = match store.due_transport_projections(Utc::now(), limit) {
         Ok(d) => d,
         Err(e) => {

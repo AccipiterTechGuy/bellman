@@ -35,9 +35,7 @@ const DEFAULT_FONT_FAMILY: &str = "DejaVu Sans";
 /// Rasterise an SVG document to PNG bytes.
 pub fn svg_to_png(svg: &str) -> Result<Vec<u8>, String> {
     let pixmap = svg_to_pixmap(svg)?;
-    pixmap
-        .encode_png()
-        .map_err(|e| format!("encode png: {e}"))
+    pixmap.encode_png().map_err(|e| format!("encode png: {e}"))
 }
 
 /// Rasterise to an in-memory pixmap (used by PNG export and tests).
@@ -91,9 +89,7 @@ fn build_fontdb() -> resvg::usvg::fontdb::Database {
     db.load_system_fonts();
     if !loaded_any && db.is_empty() {
         // Last-ditch: keep going; tests will fail loudly if text is missing.
-        eprintln!(
-            "bellman calendar: warning: no fonts loaded for SVG→PNG; text may be missing"
-        );
+        eprintln!("bellman calendar: warning: no fonts loaded for SVG→PNG; text may be missing");
     }
     // Prefer DejaVu / Liberation when the SVG asks for generic sans-serif.
     db.set_serif_family("DejaVu Serif");

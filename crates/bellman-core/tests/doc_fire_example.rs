@@ -19,8 +19,7 @@ use uuid::Uuid;
 
 fn integration_doc() -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/INTEGRATION.md");
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
 /// Extract the first ```json fenced block inside the named section.
@@ -90,7 +89,10 @@ fn documented_vocabularies_are_the_wire_vocabularies() {
     );
     // …and the firing's timing rides in `kind` (the event vocabulary).
     assert!(
-        matches!(n["kind"].as_str(), Some("fired" | "fired_late" | "coalesced")),
+        matches!(
+            n["kind"].as_str(),
+            Some("fired" | "fired_late" | "coalesced")
+        ),
         "kind must be an event kind: {n}"
     );
 }

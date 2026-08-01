@@ -23,7 +23,10 @@ pub fn jitter_offset_secs(timer_id: Uuid, scheduled_for: DateTime<Utc>, jitter_s
     }
     let mut h = DefaultHasher::new();
     timer_id.hash(&mut h);
-    scheduled_for.timestamp_nanos_opt().unwrap_or(0).hash(&mut h);
+    scheduled_for
+        .timestamp_nanos_opt()
+        .unwrap_or(0)
+        .hash(&mut h);
     let raw = h.finish();
     let span = i64::from(jitter_secs).saturating_mul(2).saturating_add(1);
     // span is at least 1; rem is in 0..span

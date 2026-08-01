@@ -17,9 +17,7 @@ impl WeekStart {
         match s.trim().to_ascii_lowercase().as_str() {
             "mon" | "monday" => Ok(Self::Mon),
             "sun" | "sunday" => Ok(Self::Sun),
-            other => Err(format!(
-                "unknown week-start '{other}' (expected mon|sun)"
-            )),
+            other => Err(format!("unknown week-start '{other}' (expected mon|sun)")),
         }
     }
 
@@ -184,9 +182,7 @@ impl CalendarFormat {
             "svg" => Ok(Self::Svg),
             "png" => Ok(Self::Png),
             "json" => Ok(Self::Json),
-            other => Err(format!(
-                "unknown format '{other}' (expected svg|png|json)"
-            )),
+            other => Err(format!("unknown format '{other}' (expected svg|png|json)")),
         }
     }
 

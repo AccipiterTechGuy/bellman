@@ -38,7 +38,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .map_err(|e| format!("--secs: {e}"))?;
             }
             "--data-dir" => {
-                data_dir = Some(PathBuf::from(args.next().ok_or("--data-dir needs a value")?));
+                data_dir = Some(PathBuf::from(
+                    args.next().ok_or("--data-dir needs a value")?,
+                ));
             }
             "-h" | "--help" => {
                 eprintln!(
@@ -123,9 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let end = wall0 + Duration::from_secs(secs);
     let mut next_sample = wall0 + sample_every;
 
-    println!(
-        "running… pid={pid} rss_start_kb={rss_start_kb} sample_every={sample_every:?}"
-    );
+    println!("running… pid={pid} rss_start_kb={rss_start_kb} sample_every={sample_every:?}");
 
     // Drive the scheduler for the whole window.
     while Instant::now() < end {
@@ -156,10 +156,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Count fired events in the JSONL (primary wake evidence). Events are
     // enqueued into the outbox (R11) — drain before reading.
     {
-        let drain_store = Store::open_with(&db, OpenOptions {
-            refuse_network_fs: false,
-            ..OpenOptions::default()
-        })?;
+        let drain_store = Store::open_with(
+            &db,
+            OpenOptions {
+                refuse_network_fs: false,
+                ..OpenOptions::default()
+            },
+        )?;
         bellman_core::events::EventPublisher::drain_best_effort(&data_dir, &drain_store);
     }
     let log_path = logs_dir.join("events.current.jsonl");
@@ -289,12 +292,7 @@ fn proc_clk_tck() -> u64 {
         .arg("CLK_TCK")
         .output()
         .ok()
-        .and_then(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .trim()
-                .parse()
-                .ok()
-        })
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
         .unwrap_or(100);
     if v > 0 {
         v as u64

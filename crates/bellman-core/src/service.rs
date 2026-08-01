@@ -6,5 +6,5 @@
 //! log" / "look up the log tail" — the C6 work lives here, and the C7 GUI
 //! commands wrap it.
 
-pub mod run_now;
 pub mod log_query;
+pub mod run_now;

@@ -176,5 +176,3 @@ impl SchedulerConfig {
         })
     }
 }
-
-

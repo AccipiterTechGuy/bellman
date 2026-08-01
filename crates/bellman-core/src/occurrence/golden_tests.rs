@@ -61,8 +61,11 @@ fn offset_secs(dt: DateTime<Tz>) -> i64 {
 /// Europe/Helsinki 2026-03-29: clocks jump 03:00 → 04:00. 03:30 does not exist.
 #[test]
 fn dst_gap_helsinki_daily_at_0330() {
-    let mut occ = Occurrence::new(OccurrenceKind::Daily { at: hms(3, 30, 0) }, "Europe/Helsinki")
-        .unwrap();
+    let mut occ = Occurrence::new(
+        OccurrenceKind::Daily { at: hms(3, 30, 0) },
+        "Europe/Helsinki",
+    )
+    .unwrap();
     // Just before the transition day.
     let after = local(Helsinki, 2026, 3, 28, 12, 0, 0);
     let fire = occ.next_fire(after).expect("fire");
@@ -73,8 +76,11 @@ fn dst_gap_helsinki_daily_at_0330() {
 /// America/New_York 2026-03-08: clocks jump 02:00 → 03:00. 02:30 does not exist.
 #[test]
 fn dst_gap_new_york_daily_at_0230() {
-    let mut occ =
-        Occurrence::new(OccurrenceKind::Daily { at: hms(2, 30, 0) }, "America/New_York").unwrap();
+    let mut occ = Occurrence::new(
+        OccurrenceKind::Daily { at: hms(2, 30, 0) },
+        "America/New_York",
+    )
+    .unwrap();
     let after = local(New_York, 2026, 3, 7, 12, 0, 0);
     let fire = occ.next_fire(after).expect("fire");
     assert_fire(fire, New_York, 2026, 3, 8, 3, 0, 0);
@@ -101,8 +107,11 @@ fn half_hour_zone_kathmandu_daily() {
 /// we fire once at the first (earliest / still-summer) occurrence.
 #[test]
 fn dst_fold_helsinki_daily_at_0330() {
-    let mut occ = Occurrence::new(OccurrenceKind::Daily { at: hms(3, 30, 0) }, "Europe/Helsinki")
-        .unwrap();
+    let mut occ = Occurrence::new(
+        OccurrenceKind::Daily { at: hms(3, 30, 0) },
+        "Europe/Helsinki",
+    )
+    .unwrap();
     let after = local(Helsinki, 2026, 10, 24, 12, 0, 0);
     let fire = occ.next_fire(after).expect("fire");
     assert_eq!(fire.date_naive(), ymd(2026, 10, 25));
@@ -118,8 +127,11 @@ fn dst_fold_helsinki_daily_at_0330() {
 /// America/New_York 2026-11-01: clocks fall 02:00 → 01:00. 01:30 occurs twice.
 #[test]
 fn dst_fold_new_york_daily_at_0130() {
-    let mut occ =
-        Occurrence::new(OccurrenceKind::Daily { at: hms(1, 30, 0) }, "America/New_York").unwrap();
+    let mut occ = Occurrence::new(
+        OccurrenceKind::Daily { at: hms(1, 30, 0) },
+        "America/New_York",
+    )
+    .unwrap();
     let after = local(New_York, 2026, 10, 31, 12, 0, 0);
     let fire = occ.next_fire(after).expect("fire");
     assert_eq!(fire.date_naive(), ymd(2026, 11, 1));
@@ -144,9 +156,7 @@ fn monthly_day_31_clamps_to_last_day() {
     .unwrap();
     // After Jan 31 → next is Feb 28 (2026 not leap) at 09:00.
     let after = Utc.with_ymd_and_hms(2026, 1, 31, 10, 0, 0).unwrap();
-    let fire = occ
-        .next_fire(after.with_timezone(&Tz::UTC))
-        .expect("fire");
+    let fire = occ.next_fire(after.with_timezone(&Tz::UTC)).expect("fire");
     assert_fire(fire, Tz::UTC, 2026, 2, 28, 9, 0, 0);
 
     // After Feb 28 → March 31.
@@ -171,9 +181,7 @@ fn yearly_feb29_clamps_in_non_leap() {
     .unwrap();
     // From 2025-01-01: next is 2025-02-28 (non-leap clamp).
     let after = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
-    let fire = occ
-        .next_fire(after.with_timezone(&Tz::UTC))
-        .expect("fire");
+    let fire = occ.next_fire(after.with_timezone(&Tz::UTC)).expect("fire");
     assert_fire(fire, Tz::UTC, 2025, 2, 28, 12, 0, 0);
 
     // From just after that: 2026-02-28 (also non-leap).
@@ -196,9 +204,7 @@ fn yearly_feb29_clamps_in_non_leap() {
 fn year_boundary_daily_dec31_to_jan1() {
     let mut occ = Occurrence::new(OccurrenceKind::Daily { at: hms(0, 0, 0) }, "UTC").unwrap();
     let after = Utc.with_ymd_and_hms(2026, 12, 31, 0, 0, 0).unwrap();
-    let fire = occ
-        .next_fire(after.with_timezone(&Tz::UTC))
-        .expect("fire");
+    let fire = occ.next_fire(after.with_timezone(&Tz::UTC)).expect("fire");
     assert_fire(fire, Tz::UTC, 2027, 1, 1, 0, 0, 0);
 }
 
@@ -214,9 +220,7 @@ fn year_boundary_yearly() {
     )
     .unwrap();
     let after = Utc.with_ymd_and_hms(2026, 12, 31, 23, 59, 0).unwrap();
-    let fire = occ
-        .next_fire(after.with_timezone(&Tz::UTC))
-        .expect("fire");
+    let fire = occ.next_fire(after.with_timezone(&Tz::UTC)).expect("fire");
     assert_fire(fire, Tz::UTC, 2027, 12, 31, 23, 59, 0);
 }
 
@@ -249,7 +253,10 @@ fn interval_index_beyond_i32_max_stays_strictly_after() {
         fire > after_tz,
         "next_fire must be strictly after; after={after_tz} got={fire}"
     );
-    assert_eq!(fire.with_timezone(&Utc), after + chrono::Duration::seconds(1));
+    assert_eq!(
+        fire.with_timezone(&Utc),
+        after + chrono::Duration::seconds(1)
+    );
 }
 
 #[test]
@@ -497,9 +504,7 @@ fn skip_next_skips_exactly_one_occurrence() {
     assert_fire(peek, Tz::UTC, 2026, 6, 1, 8, 0, 0);
 
     occ.skip_next();
-    let fire = occ
-        .next_fire(after.with_timezone(&Tz::UTC))
-        .expect("fire");
+    let fire = occ.next_fire(after.with_timezone(&Tz::UTC)).expect("fire");
     // Skipped June 1 → June 2.
     assert_fire(fire, Tz::UTC, 2026, 6, 2, 8, 0, 0);
     // pending_skips consumed.
@@ -523,9 +528,7 @@ fn validity_window_and_max_runs() {
         .with_max_runs(2);
 
     let after = Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
-    let f1 = occ
-        .next_fire(after.with_timezone(&Tz::UTC))
-        .expect("f1");
+    let f1 = occ.next_fire(after.with_timezone(&Tz::UTC)).expect("f1");
     assert_fire(f1, Tz::UTC, 2026, 6, 3, 12, 0, 0);
     occ.record_run();
 
@@ -550,6 +553,9 @@ fn iter_after_matches_preview() {
     let occ = Occurrence::new(OccurrenceKind::Daily { at: hms(1, 2, 3) }, "UTC").unwrap();
     let after = Utc.with_ymd_and_hms(2026, 5, 1, 0, 0, 0).unwrap();
     let via_preview = occ.preview(after.with_timezone(&Tz::UTC), 5);
-    let via_iter: Vec<_> = occ.iter_after(after.with_timezone(&Tz::UTC)).take(5).collect();
+    let via_iter: Vec<_> = occ
+        .iter_after(after.with_timezone(&Tz::UTC))
+        .take(5)
+        .collect();
     assert_eq!(via_preview, via_iter);
 }

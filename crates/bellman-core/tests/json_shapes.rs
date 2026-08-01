@@ -11,11 +11,9 @@
 //! 4. run states come from the one R5 vocabulary;
 //! 5. shapes round-trip and unknown fields are still ignored on read (R6).
 
+use bellman_core::events::{EventRecord, RunState, EVENT_SCHEMA_V1};
 use bellman_core::reply::{FireNotification, FIRE_SCHEMA_V1};
-use bellman_core::events::{RunState, EventRecord, EVENT_SCHEMA_V1};
-use bellman_core::slots::{
-    SlotErrSidecar, SlotRequest, SlotResponse, SlotRunEvent, SCHEMA_V1,
-};
+use bellman_core::slots::{SlotErrSidecar, SlotRequest, SlotResponse, SlotRunEvent, SCHEMA_V1};
 use bellman_core::store::{ClaimStatus, RunClaim, RunOutcome};
 use chrono::{DateTime, TimeZone, Utc};
 use serde_json::Value;
@@ -77,7 +75,10 @@ fn sample_slot_response() -> SlotResponse {
         "550e8400-e29b-41d4-a716-446655440000",
         Some(Uuid::nil()),
         Some(fixed()),
-        vec![SlotRunEvent::from_claim(&sample_run_claim(ClaimStatus::Pending, None))],
+        vec![SlotRunEvent::from_claim(&sample_run_claim(
+            ClaimStatus::Pending,
+            None,
+        ))],
     )
 }
 
@@ -138,7 +139,10 @@ fn top_level_kind_is_always_the_event_kind() {
     // Fire notification: kind is the event kind, occurrence type moved out.
     let v = serde_json::to_value(sample_fire_payload()).unwrap();
     assert!(
-        matches!(v["kind"].as_str(), Some("fired" | "fired_late" | "coalesced")),
+        matches!(
+            v["kind"].as_str(),
+            Some("fired" | "fired_late" | "coalesced")
+        ),
         "fire-notification top-level kind must be an event kind: {v}"
     );
     assert_eq!(v["occurrence_kind"], "daily");
@@ -288,9 +292,16 @@ fn fire_notification_wire_keys() {
         "status_path",
         "reply_path",
     ] {
-        assert!(obj.contains_key(key), "fire notification missing `{key}`: {v}");
+        assert!(
+            obj.contains_key(key),
+            "fire notification missing `{key}`: {v}"
+        );
     }
-    assert_eq!(obj.len(), 11, "unexpected extra keys in fire notification: {v}");
+    assert_eq!(
+        obj.len(),
+        11,
+        "unexpected extra keys in fire notification: {v}"
+    );
 }
 
 #[test]

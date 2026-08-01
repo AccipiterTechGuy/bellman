@@ -170,10 +170,7 @@ pub fn run_launch(cfg: &LaunchConfig) -> Result<LaunchOutcome, LaunchError> {
     })
 }
 
-fn read_capped_pipe(
-    pipe: Option<impl Read>,
-    cap: usize,
-) -> Result<Vec<u8>, std::io::Error> {
+fn read_capped_pipe(pipe: Option<impl Read>, cap: usize) -> Result<Vec<u8>, std::io::Error> {
     let Some(mut pipe) = pipe else {
         return Ok(Vec::new());
     };

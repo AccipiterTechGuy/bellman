@@ -321,37 +321,35 @@ impl SlotService {
         } else {
             None
         };
-        let _delete_gate = if let (SlotOperation::Delete, Some(timer)) =
-            (operation, pre_delete_timer.as_ref())
-        {
-            let data_dir = store
-                .path()
-                .parent()
-                .map(|p| p.to_path_buf())
-                .ok_or_else(|| SlotError::Internal("store has no data dir".into()))?;
-            Some(
-                crate::reply::gate::acquire(&data_dir, timer.id)
-                    .map_err(|e| SlotError::Internal(format!("per-timer gate: {e}")))?,
-            )
-        } else {
-            None
-        };
+        let _delete_gate =
+            if let (SlotOperation::Delete, Some(timer)) = (operation, pre_delete_timer.as_ref()) {
+                let data_dir = store
+                    .path()
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .ok_or_else(|| SlotError::Internal("store has no data dir".into()))?;
+                Some(
+                    crate::reply::gate::acquire(&data_dir, timer.id)
+                        .map_err(|e| SlotError::Internal(format!("per-timer gate: {e}")))?,
+                )
+            } else {
+                None
+            };
 
         // Single Immediate transaction: check ledger / apply mutations / write
         // response. Concurrent consumers serialize; crash mid-apply rolls back
         // so a resubmit never double-mutates.
         let rec = store.slot_execute_once(&request_id, |tx| {
-            let response =
-                match apply_request_tx(tx, &req, operation, &request_id, max_events) {
-                    Ok(resp) => resp,
-                    Err(SlotError::Invalid(msg)) => {
-                        // Logical errors are durable results (idempotent too).
-                        SlotResponse::err(&reserved_id, &request_id, msg)
-                    }
-                    Err(e) => {
-                        return Err(crate::store::StoreError::Internal(e.to_string()));
-                    }
-                };
+            let response = match apply_request_tx(tx, &req, operation, &request_id, max_events) {
+                Ok(resp) => resp,
+                Err(SlotError::Invalid(msg)) => {
+                    // Logical errors are durable results (idempotent too).
+                    SlotResponse::err(&reserved_id, &request_id, msg)
+                }
+                Err(e) => {
+                    return Err(crate::store::StoreError::Internal(e.to_string()));
+                }
+            };
             let app_name = req
                 .payload
                 .as_ref()
@@ -409,9 +407,7 @@ impl SlotService {
                             match store.get_timer(tid) {
                                 Ok(Some(timer)) => {
                                     let owner = store.get_timer_owner(tid).ok().flatten();
-                                    if let Err(e) =
-                                        tree.sync_timer_json(&timer, owner.as_deref())
-                                    {
+                                    if let Err(e) = tree.sync_timer_json(&timer, owner.as_deref()) {
                                         eprintln!("bellman: timer folder sync failed: {e}");
                                     }
                                 }
@@ -481,7 +477,9 @@ fn reserved_slot_id_from_filename(file_name: &str) -> SlotResult<String> {
         .strip_suffix(".json")
         .ok_or_else(|| SlotError::Invalid(format!("not a .json slot file: {file_name}")))?;
     let id = stem.strip_prefix("slot-").ok_or_else(|| {
-        SlotError::Invalid(format!("slot file must be named slot-<id>.json: {file_name}"))
+        SlotError::Invalid(format!(
+            "slot file must be named slot-<id>.json: {file_name}"
+        ))
     })?;
     validate_slot_id_grammar(id)?;
     Ok(id.to_string())
@@ -673,8 +671,8 @@ fn events_for_tx(
     timer_id: TimerId,
     max_events: usize,
 ) -> SlotResult<Vec<SlotRunEvent>> {
-    let runs = Store::unacked_runs_for_timer_in_tx(tx, timer_id, max_events)
-        .map_err(SlotError::from)?;
+    let runs =
+        Store::unacked_runs_for_timer_in_tx(tx, timer_id, max_events).map_err(SlotError::from)?;
     Ok(runs.iter().map(SlotRunEvent::from_claim).collect())
 }
 

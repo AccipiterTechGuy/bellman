@@ -9,9 +9,7 @@ use super::service::SlotService;
 use crate::store::Store;
 use chrono::Utc;
 use notify::{RecommendedWatcher, RecursiveMode};
-use notify_debouncer_full::{
-    new_debouncer, DebounceEventResult, Debouncer, RecommendedCache,
-};
+use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
@@ -263,15 +261,13 @@ fn run_watch_loop(cfg: WatchConfig, stop_rx: mpsc::Receiver<()>) -> SlotResult<(
         Err(e) => eprintln!("bellman: watcher: initial slot poll: {e}"),
     }
     if let Some(engine) = &cfg.reply_engine {
-        let stats = crate::reply::poll_once(
-            engine,
-            &store,
-            Utc::now(),
-            Instant::now(),
-            &mut tracker,
-        );
+        let stats =
+            crate::reply::poll_once(engine, &store, Utc::now(), Instant::now(), &mut tracker);
         if stats.errors > 0 {
-            eprintln!("bellman: watcher: initial reply pass: {} error(s)", stats.errors);
+            eprintln!(
+                "bellman: watcher: initial reply pass: {} error(s)",
+                stats.errors
+            );
         }
         crate::reply::reconcile(engine, &store);
     }
@@ -299,13 +295,8 @@ fn run_watch_loop(cfg: WatchConfig, stop_rx: mpsc::Receiver<()>) -> SlotResult<(
         }
         // Reply channel + monotonic deadlines.
         if let Some(engine) = &cfg.reply_engine {
-            let stats = crate::reply::poll_once(
-                engine,
-                &store,
-                Utc::now(),
-                Instant::now(),
-                &mut tracker,
-            );
+            let stats =
+                crate::reply::poll_once(engine, &store, Utc::now(), Instant::now(), &mut tracker);
             if stats.errors > 0 {
                 eprintln!("bellman: watcher: reply pass: {} error(s)", stats.errors);
             }

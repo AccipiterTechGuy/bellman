@@ -115,7 +115,8 @@ impl RunDb for Transaction<'_> {
     fn in_tx(&self, f: &mut dyn FnMut(&dyn RunDb) -> ReplyResult<()>) -> ReplyResult<()> {
         // Already inside the caller's transaction (the fire path).
         f(self)
-    }    fn get_timer(&self, id: TimerId) -> StoreResult<Option<Timer>> {
+    }
+    fn get_timer(&self, id: TimerId) -> StoreResult<Option<Timer>> {
         store::get_timer_conn(self, id)
     }
     fn get_run(&self, run_id: Uuid) -> StoreResult<Option<RunClaim>> {
@@ -527,11 +528,7 @@ impl ReplyEngine {
             // meaningful. Log `superseded` once per distinct content; never
             // apply it; the transport deletes the stale file.
             let row = db.get_run_state(run_id)?;
-            if row
-                .as_ref()
-                .and_then(|r| r.reply_digest.as_deref())
-                == Some(digest)
-            {
+            if row.as_ref().and_then(|r| r.reply_digest.as_deref()) == Some(digest) {
                 return Ok(IngestOutcome::Superseded);
             }
             db.enqueue_event(
@@ -582,7 +579,9 @@ impl ReplyEngine {
         }
 
         // ── Accept: accumulate, transition, log ──────────────────────────
-        self.apply(db, timer, &claim, &mut row, doc, new_state, digest, now_wall, mono_now)?;
+        self.apply(
+            db, timer, &claim, &mut row, doc, new_state, digest, now_wall, mono_now,
+        )?;
         Ok(IngestOutcome::Applied)
     }
 
@@ -783,12 +782,7 @@ impl ReplyEngine {
     /// is Bellman's alone. Always a POST-COMMIT projection: callers run it
     /// after the mutating transaction, never inside it. Notifies the IK5
     /// status listener afterwards (an invalidation, not a state copy).
-    pub fn project_status(
-        &self,
-        store: &Store,
-        timer: &Timer,
-        run_id: &Uuid,
-    ) -> ReplyResult<()> {
+    pub fn project_status(&self, store: &Store, timer: &Timer, run_id: &Uuid) -> ReplyResult<()> {
         let (Some(claim), Some(row)) = (store.get_run(*run_id)?, store.get_run_state(*run_id)?)
         else {
             return Ok(());

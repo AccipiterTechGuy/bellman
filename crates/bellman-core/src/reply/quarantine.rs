@@ -77,7 +77,10 @@ pub fn quarantine_bytes(
 ) -> io::Result<QuarantineOutcome> {
     fs::create_dir_all(bad_dir)?;
     let digest = fnv1a64_hex(bytes);
-    let base = format!("{}-{digest}", fnv1a64_hex(path_string(source_path).as_bytes()));
+    let base = format!(
+        "{}-{digest}",
+        fnv1a64_hex(path_string(source_path).as_bytes())
+    );
     let payload_final = bad_dir.join(format!("{base}.payload"));
     let sidecar_final = bad_dir.join(format!("{base}.sidecar.json"));
     let payload_tmp = bad_dir.join(format!("{base}.payload.tmp"));
@@ -216,8 +219,7 @@ pub fn startup_sweep(bad_dir: &Path) -> io::Result<u64> {
     // Orphan payload: a crash between payload and sidecar install.
     for name in &names {
         if let Some(base) = name.strip_suffix(".payload") {
-            if !has(&format!("{base}.sidecar.json"))
-                && fs::remove_file(bad_dir.join(name)).is_ok()
+            if !has(&format!("{base}.sidecar.json")) && fs::remove_file(bad_dir.join(name)).is_ok()
             {
                 removed += 1;
             }
@@ -423,8 +425,8 @@ mod tests {
         let source = tmp.path().join("reply-live.json");
         fs::write(&source, b"{still invalid").unwrap();
         let condemned = fs::read(&source).unwrap();
-        let outcome = quarantine_bytes(&bad, &source, &condemned, "invalid_json", Value::Null)
-            .unwrap();
+        let outcome =
+            quarantine_bytes(&bad, &source, &condemned, "invalid_json", Value::Null).unwrap();
         assert!(outcome.created);
         // The live app-owned file survives untouched.
         assert_eq!(fs::read(&source).unwrap(), condemned);
@@ -435,8 +437,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let bad = quarantine_dir(tmp.path());
         let source = tmp.path().join("timer-x/reply-huge.json");
-        let outcome =
-            quarantine_unread(&bad, &source, 70 * 1024, "oversize", Value::Null).unwrap();
+        let outcome = quarantine_unread(&bad, &source, 70 * 1024, "oversize", Value::Null).unwrap();
         assert!(outcome.created);
         assert!(outcome.payload_path.is_none());
         // No payload anywhere in the directory.
@@ -448,8 +449,7 @@ mod tests {
         assert_eq!(sidecar["observed_len"], 70 * 1024);
         assert!(sidecar["content_digest"].is_null());
         // Same path + same observed length deduplicates.
-        let again =
-            quarantine_unread(&bad, &source, 70 * 1024, "oversize", Value::Null).unwrap();
+        let again = quarantine_unread(&bad, &source, 70 * 1024, "oversize", Value::Null).unwrap();
         assert!(!again.created);
         assert_eq!(dir_file_count(&bad), 1);
     }

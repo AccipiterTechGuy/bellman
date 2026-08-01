@@ -421,12 +421,8 @@ impl EventPublisher {
             last_error_at: self.last_error_at,
             last_ok_at: self.last_ok_at,
         };
-        if crate::slots::atomic_write_json(
-            &self.log.config().logs_dir,
-            HEALTH_FILE_NAME,
-            &doc,
-        )
-        .is_ok()
+        if crate::slots::atomic_write_json(&self.log.config().logs_dir, HEALTH_FILE_NAME, &doc)
+            .is_ok()
         {
             self.last_written = Some(key);
         }

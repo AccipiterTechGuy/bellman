@@ -131,7 +131,10 @@ fn lock_exclusive(file: &File) -> io::Result<()> {
 #[cfg(unix)]
 fn try_lock_exclusive(file: &File) -> io::Result<bool> {
     use std::os::unix::io::AsFd;
-    match rustix::fs::flock(file.as_fd(), rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+    match rustix::fs::flock(
+        file.as_fd(),
+        rustix::fs::FlockOperation::NonBlockingLockExclusive,
+    ) {
         Ok(()) => Ok(true),
         Err(rustix::io::Errno::WOULDBLOCK) => Ok(false),
         Err(e) => Err(io::Error::from_raw_os_error(e.raw_os_error())),

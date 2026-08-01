@@ -64,11 +64,17 @@ impl SingleNextWake {
     }
 
     pub fn set_master_enabled(&self, enabled: bool) {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).master_enabled = enabled;
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .master_enabled = enabled;
     }
 
     pub fn master_enabled(&self) -> bool {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).master_enabled
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .master_enabled
     }
 
     /// Effective capability: platform probe gated by master toggle.
@@ -121,7 +127,11 @@ impl SingleNextWake {
     }
 
     /// Cancel-then-program the single next wake from the elected due time.
-    pub fn rearm(&self, next_due: Option<DateTime<Utc>>, now: DateTime<Utc>) -> Result<(), WakeError> {
+    pub fn rearm(
+        &self,
+        next_due: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+    ) -> Result<(), WakeError> {
         let mut st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let eff = effective_cap(&st.wake.capability(), st.master_enabled);
         if !eff.is_enabled() {
@@ -196,7 +206,10 @@ impl SingleNextWake {
     }
 
     pub fn last_armed(&self) -> Option<DateTime<Utc>> {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).last_target
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .last_target
     }
 }
 

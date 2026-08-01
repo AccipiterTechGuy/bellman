@@ -68,12 +68,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
     }
 
     /// Build a scheduler that starts with the global pause-all flag set.
-    pub fn new_paused(
-        store: Store,
-        clock: C,
-        action: A,
-        config: SchedulerConfig,
-    ) -> Self {
+    pub fn new_paused(store: Store, clock: C, action: A, config: SchedulerConfig) -> Self {
         Self::new_with_pause(store, clock, action, config, true)
     }
 

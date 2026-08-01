@@ -330,9 +330,7 @@ impl AppConfig {
                 max_catch_up: 10,
             },
             // "coalesce" and any other sanitized value
-            _ => MisfirePolicy::Coalesce {
-                grace_secs: grace,
-            },
+            _ => MisfirePolicy::Coalesce { grace_secs: grace },
         }
     }
 }

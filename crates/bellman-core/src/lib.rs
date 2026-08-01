@@ -31,11 +31,16 @@ pub use app_config::{
     DEFAULT_MAX_CONCURRENT_ACTIONS, DEFAULT_MIN_FREE_SLOTS, DEFAULT_RETENTION_DAYS,
 };
 pub use events::{
-    read_events, RunState, EventLog, EventLogConfig, EventLogError, EventRecord, ReadStats,
+    read_events, EventLog, EventLogConfig, EventLogError, EventRecord, ReadStats, RunState,
     CURRENT_FILE_NAME,
 };
 pub use occurrence::{
     DstFoldPolicy, DstGapPolicy, InvalidMonthDayPolicy, Occurrence, OccurrenceKind, Weekdays,
+};
+pub use platform::{
+    create_wake, elect_next_wake, status_line, Caveat, DisabledReason, MachineWake, PowerEvent,
+    PowerRail, SingleNextWake, WakeCandidate, WakeCapability, WakeError, WakeMechanism,
+    ARM_SLACK_SECS,
 };
 pub use pruner::{
     ensure_system_prune_timer, is_system_prune_timer, needs_year_recalibration, prune_is_due,
@@ -60,37 +65,31 @@ pub use slots::{
     SlotOperation, SlotRequest, SlotResponse, SlotResult, SlotService, SlotStatus, MIN_FREE_SLOTS,
     SCHEMA_V1,
 };
-pub use platform::{
-    create_wake, elect_next_wake, status_line, Caveat, DisabledReason, MachineWake, PowerEvent,
-    PowerRail, SingleNextWake, WakeCandidate, WakeCapability, WakeError, WakeMechanism,
-    ARM_SLACK_SECS,
-};
 pub use store::{
     Action, ClaimStatus, FailureKind, Meta, MisfirePolicy, NewTimer, OpenOptions, OverlapPolicy,
     RetryPolicy, RunClaim, RunStateRow, SlotRequestRecord, Store, StoreError, StoreResult, Timer,
     TimerId, TimerPatch, TimerUpdate, TransportMode,
 };
 pub mod reply;
-pub use reply::{
-    new_anchors, IngestOutcome, ReplyDocument, ReplyEngine, ReplyError, ReplyRejection,
-    ReplyResult, SharedAnchors, REPLY_SCHEMA_V1,
-};
-pub use tree::{
-    folder_name, log_cancelled_for_open_runs, project_fire, reconcile_folders,
-    reply_file_name, short_id, slugify, RunStatus, TimersTree, TreeError, TreeResult,
-    README_FILE_NAME, RUN_SCHEMA_V1, STATUS_FILE_NAME, TIMER_FILE_NAME, TIMER_SCHEMA_V1,
-    TREE_DIR_NAME,
-};
-pub use visible::{
-    default_backup_dir, default_snapshot_path, diff_scans, disable_task, edit_task, enable_task,
-    find_task, load_snapshot, new_cron_task, outcome_to_last_result, platform_name, refuse_system_write,
-    run_task, save_snapshot, scan, timer_logs, DiscoveredTask, LastResult, RunOutcome, ScanDiff,
-    ScanResult, SourceFilter, SourceKind, TaskChange, TaskId, WritePlan,
-};
 pub use calendar::{
     build_snapshot, build_truth_window, local_date, month_bounds, parse_date, parse_tz, render_svg,
     resolve_day_phrase, resolve_month, snapshot_month_from_store, svg_to_png, system_tz_name,
     tasks_from_store, CalendarBuildOptions, CalendarCaps, CalendarDay, CalendarEntry,
     CalendarFormat, CalendarSnapshot, CalendarStatus, ExpandableTask, OutcomeLabel,
     TruthBuildOptions, TruthEntry, TruthSource, TruthWindow, WeekStart, MONTH_NAMES,
+};
+pub use reply::{
+    new_anchors, IngestOutcome, ReplyDocument, ReplyEngine, ReplyError, ReplyRejection,
+    ReplyResult, SharedAnchors, REPLY_SCHEMA_V1,
+};
+pub use tree::{
+    folder_name, log_cancelled_for_open_runs, project_fire, reconcile_folders, reply_file_name,
+    short_id, slugify, RunStatus, TimersTree, TreeError, TreeResult, README_FILE_NAME,
+    RUN_SCHEMA_V1, STATUS_FILE_NAME, TIMER_FILE_NAME, TIMER_SCHEMA_V1, TREE_DIR_NAME,
+};
+pub use visible::{
+    default_backup_dir, default_snapshot_path, diff_scans, disable_task, edit_task, enable_task,
+    find_task, load_snapshot, new_cron_task, outcome_to_last_result, platform_name,
+    refuse_system_write, run_task, save_snapshot, scan, timer_logs, DiscoveredTask, LastResult,
+    RunOutcome, ScanDiff, ScanResult, SourceFilter, SourceKind, TaskChange, TaskId, WritePlan,
 };

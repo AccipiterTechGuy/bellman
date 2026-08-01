@@ -6,7 +6,7 @@
 //! Note: SVG colour literals use `r##"…"##` raw strings so `#rrggbb` is not
 //! parsed as the end of a `r#"…"#` delimiter.
 
-use super::types::{CalendarDay, CalendarSnapshot, MONTH_NAMES, WeekStart};
+use super::types::{CalendarDay, CalendarSnapshot, WeekStart, MONTH_NAMES};
 
 /// Canvas metrics (device-independent; SVG user units).
 const WIDTH: u32 = 980;
@@ -115,10 +115,7 @@ fn render_cell(out: &mut String, day: &CalendarDay, x: f64, y: f64, w: f64, h: f
     let bg = if day.in_month { "#ffffff" } else { "#f3f4f6" };
     let day_fill = if day.in_month { "#111827" } else { "#9ca3af" };
 
-    out.push_str(&format!(
-        r#"  <g data-date="{}">"#,
-        xml_escape(&day.date)
-    ));
+    out.push_str(&format!(r#"  <g data-date="{}">"#, xml_escape(&day.date)));
     out.push('\n');
     out.push_str(&format!(
         r##"    <rect x="{x:.2}" y="{y:.2}" width="{w:.2}" height="{h:.2}" fill="{bg}" stroke="#e5e7eb" stroke-width="1"/>"##
@@ -136,11 +133,7 @@ fn render_cell(out: &mut String, day: &CalendarDay, x: f64, y: f64, w: f64, h: f
     let mut line_y = y + 32.0;
     let max_y = y + h - 8.0;
     // Reserve one line for `+N more` so overflow is never clipped off the cell.
-    let overflow_reserve = if day.overflow > 0 {
-        LINE_H as f64
-    } else {
-        0.0
-    };
+    let overflow_reserve = if day.overflow > 0 { LINE_H as f64 } else { 0.0 };
     for entry in &day.entries {
         if line_y + LINE_H as f64 + overflow_reserve > max_y {
             break;

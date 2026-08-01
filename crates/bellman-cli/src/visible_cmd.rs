@@ -257,15 +257,13 @@ fn rescan(db: &Path) -> ScanResult {
 fn require_task(db: &Path, id: &str) -> Result<DiscoveredTask, CliError> {
     const CMD: &str = "task";
     let result = rescan(db);
-    find_task(&result, id)
-        .cloned()
-        .ok_or_else(|| {
-            CliError::new(
-                CMD,
-                "not_found",
-                format!("task id not found: {id} (run `bellman scan` to list ids)"),
-            )
-        })
+    find_task(&result, id).cloned().ok_or_else(|| {
+        CliError::new(
+            CMD,
+            "not_found",
+            format!("task id not found: {id} (run `bellman scan` to list ids)"),
+        )
+    })
 }
 
 pub fn cmd_task_show(db: &Path, id: &str) -> Result<VisiblePayload, CliError> {
@@ -360,9 +358,7 @@ fn enable_bellman(
         .source
         .strip_prefix("bellman:")
         .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| {
-            CliError::new("task", "invalid_args", "bellman task id missing uuid")
-        })?;
+        .ok_or_else(|| CliError::new("task", "invalid_args", "bellman task id missing uuid"))?;
 
     let before = format!("enabled={}", task.enabled);
     let after = format!("enabled={enabled}");
@@ -428,8 +424,8 @@ fn enable_bellman(
 
 pub fn cmd_task_run(db: &Path, id: &str, confirm: bool) -> Result<VisiblePayload, CliError> {
     let task = require_task(db, id)?;
-    let outcome = run_task(&task, confirm, 300)
-        .map_err(|e| CliError::new("task_run", "run_error", e))?;
+    let outcome =
+        run_task(&task, confirm, 300).map_err(|e| CliError::new("task_run", "run_error", e))?;
     Ok(VisiblePayload::Run(outcome))
 }
 
@@ -544,16 +540,9 @@ pub fn cmd_task_edit(
 ) -> Result<VisiblePayload, CliError> {
     let task = require_task(db, id)?;
     let plan = match task.source_kind {
-        SourceKind::CronUser => edit_task(
-            &task,
-            command,
-            cron,
-            apply,
-            &default_backup_dir(),
-        )
-        .map_err(|e| CliError::new("task_edit", "write_error", e))?,
+        SourceKind::CronUser => edit_task(&task, command, cron, apply, &default_backup_dir())
+            .map_err(|e| CliError::new("task_edit", "write_error", e))?,
         _ => bellman_core::refuse_system_write(&task, "edit"),
     };
     Ok(VisiblePayload::Write(plan))
 }
-

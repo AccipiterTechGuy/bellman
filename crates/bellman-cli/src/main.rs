@@ -354,9 +354,7 @@ enum TaskCommands {
         id: String,
     },
     /// Human explanation of the schedule.
-    Explain {
-        id: String,
-    },
+    Explain { id: String },
     /// Best-effort logs (journal for systemd; honest unknown for cron).
     Logs {
         id: String,
@@ -427,11 +425,7 @@ fn main() -> ExitCode {
 
     // Visible Scheduler commands use a parallel payload type.
     let visible = match &cli.command {
-        Commands::Scan {
-            source,
-            user,
-            diff,
-        } => Some(visible_cmd::cmd_scan(
+        Commands::Scan { source, user, diff } => Some(visible_cmd::cmd_scan(
             &db_path,
             source.as_deref(),
             user.as_deref(),
@@ -440,28 +434,16 @@ fn main() -> ExitCode {
         Commands::Task { action } => Some(match action {
             TaskCommands::Show { id } => visible_cmd::cmd_task_show(&db_path, id),
             TaskCommands::Explain { id } => visible_cmd::cmd_task_explain(&db_path, id),
-            TaskCommands::Logs { id, lines } => {
-                visible_cmd::cmd_task_logs(&db_path, id, *lines)
-            }
-            TaskCommands::Enable {
-                id,
-                dry_run,
-                apply,
-            } => {
+            TaskCommands::Logs { id, lines } => visible_cmd::cmd_task_logs(&db_path, id, *lines),
+            TaskCommands::Enable { id, dry_run, apply } => {
                 let do_apply = *apply && !*dry_run;
                 visible_cmd::cmd_task_enable(&db_path, id, do_apply)
             }
-            TaskCommands::Disable {
-                id,
-                dry_run,
-                apply,
-            } => {
+            TaskCommands::Disable { id, dry_run, apply } => {
                 let do_apply = *apply && !*dry_run;
                 visible_cmd::cmd_task_disable(&db_path, id, do_apply)
             }
-            TaskCommands::Run { id, confirm } => {
-                visible_cmd::cmd_task_run(&db_path, id, *confirm)
-            }
+            TaskCommands::Run { id, confirm } => visible_cmd::cmd_task_run(&db_path, id, *confirm),
             TaskCommands::New {
                 command,
                 cron,

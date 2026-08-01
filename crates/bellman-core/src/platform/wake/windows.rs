@@ -55,13 +55,13 @@ fn probe_live() -> WakeCapability {
 
 #[cfg(windows)]
 fn collect_facts() -> WindowsProbeFacts {
+    use windows::core::GUID;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::System::Power::{
         CallNtPowerInformation, GetSystemPowerStatus, PowerGetActiveScheme, PowerReadACValueIndex,
         PowerReadDCValueIndex, PowerSettingAccessCheck, ACCESS_REASON_TYPE, POWER_PLATFORM_ROLE,
         SYSTEM_POWER_CAPABILITIES, SYSTEM_POWER_STATUS,
     };
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::core::GUID;
 
     // Defaults if probes fail.
     let mut facts = WindowsProbeFacts {
@@ -111,8 +111,10 @@ fn collect_facts() -> WindowsProbeFacts {
         if PowerGetActiveScheme(None, &mut scheme).is_ok() && !scheme.is_null() {
             let mut ac: u32 = 1;
             let mut dc: u32 = 0;
-            let _ = PowerReadACValueIndex(None, scheme, Some(&sleep_sub), Some(&allow_rtc), &mut ac);
-            let _ = PowerReadDCValueIndex(None, scheme, Some(&sleep_sub), Some(&allow_rtc), &mut dc);
+            let _ =
+                PowerReadACValueIndex(None, scheme, Some(&sleep_sub), Some(&allow_rtc), &mut ac);
+            let _ =
+                PowerReadDCValueIndex(None, scheme, Some(&sleep_sub), Some(&allow_rtc), &mut dc);
             facts.ac_rtcwake = ac.min(255) as u8;
             facts.dc_rtcwake = dc.min(255) as u8;
             // LocalFree the scheme pointer — skip if unavailable; leak is tiny.
@@ -126,7 +128,7 @@ fn collect_facts() -> WindowsProbeFacts {
 
 #[cfg(windows)]
 fn live_arm_test() -> Result<(), bool> {
-    use windows::Win32::Foundation::{CloseHandle, HANDLE, FILETIME};
+    use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
     use windows::Win32::System::Threading::{
         CreateWaitableTimerExW, SetWaitableTimer, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
         TIMER_ALL_ACCESS,
@@ -183,8 +185,8 @@ fn utc_to_filetime(at: DateTime<Utc>) -> windows::Win32::Foundation::FILETIME {
     // Unix epoch (1970) = 11644473600 seconds after 1601.
     const EPOCH_DIFF_SECS: i64 = 11_644_473_600;
     let unix = at.timestamp();
-    let intervals = (unix + EPOCH_DIFF_SECS) as u64 * 10_000_000
-        + (at.timestamp_subsec_nanos() as u64 / 100);
+    let intervals =
+        (unix + EPOCH_DIFF_SECS) as u64 * 10_000_000 + (at.timestamp_subsec_nanos() as u64 / 100);
     windows::Win32::Foundation::FILETIME {
         dwLowDateTime: (intervals & 0xFFFF_FFFF) as u32,
         dwHighDateTime: (intervals >> 32) as u32,
@@ -193,12 +195,19 @@ fn utc_to_filetime(at: DateTime<Utc>) -> windows::Win32::Foundation::FILETIME {
 
 impl MachineWake for WindowsWake {
     fn capability(&self) -> WakeCapability {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).capability.clone()
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .capability
+            .clone()
     }
 
     fn re_probe(&self) -> WakeCapability {
         let cap = probe_live();
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).capability = cap.clone();
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .capability = cap.clone();
         cap
     }
 
