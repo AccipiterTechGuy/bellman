@@ -1285,3 +1285,96 @@ fn periodic_floor_rebuilds_even_when_idle() {
         sched.store().horizon_query_count()
     );
 }
+
+/// C11 regression: a misfire that policy decides **not** to fire must still
+/// be written to the log.
+///
+/// `docs/PLAN.md` promises "every miss/outcome is logged to JSONL
+/// (`fired_late`, `skipped_misfire`, `coalesced`)" and `INTEGRATION.md`
+/// lists `skipped_misfire` among the kinds Bellman writes — but the only
+/// producer of that kind was the *overlap* skip inside the fire
+/// transaction. Both misfire skip branches (`Skip` past grace, and
+/// `Coalesce` with the whole backlog out of grace) advanced the timer
+/// silently, so a user whose machine was off through a fire saw nothing at
+/// all in the log.
+#[test]
+fn misfire_skip_past_grace_is_logged_not_silent() {
+    use crate::events::RunState;
+
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+
+    // Daily 09:00 with Skip: calendar kinds get zero skip grace, so a fire
+    // missed by hours is dropped.
+    let missed = Utc.with_ymd_and_hms(2030, 6, 1, 9, 0, 0).unwrap();
+    let skip = daily_timer(
+        &mut store,
+        "daily-skip",
+        NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+        Some(missed - ChronoDuration::days(1)),
+        MisfirePolicy::Skip,
+    );
+    // Coalesce with a 60 s grace: three hours late is far outside it.
+    let coalesce = daily_timer(
+        &mut store,
+        "daily-coalesce",
+        NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+        Some(missed - ChronoDuration::days(1)),
+        MisfirePolicy::Coalesce { grace_secs: 60 },
+    );
+    assert_eq!(skip.next_fire_utc.unwrap(), missed);
+    assert_eq!(coalesce.next_fire_utc.unwrap(), missed);
+
+    // Boot at 12:00 — three hours after the missed 09:00 slot.
+    let clock = SimulatedClock::new(t0);
+    let mut sched = Scheduler::new(
+        store,
+        clock,
+        RecordingAction::new(),
+        SchedulerConfig::default(),
+    );
+    sched.boot().unwrap();
+
+    assert!(
+        sched.action().events.is_empty(),
+        "neither policy should have fired: {:?}",
+        sched.action().events
+    );
+
+    let events: Vec<crate::events::EventRecord> = sched
+        .store()
+        .pending_events(1000)
+        .unwrap()
+        .into_iter()
+        .map(|(_, payload)| serde_json::from_str(&payload).unwrap())
+        .collect();
+    let skipped: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == RunState::SkippedMisfire)
+        .collect();
+    assert_eq!(
+        skipped.len(),
+        2,
+        "both skipped misfires must be logged, got {events:?}"
+    );
+    for e in &skipped {
+        assert_eq!(e.scheduled_for, Some(missed), "the dropped slot is named");
+        assert!(e.run_id.is_none(), "a skipped misfire never mints a run");
+        assert!(
+            e.count.unwrap_or(0) >= 1,
+            "how many instants went with it: {e:?}"
+        );
+    }
+    let names: Vec<_> = skipped
+        .iter()
+        .filter_map(|e| e.timer_name.as_deref())
+        .collect();
+    assert!(names.contains(&"daily-skip"), "{names:?}");
+    assert!(names.contains(&"daily-coalesce"), "{names:?}");
+
+    // And the timers did move on rather than sticking on the missed slot.
+    for id in [skip.id, coalesce.id] {
+        let t = sched.store().get_timer(id).unwrap().unwrap();
+        assert!(t.next_fire_utc.unwrap() > t0, "advanced past now");
+    }
+}

@@ -29,6 +29,43 @@ fn refresh_timer_json(tree: &crate::tree::TimersTree, store: &crate::store::Stor
 }
 
 impl<C: Clock, A: FireAction> Scheduler<C, A> {
+    /// Record that a misfire policy dropped a backlog without firing.
+    ///
+    /// `PLAN.md` promises "every miss/outcome is logged to JSONL
+    /// (`fired_late`, `skipped_misfire`, `coalesced`)", and
+    /// `INTEGRATION.md` lists `skipped_misfire` among the kinds Bellman
+    /// writes. Without this the skip branches advanced the timer silently:
+    /// a user who missed a fire because the machine was off saw *nothing*
+    /// in the log to say so, which is indistinguishable from a scheduler
+    /// that simply forgot. There is no run for a skipped misfire, so the
+    /// event carries the timer, the dropped `scheduled_for` and how many
+    /// instants went with it — never a `run_id`.
+    fn log_skipped_misfire(
+        &mut self,
+        timer: &Timer,
+        scheduled_for: DateTime<Utc>,
+        missed: usize,
+        now: DateTime<Utc>,
+        reason: &'static str,
+    ) {
+        use crate::events::{EventRecord, RunState};
+        let rec = EventRecord::new(RunState::SkippedMisfire)
+            .with_logged_at(now)
+            .with_timer(timer.id, timer.name.clone())
+            .with_scheduled_for(scheduled_for)
+            .with_count(u32::try_from(missed).unwrap_or(u32::MAX))
+            .with_message(reason)
+            .with_detail(serde_json::json!({
+                "policy": timer.misfire,
+                "missed_count": missed,
+                "oldest_missed": scheduled_for.to_rfc3339(),
+                "lateness_secs": now.signed_duration_since(scheduled_for).num_seconds(),
+            }));
+        if let Err(e) = self.store.enqueue_event(&rec) {
+            eprintln!("bellman: skipped_misfire event for {}: {e}", timer.id);
+        }
+    }
+
     /// Apply misfire policy for a single overdue / due timer. Returns delivered fires.
     pub(super) fn handle_due_timer(
         &mut self,
@@ -72,6 +109,14 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                     }
                 } else {
                     // Beyond grace: skip backlog, advance to first fire after now.
+                    let missed = walk_missed(&timer, scheduled_for, now).len().max(1);
+                    self.log_skipped_misfire(
+                        &timer,
+                        scheduled_for,
+                        missed,
+                        now,
+                        "misfire_skip_past_grace",
+                    );
                     self.advance_past_now(timer_id, now)?;
                     Ok(vec![])
                 }
@@ -90,6 +135,13 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
                 // Monday 10:00 after a weekend, with 1h default grace). Nothing
                 // in grace ⇒ skip the whole backlog.
                 let Some(&fire_at) = in_grace.last() else {
+                    self.log_skipped_misfire(
+                        &timer,
+                        scheduled_for,
+                        walk.len().max(1),
+                        now,
+                        "misfire_coalesce_backlog_past_grace",
+                    );
                     self.advance_past_now(timer_id, now)?;
                     return Ok(vec![]);
                 };
