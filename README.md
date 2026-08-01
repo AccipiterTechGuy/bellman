@@ -43,27 +43,51 @@ All product shots live in [`docs/screenshots/`](docs/screenshots/). QA before/af
 Linux is the only platform validated on real hardware today; see
 [Status](#status--what-actually-exists-today).
 
-**1. Prerequisites** (one time). Package names below are Debian / Ubuntu —
-on other distributions install the equivalents.
+**1. System prerequisites** (one time). Refresh the package list first — on a
+fresh machine the list is empty and nothing below installs without it.
+
+Debian / Ubuntu:
 
 ```sh
-# Rust toolchain. rustup writes ~/.cargo/env but cannot modify the shell
-# you are in, so source it (or open a new terminal) before using cargo.
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-
-# Tauri v2 system dependencies
+sudo apt update
 sudo apt install -y git libwebkit2gtk-4.1-dev build-essential curl wget file \
   libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+```
 
-# Node 24, for the UI build. Any Node 24 works — a distro package or fnm is
-# fine. Using nvm: it is a shell function rather than a binary, so it has to
-# be installed and sourced before `nvm` exists as a command.
+Fedora:
+
+```sh
+sudo dnf install -y git gcc gcc-c++ make webkit2gtk4.1-devel openssl-devel \
+  curl wget file libxdo-devel libayatana-appindicator-gtk3-devel librsvg2-devel
+```
+
+Arch:
+
+```sh
+sudo pacman -Syu --needed git base-devel webkit2gtk-4.1 curl wget file \
+  openssl libxdo libayatana-appindicator librsvg
+```
+
+**2. Rust toolchain** (uses `curl` from step 1). `-y` accepts the standard
+install — without it rustup stops for a prompt, which a non-interactive
+shell cannot answer. rustup writes `~/.cargo/env` but cannot modify the
+shell you are in, so source it (or open a new terminal) before using cargo.
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+```
+
+**3. Node 24 + Tauri CLI**, for the UI build. Any Node 24 works — a distro
+package or fnm is fine. Using nvm: it is a shell function rather than a
+binary, so it has to be installed and sourced before `nvm` exists as a
+command.
+
+```sh
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
 source "$HOME/.nvm/nvm.sh"
 nvm install 24
 
-# Tauri CLI
 cargo install tauri-cli --locked
 ```
 
@@ -78,7 +102,7 @@ AppImage bundler fetches its own tooling, and `libgtk-3-dev` arrives with
 `libwebkit2gtk-4.1-dev`. (Running an `.AppImage` afterwards is a different
 matter and needs FUSE on the machine that runs it.)
 
-**2. Build the packages:**
+**4. Build the packages:**
 
 ```sh
 git clone https://github.com/AccipiterTechGuy/bellman && cd bellman
@@ -92,7 +116,7 @@ cargo tauri build --bundles deb,appimage --ci --no-sign
 build and stages the `bellman` CLI sidecar itself (`beforeBuildCommand` in
 `src-tauri/tauri.conf.json`), but it never installs dependencies for you.
 
-**3. Install the deb** (or just run the AppImage):
+**5. Install the deb** (or just run the AppImage):
 
 ```sh
 sudo apt install ./target/release/bundle/deb/Bellman_*.deb
@@ -144,10 +168,20 @@ Node. Two reference apps in [`testing_apps/`](testing_apps/) demonstrate the ful
 
 ## Your data stays yours
 
-Bellman keeps every timer, log and slot in a per-OS data directory (`~/.bellman/` on
-Linux) — **never in this repository**. Cloning the code tells nobody what you schedule.
-See [docs/LOCAL.md](docs/LOCAL.md) for the data-dir layout and the ignored patterns for
-keeping private integrations out of git.
+Bellman keeps every timer, log and slot in a per-OS data directory — **never
+in this repository**. Cloning the code tells nobody what you schedule. There
+are **two** data directories, one per interface:
+
+| OS | `bellman` CLI (default) | desktop app (GUI) |
+|---|---|---|
+| Linux | `~/.bellman/` | `~/.local/share/io.bellman.desktop/` |
+| macOS | `~/.bellman/` | `~/Library/Application Support/io.bellman.desktop/` |
+| Windows | `%USERPROFILE%\.bellman\` | `%APPDATA%\io.bellman.desktop\` (Roaming) |
+
+The GUI shows its active directory under **Settings → Data**; the CLI names its
+default in `bellman --help` (override with `--db` / `BELLMAN_DB`). See
+[docs/LOCAL.md](docs/LOCAL.md) for the data-dir layout and the ignored
+patterns for keeping private integrations out of git.
 
 ## Status — what actually exists today
 
@@ -189,6 +223,7 @@ validating the whole thing on real hardware.
 | Visible Scheduler (`bellman scan` / `task`) — machine-wide schedule inventory | ✅ built (Linux) |
 | Calendar Snapshot (`bellman calendar` / `agenda`) — headless SVG/PNG/JSON | ✅ built |
 | Packaging — deb / AppImage (Linux); NSIS, MSI, dmg unsigned in CI | ✅ built |
+| CI test execution | Linux: full `cargo test` workspace ✅ · macOS: full workspace ✅ · Windows: workspace **except** the `bellman-app` shell-crate unit tests — they exit abnormally on a headless Windows runner and are excluded in `windows.yml` (they still compile there, and run on Linux/macOS) |
 | **Full-system validation** — real Windows / macOS hardware, suspend-resume QA, long-run soak | ⬜ **not started — the one thing between here and a release** |
 
 Linux `.deb` and `.AppImage` build and install today: the deb puts **Bellman** in

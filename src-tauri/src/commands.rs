@@ -1105,10 +1105,18 @@ mod tests {
         let dir = tempdir().unwrap();
         let data_dir = dir.path().to_path_buf();
         let state = create_test_state(data_dir.clone());
-        
+
         let result = do_create_timer(&state, dummy_input());
         assert!(result.is_ok());
         let dto = result.unwrap();
+
+        // R11: the GUI path ENQUEUES the event; the elected publisher appends
+        // it. No scheduler runs in a unit test, so drive the same best-effort
+        // drain one-shot producers (the CLI) use, then verify the log.
+        {
+            let store = state.store.lock();
+            bellman_core::events::EventPublisher::drain_best_effort(&data_dir, &store);
+        }
 
         // Verify the log was written
         let log_path = data_dir.join("logs").join("events.current.jsonl");
@@ -1424,7 +1432,7 @@ mod run_states_tests {
         // A second firing supersedes the first: only the LATEST run is current.
         row.state = "superseded".into();
         {
-            let mut store = state.store.lock();
+            let store = state.store.lock();
             store.update_run_state(&row).unwrap();
         }
         let row2 = fire_run(&state, &owned, "lightbulb");

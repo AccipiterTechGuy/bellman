@@ -5,14 +5,22 @@ customisations live, so nothing personal is ever published by accident.
 
 ## Your scheduling data is NOT in this repo — by design
 
-Everything Bellman knows about *your* timers lives in the per-OS data directory, never
-in the git tree:
+Everything Bellman knows about *your* timers lives in a per-OS data directory,
+never in the git tree. **There are two of them**, and which one is live depends
+on which interface you use — the CLI and the desktop app do **not** share a
+store:
 
-| OS | data dir |
-|---|---|
-| Linux | `~/.bellman/` |
-| macOS | `~/Library/Application Support/bellman/` |
-| Windows | `%APPDATA%\bellman\` |
+| OS | `bellman` CLI (default) | desktop app (GUI) |
+|---|---|---|
+| Linux | `~/.bellman/` | `~/.local/share/io.bellman.desktop/` |
+| macOS | `~/.bellman/` | `~/Library/Application Support/io.bellman.desktop/` |
+| Windows | `%USERPROFILE%\.bellman\` | `%APPDATA%\io.bellman.desktop\` (Roaming) |
+
+So if you run the GUI but integrate against `~/.bellman/` (or vice versa), you
+are looking at a store that is silently empty. Discover the live one without
+reading this doc: the GUI shows its directory under **Settings → Data**, and
+`bellman --help` names the CLI's (override with `--db <PATH>` / `BELLMAN_DB`,
+which shifts the whole tree below to that database's parent directory).
 
 ```
 <data dir>/

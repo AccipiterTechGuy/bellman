@@ -2,6 +2,14 @@
 //!
 //! Acceptance: python3 + bash (minimum) each land a timer. The Python snippet
 //! exercised here matches docs/INTEGRATION.md (optional BELLMAN_DB, check_call).
+//!
+//! These harnesses are Unix-only by construction (bash shebang scripts,
+//! `/proc/sys/kernel/random/uuid`, `/tmp` request files, `:` PATH separator,
+//! extensionless binary name) — they exercise the doc's bash/Python/Node
+//! snippets, and gating them off Windows keeps `cargo test --workspace`
+//! runnable there (SHIP1-F). The PowerShell client in the doc is untested
+//! on any platform today.
+#![cfg(unix)]
 
 use bellman_core::slots::{SlotConfig, SlotService, MIN_FREE_SLOTS};
 use bellman_core::store::{OpenOptions, Store};

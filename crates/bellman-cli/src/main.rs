@@ -24,7 +24,10 @@ use std::process::ExitCode;
     about = "Bellman task scheduler CLI",
     long_about = "Create, list, edit, preview, pause, run-now, and delete timers \
                   against the local Bellman store. Primary consumer: AI agents \
-                  (use --json on every command)."
+                  (use --json on every command).\n\n\
+                  Data directory: ~/.bellman/ (timers.db, logs/, slots/, timers/; \
+                  %USERPROFILE%\\.bellman\\ on Windows). The desktop app uses its \
+                  own per-OS app-data dir instead — see docs/LOCAL.md."
 )]
 struct Cli {
     /// Emit machine-readable JSON on stdout (stable schema; see docs/CLI.md).
@@ -33,7 +36,8 @@ struct Cli {
 
     /// Path to the timers SQLite database.
     ///
-    /// Defaults to `$BELLMAN_DB` when set, else `~/.bellman/timers.db`.
+    /// Defaults to `$BELLMAN_DB` when set, else `~/.bellman/timers.db`; the
+    /// data directory (logs/, slots/, timers/) is the database's parent.
     #[arg(long, global = true, env = "BELLMAN_DB", value_name = "PATH")]
     db: Option<PathBuf>,
 
@@ -93,6 +97,36 @@ enum Commands {
         /// Fire-delivery transport (IK6): auto | json | ipc (default json).
         #[arg(long, value_name = "MODE")]
         transport: Option<String>,
+
+        /// Wake action: none | launch | notify (default none).
+        ///
+        /// `launch` requires --command and runs it (arg array, no shell)
+        /// when the timer fires; `notify` requires --title and shows a
+        /// desktop notification.
+        #[arg(long, value_name = "KIND")]
+        action: Option<String>,
+
+        /// Command to run for `--action launch` (absolute path recommended).
+        #[arg(long, value_name = "PATH")]
+        command: Option<String>,
+
+        /// One argument for the launch command; repeat per argument
+        /// (e.g. `--args -m --args "hello world"`). No shell splitting.
+        /// Hyphen-leading values are accepted (each `--args` takes exactly one).
+        #[arg(long = "args", value_name = "ARG", allow_hyphen_values = true)]
+        args: Vec<String>,
+
+        /// Working directory for `--action launch`.
+        #[arg(long, value_name = "DIR")]
+        workdir: Option<String>,
+
+        /// Notification title for `--action notify`.
+        #[arg(long, value_name = "TEXT")]
+        title: Option<String>,
+
+        /// Notification body for `--action notify`.
+        #[arg(long, value_name = "TEXT")]
+        body: Option<String>,
     },
 
     /// List all timers.
@@ -140,6 +174,34 @@ enum Commands {
         /// Fire-delivery transport (IK6): auto | json | ipc.
         #[arg(long, value_name = "MODE")]
         transport: Option<String>,
+
+        /// Replace the wake action: none | launch | notify.
+        ///
+        /// Sets the whole action: `launch` requires --command (args reset
+        /// to --args, default empty), `notify` requires --title.
+        #[arg(long, value_name = "KIND")]
+        action: Option<String>,
+
+        /// Command to run for `--action launch` (absolute path recommended).
+        #[arg(long, value_name = "PATH")]
+        command: Option<String>,
+
+        /// One argument for the launch command; repeat per argument.
+        /// Hyphen-leading values are accepted (each `--args` takes exactly one).
+        #[arg(long = "args", value_name = "ARG", allow_hyphen_values = true)]
+        args: Vec<String>,
+
+        /// Working directory for `--action launch`.
+        #[arg(long, value_name = "DIR")]
+        workdir: Option<String>,
+
+        /// Notification title for `--action notify`.
+        #[arg(long, value_name = "TEXT")]
+        title: Option<String>,
+
+        /// Notification body for `--action notify`.
+        #[arg(long, value_name = "TEXT")]
+        body: Option<String>,
     },
 
     /// Delete a timer.
@@ -545,6 +607,12 @@ fn main() -> ExitCode {
             cron,
             tags,
             transport,
+            action,
+            command,
+            args,
+            workdir,
+            title,
+            body,
         } => commands::add(
             &db_path,
             commands::AddArgs {
@@ -559,6 +627,12 @@ fn main() -> ExitCode {
                 cron,
                 tags,
                 transport,
+                action,
+                command,
+                args,
+                workdir,
+                title,
+                body,
             },
         ),
         Commands::List => commands::list(&db_path),
@@ -573,6 +647,12 @@ fn main() -> ExitCode {
             month,
             enabled,
             transport,
+            action,
+            command,
+            args,
+            workdir,
+            title,
+            body,
         } => commands::edit(
             &db_path,
             &name_or_id,
@@ -586,6 +666,12 @@ fn main() -> ExitCode {
                 month,
                 enabled,
                 transport,
+                action,
+                command,
+                args,
+                workdir,
+                title,
+                body,
             },
         ),
         Commands::Rm { name_or_id } => commands::rm(&db_path, &name_or_id),
@@ -718,6 +804,11 @@ where
         "--source",
         "--user",
         "--command",
+        "--action",
+        "--args",
+        "--workdir",
+        "--title",
+        "--body",
         "--lines",
         "--format",
         "--out",

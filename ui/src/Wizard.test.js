@@ -56,7 +56,7 @@ function installTauriMock(handlers = {}) {
 
 const flush = () => new Promise((r) => setTimeout(r, 20));
 
-function wizardHandlers(demoInfoValue) {
+function wizardHandlers(demoInfoValue, wakeStatusValue = null) {
   const choices = [];
   return {
     choices,
@@ -76,6 +76,8 @@ function wizardHandlers(demoInfoValue) {
       },
       dependency_check: async () => ({ items: [] }),
       demo_info: async () => demoInfoValue,
+      wake_status: async () => wakeStatusValue,
+      wake_reprobe: async () => wakeStatusValue,
     },
   };
 }
@@ -181,8 +183,7 @@ describe('Wizard demo offer (WIZ1)', () => {
   });
 });
 
-describe('DemoPanel interpreter gating (WIZ1)', () => {
-  function mountPanel(info) {
+describe('DemoPanel interpreter gating (WIZ1)', () => {  function mountPanel(info) {
     const target = document.createElement('div');
     document.body.appendChild(target);
     const c = mount(DemoPanel, { target, props: { info } });
@@ -235,5 +236,90 @@ describe('DemoPanel interpreter gating (WIZ1)', () => {
     const cmds = invokes.map((i) => i.cmd);
     expect(cmds).toContain('demo_launch');
     expect(cmds).not.toContain('create_timer');
+  });
+});
+
+describe('Wizard wake hint honesty (SHIP1-B)', () => {
+  // The platform module's own words (crates/bellman-core/src/platform/wake/mod.rs
+  // DisabledReason::fix_hint) — the wake_status DTO carries them verbatim, and
+  // the wizard must render them verbatim rather than restating them.
+  const PLATFORM_FIX_HINT =
+    "timerfd needs CAP_WAKE_ALARM in this process. Options: (1) setcap 'cap_wake_alarm+eip' on the bellman-app binary, (2) run under a systemd user unit with AmbientCapabilities=CAP_WAKE_ALARM, or (3) install the udev rule below so the sysfs wakealarm fallback is group-writable. Plain XDG desktop autostart does not grant this capability on many desktops.";
+
+  const wakeUnavailable = {
+    statusLine:
+      'Wake from sleep: OFF — no permission to arm a wake timer (missing CAP_WAKE_ALARM)',
+    enabled: false,
+    masterEnabled: false,
+    platformEnabled: false,
+    platform: 'linux',
+    fixHint: PLATFORM_FIX_HINT,
+    fixAction: 'linux_udev',
+    udevSnippet: null,
+    powercfgCommand: null,
+    loginItemsUrl: null,
+  };
+
+  it('the autostart hint no longer claims XDG autostart grants CAP_WAKE_ALARM', async () => {
+    const { handlers } = wizardHandlers(demoInfoFixture(), wakeUnavailable);
+    installTauriMock(handlers);
+    const { target, component: c } = mountWizard();
+    component = c;
+    await flush();
+
+    const hint = target.querySelector('[data-testid="wizard-autostart-hint"]');
+    expect(hint, 'static autostart hint must exist').toBeTruthy();
+    // The old false promise (XDG autostart "preserves the ambient
+    // CAP_WAKE_ALARM lineage") must be gone — the only permitted statement
+    // is the negative one, matching the platform module's own fix_hint.
+    expect(hint.textContent).not.toContain('preserves the ambient');
+    expect(hint.textContent).toContain('CAP_WAKE_ALARM');
+    expect(hint.textContent).toMatch(/does\s+not/i);
+  });
+
+  it('renders the platform fix_hint verbatim when the probe says wake is unavailable', async () => {
+    const { handlers } = wizardHandlers(demoInfoFixture(), wakeUnavailable);
+    installTauriMock(handlers);
+    const { target, component: c } = mountWizard();
+    component = c;
+    await flush();
+
+    const el = target.querySelector('[data-testid="wizard-wake-fixhint"]');
+    expect(el, 'probe fix-hint must render on the autostart step').toBeTruthy();
+    expect(el.textContent).toBe(PLATFORM_FIX_HINT);
+  });
+
+  it('shows no fix-hint when the probe says wake is available', async () => {
+    const wakeOk = {
+      ...wakeUnavailable,
+      statusLine: 'Wake from sleep: ON via timerfd',
+      enabled: true,
+      masterEnabled: true,
+      platformEnabled: true,
+      fixHint: null,
+      fixAction: null,
+    };
+    const { handlers } = wizardHandlers(demoInfoFixture(), wakeOk);
+    installTauriMock(handlers);
+    const { target, component: c } = mountWizard();
+    component = c;
+    await flush();
+
+    expect(target.querySelector('[data-testid="wizard-wake-fixhint"]')).toBeNull();
+  });
+
+  it('the wake step reflects the real probe result, not an assumption', async () => {
+    const { handlers } = wizardHandlers(demoInfoFixture(), wakeUnavailable);
+    installTauriMock(handlers);
+    const { target, component: c } = mountWizard();
+    component = c;
+    await flush();
+
+    clickButtonByText(target, 'Next');
+    await flush();
+
+    const probe = target.querySelector('[data-testid="wizard-wake-probe"]');
+    expect(probe, 'wake step must show the live probe result').toBeTruthy();
+    expect(probe.textContent).toContain('no permission to arm a wake timer');
   });
 });

@@ -153,25 +153,15 @@ fn retention_deletes_archives_past_window() {
     assert!(recent.exists(), "recent archive must be kept");
 }
 
-/// Set mtime without an extra crate (POSIX utimensat via filetime alternative:
-/// rewrite isn't enough on all FS; use `filetime` if present — else touch via
-/// a short retention window instead).
+/// Set mtime cross-platform via `std::fs::File::set_modified` (stable since
+/// Rust 1.75) — no subprocess, no GNU/BSD `touch` flag divergence, so this
+/// suite runs identically on Linux, macOS and Windows (SHIP1-F).
 fn filetime_set_mtime(path: &Path, when: SystemTime) {
-    // Prefer the `filetime` approach via libc when available; for tests we can
-    // also use a tiny retention window + sleep, but setting mtime is cleaner.
-    // std has no set_mtime — use a subprocess `touch -d` as a portable-enough
-    // fallback on Linux (this worktree's CI target).
-    let secs = when
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let status = std::process::Command::new("touch")
-        .arg("-d")
-        .arg(format!("@{secs}"))
-        .arg(path)
-        .status()
-        .expect("touch");
-    assert!(status.success(), "touch -d failed");
+    let f = fs::File::options()
+        .write(true)
+        .open(path)
+        .expect("open for set_modified");
+    f.set_modified(when).expect("set_modified");
 }
 
 #[test]

@@ -63,7 +63,11 @@ pub fn run() {
 
     builder
         .setup(move |app| {
-            // Bellman data directory: ~/.bellman (Linux/macOS) / %APPDATA% (Windows).
+            // Bellman data directory: the per-OS app-data dir for identifier
+            // io.bellman.desktop (~/.local/share/io.bellman.desktop on Linux,
+            // ~/Library/Application Support/io.bellman.desktop on macOS,
+            // %APPDATA%\io.bellman.desktop on Windows) — NOT the CLI's
+            // ~/.bellman; both are documented in docs/LOCAL.md.
             let data_dir = resolve_data_dir(app.handle())?;
             std::fs::create_dir_all(&data_dir).map_err(setup_err("create data dir"))?;
             let db_path = data_dir.join("timers.db");

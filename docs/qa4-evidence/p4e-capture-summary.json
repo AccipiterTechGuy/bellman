@@ -1,6 +1,6 @@
 {
   "elapsed_s": 88.54,
-  "cli": "/home/sami/bellman/target/release/bellman",
+  "cli": "/home/tester/bellman/target/release/bellman",
   "data_dir": "/tmp/bellman-qa-session/share/io.bellman.desktop",
   "display": ":97",
   "input_backend": "tauri-driver+WebKitWebDriver",

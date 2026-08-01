@@ -6,6 +6,6 @@
     "1135000 1134983 49388 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 22"
   ],
   "bellman": [
-    "1134983       1 187540 /home/sami/bellman/.train-worktrees/2026-07-28_0008/target/release/bellman-app"
+    "1134983       1 187540 /home/tester/bellman/.train-worktrees/2026-07-28_0008/target/release/bellman-app"
   ]
 }

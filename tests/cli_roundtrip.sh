@@ -257,6 +257,114 @@ if ! echo "$MSG" | grep -qE '(action=none|notify stub)'; then
 fi
 ok "run-now (run_id=$RUN_ID)"
 
+echo "==> wake actions (SHIP1-E): launch / notify / edit / validation"
+JSON="$(run_json add --name launcher --occurrence interval --every-secs 60 \
+  --action launch --command /usr/bin/true --tz UTC)" || die "add launch" "$JSON"
+assert_ok "add launch" "$JSON"
+ATYPE="$(jget "$JSON" 'obj["timer"]["action"].get("type")')"
+ACMD="$(jget "$JSON" 'obj["timer"]["action"].get("command")')"
+if [[ "$ATYPE" != "launch" || "$ACMD" != "/usr/bin/true" ]]; then
+  die "add launch action" "expected launch /usr/bin/true, got: $JSON"
+fi
+ok "add --action launch --command /usr/bin/true"
+
+JSON="$(run_json run-now launcher)" || die "run-now launch" "$JSON"
+assert_ok "run-now launch" "$JSON"
+MSG="$(jget "$JSON" 'obj.get("message") or ""')"
+if ! echo "$MSG" | grep -q 'launch ok exit=0'; then
+  die "run-now launch message" "expected 'launch ok exit=0', got: $MSG"
+fi
+ok "run-now launch ran (exit=0)"
+
+JSON="$(run_json add --name hyadd --occurrence interval --every-secs 60 \
+  --action launch --command /usr/local/bin/backup.sh --args --full --tz UTC)" \
+  || die "add launch hyphen arg" "$JSON"
+assert_ok "add launch hyphen arg" "$JSON"
+AARGS="$(jget "$JSON" 'obj["timer"]["action"].get("args")')"
+if [[ "$AARGS" != "['--full']" ]]; then
+  die "add launch hyphen arg" "expected ['--full'], got: $AARGS"
+fi
+ok "add --args --full (hyphen-leading, space form)"
+JSON="$(run_json rm hyadd)" || die "rm hyadd" "$JSON"
+assert_ok "rm hyadd" "$JSON"
+ok "rm hyadd"
+
+JSON="$(run_json edit launcher --action launch --command /bin/echo --args hello --args "two words")" \
+  || die "edit launch args" "$JSON"
+assert_ok "edit launch args" "$JSON"
+AARGS="$(jget "$JSON" 'obj["timer"]["action"].get("args")')"
+if [[ "$AARGS" != "['hello', 'two words']" ]]; then
+  die "edit launch args" "expected ['hello', 'two words'], got: $AARGS"
+fi
+ok "edit --action launch --args (repeatable)"
+
+# Hyphen-leading args (audit REPRO): flags are what launch commands almost
+# always take; clap must accept them in the documented space form.
+JSON="$(run_json edit launcher --action launch --command /bin/echo --args -m --args "two words")" \
+  || die "edit launch hyphen args" "$JSON"
+assert_ok "edit launch hyphen args" "$JSON"
+AARGS="$(jget "$JSON" 'obj["timer"]["action"].get("args")')"
+if [[ "$AARGS" != "['-m', 'two words']" ]]; then
+  die "edit launch hyphen args" "expected ['-m', 'two words'], got: $AARGS"
+fi
+ok "edit --args -m (hyphen-leading, space form)"
+
+JSON="$(run_json edit launcher --action launch --command /bin/echo --args --full)" \
+  || die "edit launch double-dash arg" "$JSON"
+AARGS="$(jget "$JSON" 'obj["timer"]["action"].get("args")')"
+if [[ "$AARGS" != "['--full']" ]]; then
+  die "edit launch double-dash arg" "expected ['--full'], got: $AARGS"
+fi
+ok "edit --args --full (double-dash value)"
+
+JSON="$(run_json edit launcher --action launch --command /bin/echo --args=--full)" \
+  || die "edit launch equals arg" "$JSON"
+AARGS="$(jget "$JSON" 'obj["timer"]["action"].get("args")')"
+if [[ "$AARGS" != "['--full']" ]]; then
+  die "edit launch equals arg" "expected ['--full'], got: $AARGS"
+fi
+ok "edit --args=--full (equals form)"
+
+JSON="$(run_json edit launcher --action notify --title "Hi" --body "there")" \
+  || die "edit notify" "$JSON"
+ATYPE="$(jget "$JSON" 'obj["timer"]["action"].get("type")')"
+ATITLE="$(jget "$JSON" 'obj["timer"]["action"].get("title")')"
+if [[ "$ATYPE" != "notify" || "$ATITLE" != "Hi" ]]; then
+  die "edit notify" "expected notify/Hi, got: $JSON"
+fi
+ok "edit --action notify --title"
+
+JSON="$(run_json edit launcher --action none)" || die "edit none" "$JSON"
+ATYPE="$(jget "$JSON" 'obj["timer"]["action"].get("type")')"
+if [[ "$ATYPE" != "none" ]]; then
+  die "edit none" "expected action none, got: $JSON"
+fi
+ok "edit --action none (clears)"
+
+set +e
+BAD="$("${BELLMAN[@]}" add --name bad-act --occurrence interval --every-secs 60 --command /usr/bin/true 2>/dev/null)"
+BAD_RC=$?
+set -e
+if [[ $BAD_RC -eq 0 ]]; then
+  die "--command without --action" "expected non-zero rc"
+fi
+assert_ok_false "--command without --action ok" "$BAD"
+ok "--command without --action rejected (invalid_args)"
+
+set +e
+BAD="$("${BELLMAN[@]}" add --name bad-act2 --occurrence interval --every-secs 60 --action launch 2>/dev/null)"
+BAD_RC=$?
+set -e
+if [[ $BAD_RC -eq 0 ]]; then
+  die "--action launch without --command" "expected non-zero rc"
+fi
+assert_ok_false "--action launch without --command ok" "$BAD"
+ok "--action launch without --command rejected"
+
+JSON="$(run_json rm launcher)" || die "rm launcher" "$JSON"
+assert_ok "rm launcher" "$JSON"
+ok "rm launcher"
+
 echo "==> rm all 7 by name"
 for name in once-job tick daily-job weekly-job monthly-job yearly-job cron-job; do
   JSON="$(run_json rm "$name")" || die "rm $name" "$JSON"

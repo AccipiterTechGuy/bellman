@@ -1,8 +1,8 @@
 [19:08:06] isolated env: DISPLAY=:90 XDG_DATA_HOME=/tmp/sch2-live/share DATA=/tmp/sch2-live/share/io.bellman.desktop
 [19:08:06] started xvfb pid=451623: Xvfb :90 -screen 0 1280x800x24
-[19:08:07] started bellman-app pid=451627: dbus-run-session -- /home/sami/bellman/.train-worktrees/2026-07-31_0007/target/debug/bellman-app
+[19:08:07] started bellman-app pid=451627: dbus-run-session -- /home/tester/bellman/.train-worktrees/2026-07-31_0007/target/debug/bellman-app
 [19:08:33] bellman-app engine up: db + free stubs present
-[19:08:33] started lightbulb pid=453146: /usr/bin/python3 /home/sami/bellman/.train-worktrees/2026-07-31_0007/testing_apps/lightbulb/lightbulb.py --slots /tmp/sch2-live/share/io.bellman.desktop/slots --on-secs 5
+[19:08:33] started lightbulb pid=453146: /usr/bin/python3 /home/tester/bellman/.train-worktrees/2026-07-31_0007/testing_apps/lightbulb/lightbulb.py --slots /tmp/sch2-live/share/io.bellman.desktop/slots --on-secs 5
 [19:08:34] PATH B: creating timer 'sch2-live-slot-submit' via bellman slot-submit (interval 45 s)
 [19:08:34] slot-submit rc=0: slot-submit status=ok request_id=bc03fd4c-c1fe-4827-b677-7bd1abd75a94 slot_id=0001 processed=1 timer_id=81922469-bac4-4365-94a4-9ae229dcdfc8 next_fire_at=2026-07-31T19:09:19.009009220+00:00
 [19:09:25] PATH-B: PASS run_id=7fe70021-352c-4322-b4c2-3b7404606a51
@@ -24,7 +24,7 @@
 [19:11:02] GUI-A:   2026-07-31T19:10:56Z  kind=acknowledged  run_id=ea6454e0-18f7-4884-b761-e7cfa2ba113e
 [19:11:02] GUI-A:   2026-07-31T19:11:01Z  kind=completed     run_id=ea6454e0-18f7-4884-b761-e7cfa2ba113e
 [19:11:02] GUI-A:   scheduled_for=2026-07-31 19:10:56+00:00  fired lateness=3 ms  (created at 19:10:16, fired by schedule, no run-now)
-[19:11:02] started lightbulb-gui-b pid=466239: /usr/bin/python3 /home/sami/bellman/.train-worktrees/2026-07-31_0007/testing_apps/lightbulb_gui/lightbulb_gui.py --slots /tmp/sch2-live/share/io.bellman.desktop/slots --on-secs 5
+[19:11:02] started lightbulb-gui-b pid=466239: /usr/bin/python3 /home/tester/bellman/.train-worktrees/2026-07-31_0007/testing_apps/lightbulb_gui/lightbulb_gui.py --slots /tmp/sch2-live/share/io.bellman.desktop/slots --on-secs 5
 [19:11:04] GUI-B: slot-submit creates 'sch2-gui-slot-submit' for app lightbulb-gui (once at 2026-07-31T19:11:49Z)
 [19:11:04] slot-submit rc=0: slot-submit status=ok request_id=8adfbae0-763c-4c44-858c-55e23d7e0f8b slot_id=0004 processed=1 timer_id=c9cdfa7f-1e40-4b20-b880-dca36bf3c512 next_fire_at=2026-07-31T19:11:49+00:00
 [19:11:54] GUI-B: PASS run_id=ab3bfce6-6353-4173-994e-11f23011246d

@@ -35,6 +35,11 @@ Scan JSON (stable keys): `ok`, `command`, `scanned_at`, `platform`, `filter`,
 `source`, `owner`, `command`, `schedule_expr`, `human_explanation`, `next_run`,
 `last_run`, `last_result`, `enabled`, `writable`, etc.
 
+> ⚠️ **Privacy:** `bellman scan` prints **full command lines** of every
+> schedule on the machine — crontabs included — which can contain local
+> paths, home-directory names, or tokens embedded in commands. Redact before
+> pasting raw scan output into public issues, chats, or logs.
+
 ## Calendar Snapshot (`calendar` / `agenda`)
 
 Render any month (or date range) as a clean calendar image — **SVG or PNG** —
@@ -180,6 +185,7 @@ Create a timer.
 
 ```text
 bellman add --name <NAME> --occurrence <KIND> [kind flags] [--tz TZ] [--tag T]...
+           [--action none|launch|notify] [action flags]
 ```
 
 | Flag | Required for | Description |
@@ -195,6 +201,17 @@ bellman add --name <NAME> --occurrence <KIND> [kind flags] [--tz TZ] [--tag T]..
 | `--tz` | optional | IANA timezone (default: system local if detectable, else `UTC`) |
 | `--tag` | optional | Repeatable free-form tags |
 | `--transport` | optional | Fire-delivery transport (IK6): `auto` \| `json` \| `ipc` (default `json`) |
+| `--action` | optional | Wake action: `none` (default) \| `launch` \| `notify` |
+| `--command` | `--action launch` | Command to run at fire (arg array, no shell; absolute path recommended) |
+| `--args` | optional (launch) | One argument per occurrence — repeat the flag (`--args -m --args "two words"`); no shell splitting |
+| `--workdir` | optional (launch) | Working directory for the command |
+| `--title` | `--action notify` | Notification title |
+| `--body` | optional (notify) | Notification body |
+
+Action flags without a matching `--action` are rejected (`invalid_args`), as
+are empty `--command` / `--title`. The action shape matches the slot payload's
+`action` object (`{"type":"launch","command","args","workdir"}` /
+`{"type":"notify","title","body"}`).
 
 **Time formats**
 
@@ -221,6 +238,10 @@ bellman add --name payroll --occurrence monthly --day 1 --time 08:00 --json
 bellman add --name ny --occurrence yearly --month 1 --day 1 --time 00:00 --json
 bellman add --name once-job --occurrence once --time 2030-06-15T12:00:00 --tz UTC --json
 bellman add --name noon --occurrence cron --cron "0 0 12 * * *" --tz UTC --json
+bellman add --name offsite-backup --occurrence daily --time 03:30 \
+  --action launch --command /usr/local/bin/backup.sh --args --full --json
+bellman add --name standup-reminder --occurrence weekly --days mon,wed,fri --time 09:25 \
+  --action notify --title "Standup in 5" --body "Grab your notes" --json
 ```
 
 ---
@@ -253,12 +274,18 @@ Patch a timer identified by **name or id**.
 ```text
 bellman edit <name-or-id> [--name NEW] [--time TIME] [--enabled true|false]
                            [--every-secs N] [--days …] [--day N] [--month N]
-                           [--cron EXPR] [--transport auto|json|ipc] [--json]
+                           [--cron EXPR] [--transport auto|json|ipc]
+                           [--action none|launch|notify] [--command PATH]
+                           [--args ARG]... [--workdir DIR] [--title T] [--body B]
+                           [--json]
 ```
 
 - `--time` updates the wall-clock component of the existing kind (or once-at).
 - Kind-specific flags only apply when the timer already has that kind.
 - `--transport` sets the fire-delivery transport (IK6); a timer owner change applies from the next firing.
+- `--action` replaces the **whole** action: `launch` requires `--command`
+  (the arg list resets to the given `--args`, default empty), `notify`
+  requires `--title`, `none` clears the action. Same validation as `add`.
 - At least one patch flag is required.
 - Uses optimistic revision internally (single writer; agents need not pass revision).
 

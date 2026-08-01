@@ -6,7 +6,7 @@ engine pids: {
     "781478  781459 49220 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 25"
   ],
   "bellman": [
-    "781459  781455 189920 /home/sami/bellman/.train-worktrees/2026-07-28_0002/target/release/bellman"
+    "781459  781455 189920 /home/tester/bellman/.train-worktrees/2026-07-28_0002/target/release/bellman"
   ]
 }
 userAgent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15
@@ -305,7 +305,7 @@ DONE {
       "781478  781459 49544 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 25"
     ],
     "bellman": [
-      "781459  781455 197788 /home/sami/bellman/.train-worktrees/2026-07-28_0002/target/release/bellman"
+      "781459  781455 197788 /home/tester/bellman/.train-worktrees/2026-07-28_0002/target/release/bellman"
     ]
   },
   "userAgent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",

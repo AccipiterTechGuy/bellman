@@ -1915,11 +1915,19 @@ main {
   flex-wrap: wrap;
 }
 
-.settings-row label {
+.settings-row label,
+.settings-row .settings-label {
   flex: 1;
   min-width: 12rem;
   font-size: var(--text-sm);
   color: var(--fg-primary);
+}
+
+.data-path {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  word-break: break-all;
+  user-select: all;
 }
 
 .status-line {

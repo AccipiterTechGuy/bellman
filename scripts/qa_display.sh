@@ -158,7 +158,7 @@ qa_display_start() {
   # Avoid gvfs FUSE mounts under our private XDG_RUNTIME_DIR (they block teardown).
   export GIO_USE_VFS=local
   export GTK_USE_PORTAL=0
-  # Software GL under Xvfb — DRI may work (sami has ACL on /dev/dri) but
+  # Software GL under Xvfb — DRI may work (the QA user has ACL on /dev/dri) but
   # software is the reliable path and does not touch the operator's GPU session.
   export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}"
   export WEBKIT_DISABLE_COMPOSITING_MODE="${WEBKIT_DISABLE_COMPOSITING_MODE:-1}"
