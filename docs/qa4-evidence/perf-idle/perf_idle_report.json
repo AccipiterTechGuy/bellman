@@ -7,7 +7,7 @@
   "event_lines_total": 1201,
   "event_log_path": "/home/tester/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data/logs/events.current.jsonl",
   "fired_or_delivered_count": 1200,
-  "host": "Linux sami-System-Product-Name 7.0.0-28-generic #28~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Wed Jul  1 15:50:57 UTC 2 x86_64 x86_64 x86_64 GNU/Linux",
+  "host": "Linux tester-System-Product-Name 7.0.0-28-generic #28~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Wed Jul  1 15:50:57 UTC 2 x86_64 x86_64 x86_64 GNU/Linux",
   "measured_at": "2026-07-28T13:10:29.815137511+00:00",
   "method": "engine-only SystemClock + ActionRunner + EventLog; one 1s interval Action::None",
   "pid": 887356,

@@ -47,7 +47,7 @@ report=/home/tester/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/p
   "event_lines_total": 1201,
   "event_log_path": "/home/tester/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data/logs/events.current.jsonl",
   "fired_or_delivered_count": 1200,
-  "host": "Linux sami-System-Product-Name 7.0.0-28-generic #28~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Wed Jul  1 15:50:57 UTC 2 x86_64 x86_64 x86_64 GNU/Linux",
+  "host": "Linux tester-System-Product-Name 7.0.0-28-generic #28~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Wed Jul  1 15:50:57 UTC 2 x86_64 x86_64 x86_64 GNU/Linux",
   "measured_at": "2026-07-28T13:10:29.815137511+00:00",
   "method": "engine-only SystemClock + ActionRunner + EventLog; one 1s interval Action::None",
   "pid": 887356,
@@ -85,13 +85,13 @@ report=/home/tester/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/p
 }
 == evidence ==
 total 372
-drwxrwxr-x 3 sami sami   4096 Jul 28 16:10 .
-drwxrwxr-x 3 sami sami   4096 Jul 28 16:00 ..
--rw-rw-r-- 1 sami sami 356044 Jul 28 16:10 events.current.jsonl
--rw-rw-r-- 1 sami sami   3278 Jul 28 16:10 harness.log
--rw-rw-r-- 1 sami sami   1211 Jul 28 16:10 perf_idle_report.json
--rw-rw-r-- 1 sami sami   2519 Jul 28 16:10 perf_idle.stdout
-drwxrwxr-x 3 sami sami   4096 Jul 28 16:10 run-data
+drwxrwxr-x 3 tester tester   4096 Jul 28 16:10 .
+drwxrwxr-x 3 tester tester   4096 Jul 28 16:00 ..
+-rw-rw-r-- 1 tester tester 356044 Jul 28 16:10 events.current.jsonl
+-rw-rw-r-- 1 tester tester   3278 Jul 28 16:10 harness.log
+-rw-rw-r-- 1 tester tester   1211 Jul 28 16:10 perf_idle_report.json
+-rw-rw-r-- 1 tester tester   2519 Jul 28 16:10 perf_idle.stdout
+drwxrwxr-x 3 tester tester   4096 Jul 28 16:10 run-data
 --- report ---
 {
   "clk_tck": 100,
@@ -102,7 +102,7 @@ drwxrwxr-x 3 sami sami   4096 Jul 28 16:10 run-data
   "event_lines_total": 1201,
   "event_log_path": "/home/tester/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data/logs/events.current.jsonl",
   "fired_or_delivered_count": 1200,
-  "host": "Linux sami-System-Product-Name 7.0.0-28-generic #28~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Wed Jul  1 15:50:57 UTC 2 x86_64 x86_64 x86_64 GNU/Linux",
+  "host": "Linux tester-System-Product-Name 7.0.0-28-generic #28~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Wed Jul  1 15:50:57 UTC 2 x86_64 x86_64 x86_64 GNU/Linux",
   "measured_at": "2026-07-28T13:10:29.815137511+00:00",
   "method": "engine-only SystemClock + ActionRunner + EventLog; one 1s interval Action::None",
   "pid": 887356,
