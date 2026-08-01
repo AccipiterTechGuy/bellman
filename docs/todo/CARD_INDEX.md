@@ -40,6 +40,12 @@ Both demos live under `testing_apps/`. They share no code on purpose: the
 terminal one is what a developer copies, the GUI one is what everyone else
 watches. See `testing_apps/README.md`.
 
+## Final gate
+
+| card | scope | depends on |
+|---|---|---|
+| **C11** | 🏁 **Final gate** — full-system validation + originality sweep. Rewritten 2026-08-01: covers the integration surface (reply channel, watchdog, quarantine, both transports, both demo apps), install verbatim on Ubuntu/Fedora/Arch, and the wizard on a clean session. Two rules: **play the human, not the developer**, and **a clock must do the firing** (no `run-now` evidence) | everything else shipped |
+
 ## Ship readiness
 
 | card | scope | depends on |
