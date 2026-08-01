@@ -87,15 +87,14 @@ fn prune_rotates_jsonl_and_respects_retention_edges() {
     assert!(store.meta().unwrap().last_prune.is_some());
 }
 
-/// Set mtime via `touch -d` (no extra crate dependency).
-fn filetime_set_mtime(path: &std::path::Path, _mtime: SystemTime) {
-    let status = std::process::Command::new("touch")
-        .arg("-d")
-        .arg("2020-01-01T00:00:00Z")
-        .arg(path)
-        .status()
-        .expect("spawn touch");
-    assert!(status.success(), "touch -d failed for {}", path.display());
+/// Set mtime cross-platform via `std::fs::File::set_modified` (stable since
+/// Rust 1.75) — no subprocess, no GNU/BSD `touch` flag divergence (SHIP1-F).
+fn filetime_set_mtime(path: &std::path::Path, mtime: SystemTime) {
+    let f = fs::File::options()
+        .write(true)
+        .open(path)
+        .expect("open for set_modified");
+    f.set_modified(mtime).expect("set_modified");
 }
 
 #[test]

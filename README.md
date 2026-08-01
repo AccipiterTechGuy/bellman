@@ -223,6 +223,7 @@ validating the whole thing on real hardware.
 | Visible Scheduler (`bellman scan` / `task`) — machine-wide schedule inventory | ✅ built (Linux) |
 | Calendar Snapshot (`bellman calendar` / `agenda`) — headless SVG/PNG/JSON | ✅ built |
 | Packaging — deb / AppImage (Linux); NSIS, MSI, dmg unsigned in CI | ✅ built |
+| CI test execution | Linux: full `cargo test` workspace ✅ · macOS: full workspace ✅ · Windows: workspace **except** the `bellman-app` shell-crate unit tests — they exit abnormally on a headless Windows runner and are excluded in `windows.yml` (they still compile there, and run on Linux/macOS) |
 | **Full-system validation** — real Windows / macOS hardware, suspend-resume QA, long-run soak | ⬜ **not started — the one thing between here and a release** |
 
 Linux `.deb` and `.AppImage` build and install today: the deb puts **Bellman** in

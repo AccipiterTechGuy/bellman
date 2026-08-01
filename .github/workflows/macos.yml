@@ -61,14 +61,13 @@ jobs:
       - name: Stage CLI sidecar (required by tauri externalBin at compile time)
         run: bash scripts/stage_cli_sidecar.sh
 
-      - name: Cargo build (workspace, all targets — compile check only)
-        # This job's contract is "compile + package unsigned artifacts on the
-        # runner"; `linux.yml` is the full-test gate. Building --all-targets
-        # compiles the test binaries (so a macOS compile break still fails here)
-        # without running them: parts of the suite assume a Linux host — e.g.
-        # the events retention test shells out to GNU `touch -d @<epoch>`, which
-        # BSD/macOS touch rejects. Portability of those tests is owned by the
-        # crates that wrote them, not by packaging.
+      - name: Cargo test (workspace)
+        # Runs the full suite on macOS now: the retention tests that used to
+        # shell out to GNU `touch -d @<epoch>` (rejected by BSD touch) set
+        # mtimes through std::fs::File::set_modified instead (SHIP1-F).
+        run: cargo test --workspace --all-targets
+
+      - name: Cargo build (workspace, all targets — compile check)
         run: cargo build --workspace --all-targets
 
       - name: Install tauri-cli
