@@ -1,7 +1,7 @@
 {
   "display": ":97",
   "input_backend": "tauri-driver+WebKitWebDriver",
-  "app": "/home/sami/bellman/target/release/bellman-app",
+  "app": "/home/tester/bellman/target/release/bellman-app",
   "shots": [
     "p4f-control-hover-disabled.png",
     "p4f-control-hover.png",

@@ -21,6 +21,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Personal-path hygiene gate
+        # Fails if any tracked file leaks /home/<user> or /Users/<user>
+        # outside the placeholder allowlist (SHIP1-G). Cheap; runs first.
+        run: bash scripts/check_no_personal_paths.sh
+
       - name: Install Linux system deps (Tauri v2 / WebKitGTK 4.1)
         run: |
           sudo apt-get update

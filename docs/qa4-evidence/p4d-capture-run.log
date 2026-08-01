@@ -6,12 +6,12 @@ engine pids: {
     "1135000 1134983 49388 /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess 1 22"
   ],
   "bellman": [
-    "1134983       1 187540 /home/sami/bellman/.train-worktrees/2026-07-28_0008/target/release/bellman-app"
+    "1134983       1 187540 /home/tester/bellman/.train-worktrees/2026-07-28_0008/target/release/bellman-app"
   ]
 }
 userAgent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15
   resize target 960x640 → wmctrl geom ['50', '112', '960', '640']
-native date/time probe exists: True /home/sami/bellman/.train-worktrees/2026-07-28_0008/docs/qa4-screenshots/p4d-webkit-native-date-time-probe.png
+native date/time probe exists: True /home/tester/bellman/.train-worktrees/2026-07-28_0008/docs/qa4-screenshots/p4d-webkit-native-date-time-probe.png
 
 == WIDGET SHOTS ==
   select_kind_click 'once'

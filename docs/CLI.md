@@ -35,6 +35,11 @@ Scan JSON (stable keys): `ok`, `command`, `scanned_at`, `platform`, `filter`,
 `source`, `owner`, `command`, `schedule_expr`, `human_explanation`, `next_run`,
 `last_run`, `last_result`, `enabled`, `writable`, etc.
 
+> ⚠️ **Privacy:** `bellman scan` prints **full command lines** of every
+> schedule on the machine — crontabs included — which can contain local
+> paths, home-directory names, or tokens embedded in commands. Redact before
+> pasting raw scan output into public issues, chats, or logs.
+
 ## Calendar Snapshot (`calendar` / `agenda`)
 
 Render any month (or date range) as a clean calendar image — **SVG or PNG** —

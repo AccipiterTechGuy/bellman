@@ -1,11 +1,11 @@
 == building release perf_idle example ==
 warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
-package:   /home/sami/bellman/.train-worktrees/2026-07-28_0005/src-tauri/Cargo.toml
-workspace: /home/sami/bellman/.train-worktrees/2026-07-28_0005/Cargo.toml
-   Compiling bellman-core v0.1.0 (/home/sami/bellman/.train-worktrees/2026-07-28_0005/crates/bellman-core)
+package:   /home/tester/bellman/.train-worktrees/2026-07-28_0005/src-tauri/Cargo.toml
+workspace: /home/tester/bellman/.train-worktrees/2026-07-28_0005/Cargo.toml
+   Compiling bellman-core v0.1.0 (/home/tester/bellman/.train-worktrees/2026-07-28_0005/crates/bellman-core)
     Finished `release` profile [optimized] target(s) in 1.10s
 == running 600s idle window (engine + 1s timer + EventLog) ==
-perf_idle data_dir=/home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data
+perf_idle data_dir=/home/tester/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data
 window_secs=600
 timer id=909c9042-ddbb-4105-bff7-ef3196afb905 next=Some("2026-07-28T13:00:30.809305993+00:00")
 bellman: system.prune ready id=00000000-0000-4000-8000-000000000001 next=Some(2026-08-03T00:17:00Z)
@@ -31,21 +31,21 @@ sample t=480.2s rss_kb=7164
 sample t=510.2s rss_kb=7176
 sample t=540.2s rss_kb=7188
 sample t=570.2s rss_kb=7204
-copied evidence to /home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle
+copied evidence to /home/tester/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle
 --- RESULT ---
 rss_median_kib=7092  rss_min_kib=6956  rss_max_kib=7208
 cpu_pct=0.0933  (jiffies=56, hz=100)
 fires=1200  wall_min=10.000  wakeups_per_min=120.00
-event_log=/home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data/logs/events.current.jsonl
-report=/home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data/perf_idle_report.json
+event_log=/home/tester/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data/logs/events.current.jsonl
+report=/home/tester/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data/perf_idle_report.json
 {
   "clk_tck": 100,
   "cpu_jiffies": 56,
   "cpu_pct_over_window": 0.09333332455766749,
-  "data_dir": "/home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data",
+  "data_dir": "/home/tester/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data",
   "event_lines_skipped": 0,
   "event_lines_total": 1201,
-  "event_log_path": "/home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data/logs/events.current.jsonl",
+  "event_log_path": "/home/tester/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data/logs/events.current.jsonl",
   "fired_or_delivered_count": 1200,
   "host": "Linux sami-System-Product-Name 7.0.0-28-generic #28~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Wed Jul  1 15:50:57 UTC 2 x86_64 x86_64 x86_64 GNU/Linux",
   "measured_at": "2026-07-28T13:10:29.815137511+00:00",
@@ -97,10 +97,10 @@ drwxrwxr-x 3 sami sami   4096 Jul 28 16:10 run-data
   "clk_tck": 100,
   "cpu_jiffies": 56,
   "cpu_pct_over_window": 0.09333332455766749,
-  "data_dir": "/home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data",
+  "data_dir": "/home/tester/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data",
   "event_lines_skipped": 0,
   "event_lines_total": 1201,
-  "event_log_path": "/home/sami/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data/logs/events.current.jsonl",
+  "event_log_path": "/home/tester/bellman/.train-worktrees/2026-07-28_0005/docs/qa4-evidence/perf-idle/run-data/logs/events.current.jsonl",
   "fired_or_delivered_count": 1200,
   "host": "Linux sami-System-Product-Name 7.0.0-28-generic #28~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Wed Jul  1 15:50:57 UTC 2 x86_64 x86_64 x86_64 GNU/Linux",
   "measured_at": "2026-07-28T13:10:29.815137511+00:00",

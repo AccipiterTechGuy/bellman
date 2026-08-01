@@ -1,0 +1,7 @@
+# Security reports do not belong in issues — see [SECURITY.md](../SECURITY.md) and use private vulnerability reporting.
+
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/AccipiterTechGuy/bellman/security/advisories/new
+    about: Report vulnerabilities privately — never in a public issue.

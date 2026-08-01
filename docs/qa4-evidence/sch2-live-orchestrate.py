@@ -14,7 +14,7 @@ under ONE run_id, fired by the schedule (lateness vs scheduled_for printed).
 import json, os, pathlib, signal, subprocess, sys, time, uuid
 from datetime import datetime, timezone, timedelta
 
-ROOT = pathlib.Path("/home/sami/bellman/.train-worktrees/2026-07-31_0007")
+ROOT = pathlib.Path("/home/tester/bellman/.train-worktrees/2026-07-31_0007")
 QA = pathlib.Path("/tmp/sch2-live")
 DATA = QA / "share" / "io.bellman.desktop"
 SLOTS = DATA / "slots"
