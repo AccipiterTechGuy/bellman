@@ -3,7 +3,7 @@
 #
 # The repository is public. Absolute home-directory paths (/home/<user>,
 # /Users/<user>) leak a username and machine layout to strangers — 11
-# tracked QA-evidence files once carried /home/sami. This gate fails the
+# tracked QA-evidence files once carried the author's real home path. This gate fails the
 # build if any tracked file contains such a path outside the explicit
 # placeholder allowlist below, so the leak cannot silently return.
 #
@@ -25,7 +25,7 @@ ALLOWLIST=(
 
 # Directories excluded from the scan: docs/todo and docs/archive are
 # process/history records — they legitimately QUOTE past leaks (the SHIP1
-# card itself names the /home/sami incident it mandated fixing). Shipping
+# card itself names the leaked-home-path incident it mandated fixing). Shipping
 # docs, code, tests and evidence are all still scanned.
 matches="$(git grep -nIEo '/(home|Users)/[A-Za-z0-9._-]+' -- . ':(exclude)docs/todo/**' ':(exclude)docs/archive/**' || true)"
 
