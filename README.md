@@ -68,12 +68,13 @@ sudo pacman -Syu --needed git base-devel webkit2gtk-4.1 curl wget file \
   openssl libxdo libayatana-appindicator librsvg
 ```
 
-**2. Rust toolchain** (uses `curl` from step 1). rustup writes `~/.cargo/env`
-but cannot modify the shell you are in, so source it (or open a new terminal)
-before using cargo.
+**2. Rust toolchain** (uses `curl` from step 1). `-y` accepts the standard
+install — without it rustup stops for a prompt, which a non-interactive
+shell cannot answer. rustup writes `~/.cargo/env` but cannot modify the
+shell you are in, so source it (or open a new terminal) before using cargo.
 
 ```sh
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 ```
 
@@ -167,10 +168,20 @@ Node. Two reference apps in [`testing_apps/`](testing_apps/) demonstrate the ful
 
 ## Your data stays yours
 
-Bellman keeps every timer, log and slot in a per-OS data directory (`~/.bellman/` on
-Linux) — **never in this repository**. Cloning the code tells nobody what you schedule.
-See [docs/LOCAL.md](docs/LOCAL.md) for the data-dir layout and the ignored patterns for
-keeping private integrations out of git.
+Bellman keeps every timer, log and slot in a per-OS data directory — **never
+in this repository**. Cloning the code tells nobody what you schedule. There
+are **two** data directories, one per interface:
+
+| OS | `bellman` CLI (default) | desktop app (GUI) |
+|---|---|---|
+| Linux | `~/.bellman/` | `~/.local/share/io.bellman.desktop/` |
+| macOS | `~/.bellman/` | `~/Library/Application Support/io.bellman.desktop/` |
+| Windows | `%USERPROFILE%\.bellman\` | `%APPDATA%\io.bellman.desktop\` (Roaming) |
+
+The GUI shows its active directory under **Settings → Data**; the CLI names its
+default in `bellman --help` (override with `--db` / `BELLMAN_DB`). See
+[docs/LOCAL.md](docs/LOCAL.md) for the data-dir layout and the ignored
+patterns for keeping private integrations out of git.
 
 ## Status — what actually exists today
 
