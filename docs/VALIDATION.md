@@ -23,7 +23,7 @@ Raw evidence (JSON captured by each run) is under
 
 | # | Area | Result |
 |---|---|---|
-| 1 | Code health — fmt / clippy / tests / vitest | **PASS** after fixing 538 rustfmt diffs; 480 Rust + 113 JS tests, **0 ignored, 0 skipped** |
+| 1 | Code health — fmt / clippy / tests / vitest | **PASS** after fixing 538 rustfmt diffs; 482 Rust + 113 JS tests, **0 ignored, 0 skipped** |
 | 2 | All 7 occurrence kinds firing on their own schedule | **PASS** — every one within 8 ms of `scheduled_for` |
 | 2 | Misfire across a real stop/start | **PASS after a fix** — `skip` was silent in the log |
 | 2 | DST gap (spring forward), real clock | **PASS** |
@@ -38,7 +38,7 @@ Raw evidence (JSON captured by each run) is under
 | 3 | Slot CRUD live, no restart (SCH2) | **PASS** |
 | 3 | A client in a language the docs do not cover | **PASS** (Perl) |
 | 4 | README §Install verbatim on Ubuntu | **PASS** |
-| 4 | README §Install verbatim on Fedora and Arch | **FAILED, then fixed** — two independent defects |
+| 4 | README §Install verbatim on Fedora and Arch | **FAILED, then fixed** — two independent defects; both corrected recipes then re-run verbatim end to end, **PASS** |
 | 4 | `.deb` installs; demos ship at the wizard's path; demo runs | **PASS** |
 | 4 | First-run wizard on a clean session, demo offer | **PASS** |
 | 4 | Both data directories | **PASS**, with a documentation gap |
@@ -83,7 +83,8 @@ $ cargo clippy --workspace --all-targets -- -D warnings ; echo $?
 0                                   # 0 warnings
 
 $ cargo test --workspace --all-targets
-… 480 passed; 0 failed; 0 ignored   # summed across 15 test binaries
+… 482 passed; 0 failed; 0 ignored   # summed across 15 test binaries
+                                    # (478 before this card; +4 regression tests)
 
 $ cargo test --workspace --doc
 0 passed; 0 failed; 0 ignored       # there are no doctests
@@ -117,7 +118,8 @@ Harness: the release `bellman-app` on a private `Xvfb` display with an
 ephemeral `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_RUNTIME_DIR` and `HOME`,
 under `dbus-run-session` so it never touches the operator's session or data.
 Timers are created from **outside** the app with `bellman slot-submit`, which
-is also the SCH2 path. Script: `e2e_kinds.py` (kept with this run's evidence).
+is also the SCH2 path. What each run did is described in full below and
+captured in the JSON under `docs/qa-c11/`.
 
 ### All seven occurrence kinds fired on their own schedule
 
@@ -226,7 +228,23 @@ EVENT dst-control-daily    fired scheduled_for=2026-10-25T00:03:00Z logged_at=�
 EVENT dst-control-interval fired scheduled_for=2026-10-25T00:03:00.523Z logged_at=…00:03:00.524Z
 ```
 
-<!-- FOLD_SECOND_HALF -->
+The run then kept going for another 50 fake minutes, straight through the
+transition and past `01:02:00Z` — the instant local 03:02 comes round the
+second time:
+
+```
+EVENT dst-control-interval fired scheduled_for=2026-10-25T00:58:00.523Z
+EVENT dst-control-interval fired scheduled_for=2026-10-25T01:03:00.523Z   ← past the repeat
+dst-target fire count over the whole run: 1
+```
+
+**PASS**: the ambiguous local time fired **exactly once**, at the earlier of
+its two instants, and did not fire again in the repeated hour.
+
+The 5-minute interval timer riding along fired 13 times at exactly 300 s
+spacing across both transitions (…00:48, 00:53, 00:58, 01:03…) with no gap
+and no doubling — elapsed-time schedules are anchored in UTC and the offset
+change does not touch them, as designed.
 
 **Clock jumps.** The backward-jump and suspend-oversleep paths are covered by
 the simulated-clock acceptance tests (`scheduler::tests`, mock clock pair),
@@ -280,7 +298,7 @@ was due and left watching `fires/`:
 00:35:14 TERMINAL lightbulb-demo: completed transport=json
 log kinds: registered → fired → wake_delivered → acknowledged → completed   (one run_id)
 status.json: {"state":"completed", "acknowledged_at":…, "completed_at":…,
-              "result":{"on_duration_secs":4.0}, "transport":"json"}
+              "result":{"on_duration_secs":4.01}, "transport":"json"}
 ```
 
 **PASS.** Evidence: [`qa-c11/apps_evidence.json`](qa-c11/apps_evidence.json).
@@ -430,7 +448,9 @@ Perl only — `JSON::PP` and `POSIX` have shipped with perl since 5.14.
 ```
 00:35:20 FIRE clockin-demo run_id=1abe0ccf-ee67-4ced-8518-f7278a1c0523
 00:35:23 TERMINAL clockin-demo: completed transport=json
-result: {"language":"perl","worked_secs":2}
+status.json: {"state":"completed","acknowledged_at":"2026-08-01T21:35:20Z",
+              "expected_secs":2,"completed_at":"2026-08-01T21:35:22Z",
+              "result":{"language":"perl","worked_secs":2},"transport":"json"}
 ```
 
 **PASS.** The document was sufficient: nothing had to be looked up in the
@@ -547,15 +567,41 @@ correct. With `xdotool` substituted, prerequisites install and the build runs
 — and then hits the same `linuxdeploy` failure as Fedora.
 
 **Fixed** (`e151f11`): the package name is corrected, and Arch's build step is
-now `cargo tauri build --no-bundle --ci` (Tauri has no pacman target), which
-was verified in the container:
+now `cargo tauri build --no-bundle --ci` (Tauri has no pacman target).
+
+### Both corrected recipes, re-run verbatim end to end
+
+Not just the changed commands — the whole page again, from a clean
+`fedora:latest` and a clean `archlinux:latest`, with one further stated
+substitution: step 4's `git clone` points at this branch's checkout rather
+than the public URL, because the fixes under test are not on public `main`
+yet. Everything else is exactly what the README now says.
 
 ```
-Built application at: /bellman/target/release/bellman-app
--rwxr-xr-x 7489000 target/release/bellman
--rwxr-xr-x 10673448 target/release/bellman-app
-./target/release/bellman --version → bellman 0.1.0
+### fedora:latest — every step, no bootstrap
+dnf install … (README's Fedora list) → OK
+rustup, nvm, node 24, cargo install tauri-cli → OK
+npm ci; cargo tauri build --bundles rpm --ci --no-sign
+  → Bundling Bellman-0.1.0-1.x86_64.rpm
+sudo dnf install ./target/release/bundle/rpm/Bellman-*.rpm → Complete!
+  /usr/sbin/bellman   /usr/sbin/bellman-app
+  /usr/share/applications/Bellman.desktop
+  /usr/share/bellman/testing_apps/{README.md,lightbulb/,lightbulb_gui/}
+  bellman --version → bellman 0.1.0
+OK-FEDORA-CORRECTED-RECIPE   (exit 0)
+
+### archlinux:latest — every step, no bootstrap
+pacman -Syu --needed … xdotool …  (README's corrected Arch list) → OK
+rustup, nvm, node 24, cargo install tauri-cli → OK
+npm ci; cargo tauri build --no-bundle --ci
+  → Built application at: target/release/bellman-app
+  -rwxr-xr-x  7 489 000 target/release/bellman
+  -rwxr-xr-x 10 677 288 target/release/bellman-app
+  ./target/release/bellman --version → bellman 0.1.0
+OK-ARCH-CORRECTED-RECIPE     (exit 0)
 ```
+
+**PASS on all three distributions** with the corrected recipes.
 
 ### The `.deb`'s own shipped demo — **found two more defects**
 
@@ -700,12 +746,16 @@ To close this gap, one command on an idle machine with a local desktop
 session:
 
 ```sh
-# arm a timer ~90 s out, suspend for 60 s, then read the log
-bellman add --name wake-probe --occurrence once --time "$(date -d '+90 seconds' +%Y-%m-%dT%H:%M:%S)"
-sudo rtcwake -m mem -s 60
-grep wake-probe ~/.bellman/logs/events.current.jsonl
-# expect: one `fired` (or `fired_late`/`skipped_misfire` per the timer's policy)
-#         and a `wake_capability` line saying which mechanism was used
+# The desktop app must be the thing running, so create the timer in ITS store
+# (see "Both data directories" above — plain `bellman add` would land in the
+# CLI store, which nothing is driving).
+APP=~/.local/share/io.bellman.desktop
+bellman add --db "$APP/timers.db" --name wake-probe --occurrence once \
+            --time "$(date -d '+90 seconds' +%Y-%m-%dT%H:%M:%S)"
+sudo rtcwake -m mem -s 60          # suspends for 60 s, then the RTC wakes it
+grep wake-probe "$APP/logs/events.current.jsonl"
+# expect: one `fired` (or `fired_late` / `skipped_misfire` per the timer's
+#         policy) and a `wake_capability` line saying which mechanism was used
 ```
 
 ### Windows and macOS — **partially covered**
