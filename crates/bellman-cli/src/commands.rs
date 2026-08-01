@@ -8,7 +8,7 @@ use bellman_core::slots::{
     SlotConfig, SlotRequest, SlotService, SlotStatus, SCHEMA_V1,
 };
 use bellman_core::store::{
-    NewTimer, OpenOptions, Store, StoreError, Timer, TimerPatch, TimerUpdate,
+    Action, NewTimer, OpenOptions, Store, StoreError, Timer, TimerPatch, TimerUpdate,
 };
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
@@ -303,6 +303,12 @@ pub struct AddArgs {
     pub cron: Option<String>,
     pub tags: Vec<String>,
     pub transport: Option<String>,
+    pub action: Option<String>,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub workdir: Option<String>,
+    pub title: Option<String>,
+    pub body: Option<String>,
 }
 
 /// Parse a `--transport` value (IK6: auto | json | ipc).
@@ -312,6 +318,83 @@ fn parse_transport(raw: Option<String>) -> Result<Option<bellman_core::Transport
             .ok_or_else(|| format!("invalid transport '{s}' (expected auto | json | ipc)"))
     })
     .transpose()
+}
+
+/// Fields that only make sense with a specific `--action` kind.
+struct ActionFlags {
+    command: Option<String>,
+    args: Vec<String>,
+    workdir: Option<String>,
+    title: Option<String>,
+    body: Option<String>,
+}
+
+/// Build the wake action from `--action` + its fields, or `None` when no
+/// action flags were passed (caller keeps the default / existing action).
+///
+/// The whole action is set at once: `launch` takes `--command` (required),
+/// `--args` (repeatable, no shell splitting) and `--workdir`; `notify` takes
+/// `--title` (required) and `--body`. Flags for the wrong kind are rejected
+/// so a mistyped invocation never silently drops a field.
+fn build_action(flags: ActionFlags, raw: Option<String>) -> Result<Option<Action>, String> {
+    let Some(kind) = raw else {
+        if flags.command.is_some()
+            || !flags.args.is_empty()
+            || flags.workdir.is_some()
+            || flags.title.is_some()
+            || flags.body.is_some()
+        {
+            return Err(
+                "--command/--args/--workdir/--title/--body require --action launch|notify".into(),
+            );
+        }
+        return Ok(None);
+    };
+    match kind.as_str() {
+        "none" => {
+            if flags.command.is_some()
+                || !flags.args.is_empty()
+                || flags.workdir.is_some()
+                || flags.title.is_some()
+                || flags.body.is_some()
+            {
+                return Err("--action none takes no --command/--args/--workdir/--title/--body".into());
+            }
+            Ok(Some(Action::None))
+        }
+        "launch" => {
+            if flags.title.is_some() || flags.body.is_some() {
+                return Err("--title/--body belong to --action notify".into());
+            }
+            let command = flags
+                .command
+                .ok_or("--action launch requires --command")?;
+            if command.trim().is_empty() {
+                return Err("--command must not be empty".into());
+            }
+            Ok(Some(Action::Launch {
+                command,
+                args: flags.args,
+                workdir: flags.workdir,
+            }))
+        }
+        "notify" => {
+            if flags.command.is_some() || !flags.args.is_empty() || flags.workdir.is_some() {
+                return Err("--command/--args/--workdir belong to --action launch".into());
+            }
+            let title = flags.title.ok_or("--action notify requires --title")?;
+            if title.trim().is_empty() {
+                return Err("--title must not be empty".into());
+            }
+            Ok(Some(Action::Notify {
+                title,
+                body: flags.body.unwrap_or_default(),
+            }))
+        }
+        other => Err(format!(
+            "invalid action '{other}' (expected none | launch | notify)"
+        )),
+    }
 }
 
 pub fn add(db: &Path, args: AddArgs) -> Result<CommandPayload, CliError> {
@@ -331,10 +414,25 @@ pub fn add(db: &Path, args: AddArgs) -> Result<CommandPayload, CliError> {
     let transport = parse_transport(args.transport)
         .map_err(|m| CliError::new(CMD, "invalid_args", m))?;
 
+    let action = build_action(
+        ActionFlags {
+            command: args.command,
+            args: args.args,
+            workdir: args.workdir,
+            title: args.title,
+            body: args.body,
+        },
+        args.action,
+    )
+    .map_err(|m| CliError::new(CMD, "invalid_args", m))?;
+
     let mut new = NewTimer::new(args.name, occ);
     new.tags = args.tags;
     if let Some(t) = transport {
         new.transport = t;
+    }
+    if let Some(a) = action {
+        new.action = a;
     }
 
     let mut store = open_store(db).map_err(|mut e| {
@@ -392,6 +490,12 @@ pub struct EditArgs {
     pub month: Option<u8>,
     pub enabled: Option<String>,
     pub transport: Option<String>,
+    pub action: Option<String>,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub workdir: Option<String>,
+    pub title: Option<String>,
+    pub body: Option<String>,
 }
 
 pub fn edit(db: &Path, name_or_id: &str, args: EditArgs) -> Result<CommandPayload, CliError> {
@@ -423,11 +527,28 @@ pub fn edit(db: &Path, name_or_id: &str, args: EditArgs) -> Result<CommandPayloa
     let transport = parse_transport(args.transport)
         .map_err(|m| CliError::new(CMD, "invalid_args", m))?;
 
-    if args.name.is_none() && occurrence.is_none() && enabled.is_none() && transport.is_none() {
+    let action = build_action(
+        ActionFlags {
+            command: args.command,
+            args: args.args,
+            workdir: args.workdir,
+            title: args.title,
+            body: args.body,
+        },
+        args.action,
+    )
+    .map_err(|m| CliError::new(CMD, "invalid_args", m))?;
+
+    if args.name.is_none()
+        && occurrence.is_none()
+        && enabled.is_none()
+        && transport.is_none()
+        && action.is_none()
+    {
         return Err(CliError::new(
             CMD,
             "invalid_args",
-            "nothing to edit (pass --name, --time, --enabled, --transport, …)",
+            "nothing to edit (pass --name, --time, --enabled, --transport, --action, …)",
         ));
     }
 
@@ -440,6 +561,7 @@ pub fn edit(db: &Path, name_or_id: &str, args: EditArgs) -> Result<CommandPayloa
                 enabled,
                 occurrence,
                 transport,
+                action,
                 ..Default::default()
             },
         })
