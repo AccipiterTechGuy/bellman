@@ -413,6 +413,34 @@
     {/if}
   </section>
 
+  <section class="settings-section" data-testid="settings-data">
+    <h3>Data</h3>
+    <p class="hint">
+      Everything this Bellman stores — timers, runs, logs, slots — lives in
+      one directory on this machine, never in the source tree. The
+      <code>bellman</code> CLI uses its own default (<code>~/.bellman/</code>);
+      see docs/LOCAL.md for both.
+    </p>
+    {#if info?.dataDir}
+      <div class="settings-row">
+        <label>Data directory</label>
+        <code class="data-path" data-testid="settings-data-dir">{info.dataDir}</code>
+      </div>
+      <div class="settings-row">
+        <label>Database</label>
+        <code class="data-path">{info.dbPath}</code>
+      </div>
+      <div class="settings-row">
+        <label>Logs</label>
+        <code class="data-path">{info.logsDir}</code>
+      </div>
+      <div class="settings-row">
+        <label>Slots</label>
+        <code class="data-path">{info.slotsDir}</code>
+      </div>
+    {/if}
+  </section>
+
   <section class="settings-section">
     <h3>Setup</h3>
     <button class="btn" onclick={rerunWizard} disabled={busy}>Run setup again</button>

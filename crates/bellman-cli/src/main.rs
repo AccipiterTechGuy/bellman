@@ -24,7 +24,10 @@ use std::process::ExitCode;
     about = "Bellman task scheduler CLI",
     long_about = "Create, list, edit, preview, pause, run-now, and delete timers \
                   against the local Bellman store. Primary consumer: AI agents \
-                  (use --json on every command)."
+                  (use --json on every command).\n\n\
+                  Data directory: ~/.bellman/ (timers.db, logs/, slots/, timers/; \
+                  %USERPROFILE%\\.bellman\\ on Windows). The desktop app uses its \
+                  own per-OS app-data dir instead — see docs/LOCAL.md."
 )]
 struct Cli {
     /// Emit machine-readable JSON on stdout (stable schema; see docs/CLI.md).
@@ -33,7 +36,8 @@ struct Cli {
 
     /// Path to the timers SQLite database.
     ///
-    /// Defaults to `$BELLMAN_DB` when set, else `~/.bellman/timers.db`.
+    /// Defaults to `$BELLMAN_DB` when set, else `~/.bellman/timers.db`; the
+    /// data directory (logs/, slots/, timers/) is the database's parent.
     #[arg(long, global = true, env = "BELLMAN_DB", value_name = "PATH")]
     db: Option<PathBuf>,
 

@@ -1922,6 +1922,13 @@ main {
   color: var(--fg-primary);
 }
 
+.data-path {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  word-break: break-all;
+  user-select: all;
+}
+
 .status-line {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
