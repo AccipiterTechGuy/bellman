@@ -50,8 +50,8 @@ Debian / Ubuntu:
 
 ```sh
 sudo apt update
-sudo apt install -y git libwebkit2gtk-4.1-dev build-essential curl wget file \
-  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+sudo apt install -y git libwebkit2gtk-4.1-dev libgtk-3-dev build-essential \
+  curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 ```
 
 Fedora:
@@ -97,10 +97,14 @@ with rustc 1.97.1, tauri-cli 2.11.4, and Node 24.13.0 and 24.18.1.
 
 **This list is sufficient on its own.** It was checked by building both
 bundles from scratch in a clean `ubuntu:24.04` container with nothing else
-installed — no `patchelf`, `fakeroot`, `appstream` or `libfuse2`. Tauri's
-AppImage bundler fetches its own tooling, and `libgtk-3-dev` arrives with
-`libwebkit2gtk-4.1-dev`. (Running an `.AppImage` afterwards is a different
-matter and needs FUSE on the machine that runs it.)
+installed — no `patchelf`, `fakeroot`, `appstream` or `libfuse2`; Tauri's
+AppImage bundler brings its own tooling. (Running an `.AppImage` afterwards is
+a different matter and needs FUSE on the machine that runs it.)
+
+`libgtk-3-dev` is listed explicitly even though `libwebkit2gtk-4.1-dev`
+depends on it today. Relying on that edge means the list is only complete for
+as long as someone else's packaging keeps it — naming it costs nothing (apt
+reports it already installed) and keeps this list self-contained.
 
 **4. Build the packages:**
 
