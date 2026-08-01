@@ -24,6 +24,7 @@
   let statusLine = $state('');
   let deps = $state([]);
   let probeNote = $state('');
+  let wake = $state(null);
 
   onMount(async () => {
     try {
@@ -33,6 +34,13 @@
       wakeEnabled = s?.defaults?.wakeEnabled ?? wakeEnabled;
       demo = s?.defaults?.demo ?? false;
     } catch {}
+    // Live probe, so the wizard never asserts a wake capability the
+    // platform does not have (SHIP1-B).
+    try {
+      wake = await wakeStatus();
+    } catch {
+      wake = null;
+    }
   });
 
   async function finish(withWake) {
@@ -105,10 +113,16 @@
           <span>Launch Bellman automatically when I log in?</span>
         </label>
       </div>
-      <p class="hint">
-        On Linux, XDG autostart is also what preserves the ambient CAP_WAKE_ALARM
-        lineage used for unprivileged RTC wake (systemd ≥ 254 desktop sessions).
+      <p class="hint" data-testid="wizard-autostart-hint">
+        Autostart only launches Bellman at login. On Linux it does
+        <strong>not</strong> by itself grant the CAP_WAKE_ALARM permission used
+        for wake-from-sleep — if the probe below says wake is unavailable, the
+        real fixes are setcap, a systemd user unit with
+        AmbientCapabilities=CAP_WAKE_ALARM, or the udev rule (also in Settings).
       </p>
+      {#if wake && !wake.platformEnabled && wake.fixHint}
+        <p class="hint" data-testid="wizard-wake-fixhint">{wake.fixHint}</p>
+      {/if}
 
       <div class="q">
         <label for="w-hidden" class="checkbox-label">
@@ -142,6 +156,17 @@
         on time even if the machine was asleep. Optional — declining is fine;
         the misfire-on-resume pass covers the gap.
       </p>
+      {#if wake}
+        <p class="hint" data-testid="wizard-wake-probe">
+          {#if wake.platformEnabled}
+            {wake.statusLine || 'Wake capability is available on this machine.'}
+          {:else}
+            Probe: {wake.statusLine || 'wake is unavailable on this machine'} —
+            answering yes turns the feature on, but the permission fix above is
+            still needed for it to work.
+          {/if}
+        </p>
+      {/if}
       <div class="actions">
         <button class="btn primary" disabled={busy} onclick={() => finish(true)}>
           {busy ? 'Working…' : 'Yes, set up wake'}
