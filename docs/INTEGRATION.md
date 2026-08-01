@@ -99,7 +99,10 @@ bellman slot-submit request.json --slots ~/.bellman/slots --db ~/.bellman/timers
 | `payload.occurrence` | add | see below |
 | `payload.tz` | optional | IANA tz (default UTC) |
 | `payload.launch_command` + `args` | optional | convenience for `Action::Launch` |
+| `payload.workdir` | optional | working directory for a launch action |
 | `payload.action` | optional | full action JSON (`type`: launch/notify/none) |
+| `payload.misfire_policy` | optional | `"skip"` \| `"coalesce"`, or the full policy object (`{"catch_up":{"grace_secs":…,"max_catch_up":…}}`). Default: coalesce for calendar kinds, skip for `interval` |
+| `payload.transport` | optional | `{"mode": "json" \| "ipc" \| "auto"}` — see *Talking over the local socket*. Default `json` |
 | `payload.ack_through` | optional | advance un-acked run-event cursor |
 
 ### Occurrence (simplified payload form)
