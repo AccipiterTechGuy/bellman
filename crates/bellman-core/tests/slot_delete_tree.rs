@@ -11,10 +11,13 @@ use chrono::Utc;
 fn slot_delete_logs_cancelled_for_open_run() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path();
-    let mut store = Store::open_with(data.join("timers.db"), OpenOptions {
-        refuse_network_fs: false,
-        ..OpenOptions::default()
-    })
+    let mut store = Store::open_with(
+        data.join("timers.db"),
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
     .unwrap();
     let slots_root = data.join("slots");
     let service = SlotService::open(&slots_root, SlotConfig::default())
@@ -26,7 +29,12 @@ fn slot_delete_logs_cancelled_for_open_run() {
     add.request_id = Some("repro-add".into());
     service.publish(add).unwrap();
     service.poll(&mut store).unwrap();
-    let timer = store.list_timers().unwrap().into_iter().find(|t| t.name == "owned").unwrap();
+    let timer = store
+        .list_timers()
+        .unwrap()
+        .into_iter()
+        .find(|t| t.name == "owned")
+        .unwrap();
     assert!(TimersTree::new(data).folder_for(timer.id).is_some());
 
     // Open run (claimed, never completed).
@@ -45,13 +53,19 @@ fn slot_delete_logs_cancelled_for_open_run() {
     service.poll(&mut store).unwrap();
 
     assert!(store.get_timer(timer.id).unwrap().is_none());
-    assert!(TimersTree::new(data).folder_for(timer.id).is_none(), "folder removed");
+    assert!(
+        TimersTree::new(data).folder_for(timer.id).is_none(),
+        "folder removed"
+    );
     // The cancelled event is enqueued in the outbox (R11); drain it with the
     // elected publisher, then read the log.
     let mut publisher = EventPublisher::open(data).unwrap();
     publisher.publish_cycle(&store);
     let (recs, _) = read_events(publisher.current_path()).unwrap();
-    let cancel: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Cancelled).collect();
+    let cancel: Vec<_> = recs
+        .iter()
+        .filter(|r| r.kind == RunState::Cancelled)
+        .collect();
     assert_eq!(cancel.len(), 1, "cancelled event must be logged");
     assert_eq!(cancel[0].run_id, Some(claim.run_id));
 }

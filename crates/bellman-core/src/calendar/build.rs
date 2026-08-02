@@ -19,22 +19,28 @@ use std::str::FromStr;
 /// One task that can expand fires inside a window — source-agnostic.
 #[derive(Debug, Clone)]
 pub struct ExpandableTask {
+    /// Stable id of the task this expands.
     pub id: String,
+    /// Its display name.
     pub name: String,
+    /// Whether it is currently scheduled.
     pub enabled: bool,
+    /// The recurrence to expand across the window.
     pub occurrence: Occurrence,
     /// Past-fire status hint when known (ok/failed/unknown).
     pub past_status: CalendarStatus,
+    /// The command line, carried only when `--show-commands` was given.
     pub command: Option<String>,
+    /// Which scheduler it came from.
     pub source_kind: String,
 }
 
 impl ExpandableTask {
+    /// Adapt a Bellman store timer into the source-agnostic shape the
+    /// calendar expands, so cron and systemd rows can join the same grid.
     pub fn from_timer(t: &Timer) -> Self {
         let command = match &t.action {
-            crate::store::Action::Launch {
-                command, args, ..
-            } => {
+            crate::store::Action::Launch { command, args, .. } => {
                 if args.is_empty() {
                     Some(command.clone())
                 } else {
@@ -66,10 +72,7 @@ impl ExpandableTask {
     /// Bellman rows need the store timer for a full [`Occurrence`]; this path
     /// only rebuilds cron / once-style expressions when possible.
     pub fn try_from_discovered(task: &DiscoveredTask) -> Option<Self> {
-        let tz = task
-            .timezone
-            .clone()
-            .unwrap_or_else(|| "UTC".into());
+        let tz = task.timezone.clone().unwrap_or_else(|| "UTC".into());
         let occ = occurrence_from_discovered(task, &tz)?;
         let past_status = match &task.last_result {
             LastResult::Ok { .. } => CalendarStatus::Ok,
@@ -343,26 +346,25 @@ fn build_grid(
 ) -> Vec<CalendarDay> {
     // For month view, pad to full weeks covering the month; for arbitrary
     // ranges, pad weeks that cover [from, to].
-    let (grid_from, grid_to, in_month_check): (NaiveDate, NaiveDate, Box<dyn Fn(NaiveDate) -> bool>) =
-        if let Some((y, m)) = month {
-            let start = NaiveDate::from_ymd_opt(y, m, 1).unwrap_or(from);
-            let end = super::period::month_bounds(y, m)
-                .map(|(_, e)| e)
-                .unwrap_or(to);
-            let gf = start_of_week(start, week_start);
-            let gt = end_of_week(end, week_start);
-            (
-                gf,
-                gt,
-                Box::new(move |d| d.year() == y && d.month() == m),
-            )
-        } else {
-            let gf = start_of_week(from, week_start);
-            let gt = end_of_week(to, week_start);
-            let f = from;
-            let t = to;
-            (gf, gt, Box::new(move |d| d >= f && d <= t))
-        };
+    let (grid_from, grid_to, in_month_check): (
+        NaiveDate,
+        NaiveDate,
+        Box<dyn Fn(NaiveDate) -> bool>,
+    ) = if let Some((y, m)) = month {
+        let start = NaiveDate::from_ymd_opt(y, m, 1).unwrap_or(from);
+        let end = super::period::month_bounds(y, m)
+            .map(|(_, e)| e)
+            .unwrap_or(to);
+        let gf = start_of_week(start, week_start);
+        let gt = end_of_week(end, week_start);
+        (gf, gt, Box::new(move |d| d.year() == y && d.month() == m))
+    } else {
+        let gf = start_of_week(from, week_start);
+        let gt = end_of_week(to, week_start);
+        let f = from;
+        let t = to;
+        (gf, gt, Box::new(move |d| d >= f && d <= t))
+    };
 
     let mut by_date: BTreeMap<String, Vec<&CalendarEntry>> = BTreeMap::new();
     for e in entries {

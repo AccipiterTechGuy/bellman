@@ -245,7 +245,15 @@ pub fn new_cron_task(
     let new_line = format!("{cron_expr} {encoded_cmd}");
     let after = insert_into_fence(&before, &entry_id, &new_line);
 
-    let plan = finish_write_raw("new", None, "crontab:user", &before, &after, apply, backup_dir)?;
+    let plan = finish_write_raw(
+        "new",
+        None,
+        "crontab:user",
+        &before,
+        &after,
+        apply,
+        backup_dir,
+    )?;
 
     let task = if plan.refused.is_none() {
         let source = format!("crontab:{user}");
@@ -479,12 +487,12 @@ fn transform_edit(
         format!("{cron} {encoded}")
     };
     // Validate
-    let probe_body = new_line
-        .strip_prefix(DISABLE_PREFIX)
-        .unwrap_or(&new_line);
+    let probe_body = new_line.strip_prefix(DISABLE_PREFIX).unwrap_or(&new_line);
     let parsed = parse_crontab(probe_body, CrontabMode::User);
     if !matches!(parsed.first(), Some(CrontabLine::Job { .. })) {
-        return Err(format!("edited line does not parse as a cron job: {new_line}"));
+        return Err(format!(
+            "edited line does not parse as a cron job: {new_line}"
+        ));
     }
     lines[idx] = new_line;
     Ok(join_lines(&lines, trailing))
@@ -527,10 +535,7 @@ pub fn refuse_system_write(task: &DiscoveredTask, action: &str) -> WritePlan {
         after: String::new(),
         backup_path: None,
         refused: Some(refuse_non_user(task).unwrap_or_else(|| {
-            format!(
-                "refusing {action} on {} — display only in v1",
-                task.source
-            )
+            format!("refusing {action} on {} — display only in v1", task.source)
         })),
         note: None,
     }
@@ -552,7 +557,8 @@ mod tests {
 
     #[test]
     fn disable_enable_roundtrip_byte_identical() {
-        let original = "# hand comment\n\nSHELL=/bin/bash\n0 6 * * MON-FRI /usr/bin/backup %daily\n# tail\n";
+        let original =
+            "# hand comment\n\nSHELL=/bin/bash\n0 6 * * MON-FRI /usr/bin/backup %daily\n# tail\n";
         let tasks = tasks_from_crontab_text(
             original,
             CrontabMode::User,

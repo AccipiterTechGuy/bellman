@@ -25,13 +25,21 @@ use std::str::FromStr;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateTimerInput {
+    /// Display name.
     pub name: String,
+    /// The schedule, in the dialog's flattened shape.
     pub occurrence: OccurrenceInput,
+    /// Create it scheduled or paused; defaults to scheduled.
     pub enabled: Option<bool>,
+    /// What to do when it fires; defaults to nothing.
     pub action: Option<Action>,
+    /// Missed-fire policy; defaults per occurrence kind.
     pub misfire: Option<MisfirePolicy>,
+    /// Overlap policy; defaults to skip.
     pub overlap: Option<OverlapPolicy>,
+    /// Retry schedule; defaults to one retry after 30 s.
     pub retry: Option<RetryPolicy>,
+    /// Free-form labels.
     pub tags: Option<Vec<String>>,
 }
 
@@ -41,26 +49,34 @@ pub struct CreateTimerInput {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OccurrenceInput {
+    /// Which variant this is: `once` | `interval` | `daily` | `weekly` |
+    /// `monthly` | `yearly` | `cron`. Fields for other kinds are ignored.
     pub kind: String,
+    /// IANA zone the wall-clock fields are read in; system local by default.
     pub tz: Option<String>,
     /// Wall-clock time-of-day for daily/weekly/monthly/yearly.
     pub time: Option<String>,
-    /// Year-aware naive datetime for once: YYYY-MM-DDTHH:MM[:SS].
+    /// Year-aware naive datetime for once: `YYYY-MM-DDTHH:MM[:SS]`.
     pub once_at: Option<String>,
+    /// Period in seconds, for `interval`.
     pub every_secs: Option<u64>,
     /// Interval anchor (UTC); defaults to now() when omitted.
     pub interval_anchor: Option<DateTime<Utc>>,
     /// Comma-separated weekday names ("mon,wed,fri") for weekly.
     pub days: Option<String>,
+    /// Day of month, for `monthly` and `yearly`.
     pub day: Option<u8>,
+    /// Month 1–12, for `yearly`.
     pub month: Option<u8>,
+    /// The expression, for `cron`.
     pub cron_expr: Option<String>,
+    /// What to do when the time falls in a spring-forward gap.
     pub dst_gap: Option<DstGapPolicy>,
+    /// What to do when it falls in a fall-back fold.
     pub dst_fold: Option<DstFoldPolicy>,
+    /// What to do when the month has no such day.
     pub invalid_monthday: Option<InvalidMonthDayPolicy>,
 }
-
-
 
 impl OccurrenceInput {
     /// Build a fresh `Occurrence` honoring all policies. Validates early so
@@ -564,6 +580,7 @@ pub struct PreviewFire {
     pub utc: DateTime<Utc>,
     /// Local clock-face in the schedule tz (HH:MM:SS), with the matching date.
     pub local_date: String,
+    /// Local time of day, `HH:MM:SS`.
     pub local_time: String,
     /// Offset string e.g. "+02:00" or "Z".
     pub offset: String,
@@ -744,7 +761,10 @@ mod tests {
         );
         let msg = w.unwrap();
         assert!(
-            msg.contains("gap") || msg.contains("DST") || msg.contains("not exist") || msg.contains("skipped"),
+            msg.contains("gap")
+                || msg.contains("DST")
+                || msg.contains("not exist")
+                || msg.contains("skipped"),
             "warning should mention DST / gap / non-existence / skipped; got: {msg}"
         );
         // Cross-check that the schedule actually resolves to a valid
@@ -753,14 +773,15 @@ mod tests {
         // the preview-from-now call returns a non-empty list; today
         // (2026-07-27) the 2026-03-29 03:30 time is already in the past.
         let tz = chrono_tz::Tz::from_str("Europe/Helsinki").unwrap();
-        let at_future = NaiveDateTime::parse_from_str("2027-03-28T03:30:00", "%Y-%m-%dT%H:%M:%S").unwrap();
-        let preview = Occurrence::new(
-            OccurrenceKind::Once { at: at_future },
-            "Europe/Helsinki",
-        )
-        .unwrap()
-        .preview(chrono::Utc::now().with_timezone(&tz), 1);
-        assert!(!preview.is_empty(), "core preview returned nothing for in-gap 03:30 (future date)");
+        let at_future =
+            NaiveDateTime::parse_from_str("2027-03-28T03:30:00", "%Y-%m-%dT%H:%M:%S").unwrap();
+        let preview = Occurrence::new(OccurrenceKind::Once { at: at_future }, "Europe/Helsinki")
+            .unwrap()
+            .preview(chrono::Utc::now().with_timezone(&tz), 1);
+        assert!(
+            !preview.is_empty(),
+            "core preview returned nothing for in-gap 03:30 (future date)"
+        );
         // Resolves to the first valid second after the gap, 04:00:00.
         let first = preview[0];
         assert_eq!(

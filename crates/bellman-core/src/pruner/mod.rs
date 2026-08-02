@@ -20,7 +20,7 @@ pub use year::{
     needs_year_recalibration, run_year_recalibration, year_start, YearRecalibrateReport,
 };
 
-use crate::events::{EventPublisher, RunState, EventRecord};
+use crate::events::{EventPublisher, EventRecord, RunState};
 use crate::occurrence::{Occurrence, OccurrenceKind};
 use crate::store::{
     Action, MisfirePolicy, NewTimer, OverlapPolicy, RetryPolicy, Store, StoreError, StoreResult,
@@ -97,8 +97,11 @@ pub struct PruneReport {
 /// Errors from prune / ensure-timer helpers.
 #[derive(Debug)]
 pub enum PruneError {
+    /// A database operation failed.
     Store(StoreError),
+    /// Rotating or retaining the event log failed.
     EventLog(String),
+    /// A pruner invariant failed.
     Internal(String),
 }
 
@@ -120,6 +123,7 @@ impl From<StoreError> for PruneError {
     }
 }
 
+/// Result alias for pruner operations.
 pub type PruneResult<T> = Result<T, PruneError>;
 
 /// Parse the stable system.prune timer id.
@@ -185,24 +189,41 @@ pub fn ensure_system_prune_timer(store: &mut Store) -> PruneResult<Timer> {
 
 fn iana_system_tz() -> String {
     // Prefer the local offset's common IANA guess; fall back to UTC.
-    // chrono's Local doesn't always expose the IANA name; use Etc/GMT when unknown.
-    std::env::var("TZ").unwrap_or_else(|_| {
+    // chrono's Local doesn't always expose the IANA name.
+    //
+    // Whatever this produces is fed straight to `Occurrence::new`, so it has
+    // to be a name chrono-tz can parse. A guess that is merely plausible is
+    // not good enough: `Occurrence::new` fails, `ensure_system_prune_timer`
+    // fails, and `startup_maintenance` aborts — which on a fresh data dir
+    // also leaves `timers/` uncreated and takes the whole background watcher
+    // with it. Seen for real on a container whose
+    // `/etc/localtime -> /usr/share/zoneinfo//UTC` (double slash) yields the
+    // unparseable name `/UTC`. So: normalise, then verify, then UTC.
+    let raw = std::env::var("TZ").ok().or_else(|| {
         // Best-effort: read /etc/localtime symlink target on Linux.
-        if let Ok(link) = std::fs::read_link("/etc/localtime") {
-            let s = link.to_string_lossy();
-            if let Some(idx) = s.find("zoneinfo/") {
-                let name = &s[idx + "zoneinfo/".len()..];
-                if !name.is_empty() {
-                    return name.to_string();
-                }
-            }
-        }
-        "UTC".into()
-    })
+        let link = std::fs::read_link("/etc/localtime").ok()?;
+        let s = link.to_string_lossy();
+        let idx = s.find("zoneinfo/")?;
+        Some(s[idx + "zoneinfo/".len()..].to_string())
+    });
+    usable_tz_name(raw)
+}
+
+/// Normalise a guessed zone name and keep it only if chrono-tz can parse it;
+/// anything else becomes `UTC`. Split out from [`iana_system_tz`] so it is
+/// testable without touching process environment.
+fn usable_tz_name(raw: Option<String>) -> String {
+    raw.map(|s| s.trim().trim_start_matches('/').to_string())
+        .filter(|s| !s.is_empty() && s.parse::<chrono_tz::Tz>().is_ok())
+        .unwrap_or_else(|| "UTC".into())
 }
 
 /// True when a prune pass should run now (startup catch-up or overdue).
-pub fn prune_is_due(last_prune: Option<DateTime<Utc>>, now: DateTime<Utc>, interval: Duration) -> bool {
+pub fn prune_is_due(
+    last_prune: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    interval: Duration,
+) -> bool {
     match last_prune {
         None => true,
         Some(lp) => {
@@ -314,11 +335,8 @@ pub fn run_prune(
 
     // Folder tree maintenance: sweep orphans, then reconcile the view.
     if let Some(tree) = tree {
-        let live_ids: std::collections::HashSet<TimerId> = store
-            .list_timers()?
-            .iter()
-            .map(|t| t.id)
-            .collect();
+        let live_ids: std::collections::HashSet<TimerId> =
+            store.list_timers()?.iter().map(|t| t.id).collect();
         match tree.sweep_orphans(&live_ids) {
             Ok(removed) => {
                 report.orphan_folders_removed = removed.len();
@@ -344,9 +362,9 @@ pub fn run_prune(
         // oldest payload/sidecar pairs first. Shares the quarantine lock
         // with artifact creation (the pruner holds no timer shard here).
         let bad = crate::reply::quarantine::quarantine_dir(tree.root());
-        if let Ok(_lock) = crate::reply::gate::acquire_quarantine(
-            tree.root().parent().unwrap_or(tree.root()),
-        ) {
+        if let Ok(_lock) =
+            crate::reply::gate::acquire_quarantine(tree.root().parent().unwrap_or(tree.root()))
+        {
             match crate::reply::quarantine::prune(
                 &bad,
                 config.retention,
@@ -435,9 +453,7 @@ pub fn is_terminal_oneshot(
     // 2) Skipped / validity ended: next_fire is None (or past), and either
     //    disabled, past valid_until, or last_fired set with max_runs done.
     let fired = timer.last_fired.is_some() && timer.next_fire_utc.is_none();
-    let past_validity = timer
-        .valid_until
-        .is_some_and(|until| now >= until)
+    let past_validity = timer.valid_until.is_some_and(|until| now >= until)
         || timer
             .occurrence
             .valid_until()

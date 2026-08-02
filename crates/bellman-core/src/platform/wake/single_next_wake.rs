@@ -11,8 +11,11 @@ use std::sync::{Arc, Mutex};
 /// Candidate timer for the single-next-wake election.
 #[derive(Debug, Clone)]
 pub struct WakeCandidate {
+    /// Whether the timer is scheduled at all.
     pub enabled: bool,
+    /// Whether the user opted this timer into waking the machine.
     pub wake_machine: bool,
+    /// Its next fire; the election takes the earliest of these.
     pub next_fire_utc: Option<DateTime<Utc>>,
 }
 
@@ -45,6 +48,7 @@ struct BridgeState {
 }
 
 impl SingleNextWake {
+    /// Build the bridge over an explicit platform implementation (tests).
     pub fn new(wake: Box<dyn MachineWake>, master_enabled: bool) -> Self {
         let cap = wake.capability();
         let line = cap.status_line();
@@ -59,16 +63,26 @@ impl SingleNextWake {
         }
     }
 
+    /// Build the bridge over this platform's implementation.
     pub fn with_platform_default(master_enabled: bool) -> Self {
         Self::new(super::create_wake(), master_enabled)
     }
 
+    /// Apply the user's master toggle; `false` disables wake regardless of
+    /// what the platform could do.
     pub fn set_master_enabled(&self, enabled: bool) {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).master_enabled = enabled;
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .master_enabled = enabled;
     }
 
+    /// The master toggle's current value.
     pub fn master_enabled(&self) -> bool {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).master_enabled
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .master_enabled
     }
 
     /// Effective capability: platform probe gated by master toggle.
@@ -86,6 +100,8 @@ impl SingleNextWake {
             .capability()
     }
 
+    /// Re-run the platform probe. Capability is always re-derived, never
+    /// remembered from what an installer once did.
     pub fn re_probe(&self) -> WakeCapability {
         let mut st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let cap = st.wake.re_probe();
@@ -121,7 +137,11 @@ impl SingleNextWake {
     }
 
     /// Cancel-then-program the single next wake from the elected due time.
-    pub fn rearm(&self, next_due: Option<DateTime<Utc>>, now: DateTime<Utc>) -> Result<(), WakeError> {
+    pub fn rearm(
+        &self,
+        next_due: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+    ) -> Result<(), WakeError> {
         let mut st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let eff = effective_cap(&st.wake.capability(), st.master_enabled);
         if !eff.is_enabled() {
@@ -169,12 +189,15 @@ impl SingleNextWake {
         self.rearm(next, now)
     }
 
+    /// Disarm the pending wake, restoring any foreign alarm we displaced.
     pub fn cancel(&self) -> Result<(), WakeError> {
         let mut st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         st.last_target = None;
         st.wake.cancel_wake()
     }
 
+    /// Re-arm around suspend and resume. The wake event itself never fires
+    /// actions — the normal loop and the misfire pass do.
     pub fn on_power_event(&self, ev: PowerEvent, candidates: &[WakeCandidate], now: DateTime<Utc>) {
         match ev {
             PowerEvent::Suspending => {
@@ -195,8 +218,12 @@ impl SingleNextWake {
         }
     }
 
+    /// The instant currently armed, if any.
     pub fn last_armed(&self) -> Option<DateTime<Utc>> {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).last_target
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .last_target
     }
 }
 

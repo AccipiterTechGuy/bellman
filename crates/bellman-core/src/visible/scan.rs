@@ -2,9 +2,7 @@
 
 use crate::visible::cron;
 use crate::visible::providers::{at, bellman, systemd};
-use crate::visible::types::{
-    DiscoveredTask, ScanResult, SourceFilter, SourceKind,
-};
+use crate::visible::types::{DiscoveredTask, ScanResult, SourceFilter, SourceKind};
 use chrono::Utc;
 use std::path::Path;
 
@@ -162,7 +160,10 @@ fn scan_linux(
 
     if want(SourceKind::CronD) || matches!(filter, SourceFilter::Cron) {
         // Cron filter includes cron.d; CronD-only also
-        if matches!(filter, SourceFilter::All | SourceFilter::Cron | SourceFilter::CronD) {
+        if matches!(
+            filter,
+            SourceFilter::All | SourceFilter::Cron | SourceFilter::CronD
+        ) {
             let (t, w) = cron::discover_cron_d();
             tasks.extend(filter_user(t, user_filter));
             warnings.extend(w);

@@ -1,6 +1,6 @@
 //! Slot directory layout: `slots/{free,work,done,bad}/`.
 
-use super::atomic::{atomic_write_json, is_regular_file, refuse_symlink};
+use super::atomic::{atomic_write_json, create_new_json, is_regular_file, refuse_symlink};
 use super::envelope::SlotRequest;
 use super::error::{SlotError, SlotResult};
 use std::fs;
@@ -47,23 +47,30 @@ impl SlotLayout {
         Ok(layout)
     }
 
+    /// The `slots/` root.
     pub fn root(&self) -> &Path {
         &self.root
     }
 
+    /// Pre-generated empty stubs a producer claims by rename.
     pub fn free_dir(&self) -> PathBuf {
         self.root.join(DIR_FREE)
     }
+    /// Requests Bellman has claimed and is applying.
     pub fn work_dir(&self) -> PathBuf {
         self.root.join(DIR_WORK)
     }
+    /// Responses. Never fire notifications — those live in `fires/`.
     pub fn done_dir(&self) -> PathBuf {
         self.root.join(DIR_DONE)
     }
+    /// Quarantined garbage, each with an `.err.json` sidecar saying why.
     pub fn bad_dir(&self) -> PathBuf {
         self.root.join(DIR_BAD)
     }
 
+    /// How many free stubs are kept ready, so one app can never block
+    /// another by taking the last one.
     pub fn min_free(&self) -> usize {
         self.min_free
     }
@@ -82,18 +89,24 @@ impl SlotLayout {
         let stubs = list_free_stubs(self)?;
         let mut created = 0usize;
         let mut next_id = next_slot_id(self)?;
+        // Creation is EXCLUSIVE, never a replace. A producer claims a stub by
+        // renaming it away, then writes its request back onto that reserved
+        // name; between those two steps the name does not exist, so an
+        // `exists()` check here would say "free" and a replacing write would
+        // land on top of the request a moment later — losing it silently,
+        // with the producer told it succeeded and nothing in `bad/`. Every
+        // `SlotService::open` replenishes, so two apps integrating at the
+        // same moment were enough to hit it.
         while stubs.len() + created < self.min_free {
             let id = format!("{next_id:04}");
             let name = format!("slot-{id}.json");
-            let path = self.free_dir().join(&name);
-            if path.exists() {
-                next_id = next_id.saturating_add(1);
-                continue;
-            }
-            let stub = SlotRequest::free_stub(&id);
-            atomic_write_json(&self.free_dir(), &name, &stub)?;
-            created += 1;
             next_id = next_id.saturating_add(1);
+            let stub = SlotRequest::free_stub(&id);
+            if create_new_json(&self.free_dir(), &name, &stub)? {
+                created += 1;
+            }
+            // Name already taken (a stub, or a request published onto it):
+            // leave it alone and try the next id.
         }
         Ok(created)
     }
@@ -156,8 +169,8 @@ impl SlotLayout {
             // Prefer rename (moves the directory entry, including dangling links).
             // Fall back to copy+remove only for regular files on cross-fs.
             if fs::rename(path, &dest).is_err() {
-                let is_symlink = fs::symlink_metadata(path)
-                    .is_ok_and(|m| m.file_type().is_symlink());
+                let is_symlink =
+                    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
                 if is_symlink {
                     // Cannot copy a dangling link usefully; drop the entry.
                     let _ = fs::remove_file(path);
@@ -240,8 +253,7 @@ fn list_json_files(dir: &Path) -> SlotResult<Vec<PathBuf>> {
 }
 
 fn is_symlink_path(path: &Path) -> bool {
-    fs::symlink_metadata(path)
-        .is_ok_and(|m| m.file_type().is_symlink())
+    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
 }
 
 fn list_free_stubs(layout: &SlotLayout) -> SlotResult<Vec<PathBuf>> {

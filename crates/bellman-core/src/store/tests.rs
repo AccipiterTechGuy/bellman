@@ -27,10 +27,7 @@ fn all_kinds() -> Vec<(&'static str, Occurrence)> {
             "once",
             Occurrence::new(
                 OccurrenceKind::Once {
-                    at: NaiveDateTime::new(
-                        NaiveDate::from_ymd_opt(2030, 6, 15).unwrap(),
-                        noon,
-                    ),
+                    at: NaiveDateTime::new(NaiveDate::from_ymd_opt(2030, 6, 15).unwrap(), noon),
                 },
                 "UTC",
             )
@@ -263,10 +260,7 @@ fn crud_round_trip_every_occurrence_kind() {
 fn stale_revision_edit_rejected() {
     let (_dir, mut store) = open_tmp();
     let t = store
-        .create_timer(NewTimer::new(
-            "rev",
-            once_at(2031, 1, 1, 0, 0, 0),
-        ))
+        .create_timer(NewTimer::new("rev", once_at(2031, 1, 1, 0, 0, 0)))
         .unwrap();
     assert_eq!(t.revision, 1);
 
@@ -520,12 +514,7 @@ fn new_timer_misfire_defaults_by_occurrence_kind() {
     let tc = store
         .create_timer(NewTimer::new("c", once_at(2030, 9, 1, 0, 0, 0)))
         .unwrap();
-    assert_eq!(
-        tc.misfire,
-        MisfirePolicy::Coalesce {
-            grace_secs: 3600
-        }
-    );
+    assert_eq!(tc.misfire, MisfirePolicy::Coalesce { grace_secs: 3600 });
 }
 
 #[test]

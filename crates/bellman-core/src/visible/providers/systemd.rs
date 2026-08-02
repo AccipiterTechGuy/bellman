@@ -28,9 +28,7 @@ fn list_timers(user: bool) -> Result<Vec<DiscoveredTask>, String> {
         cmd.arg("--user");
     }
     cmd.args(["list-timers", "--all", "--no-pager", "--no-legend"]);
-    let out = cmd
-        .output()
-        .map_err(|e| format!("spawn systemctl: {e}"))?;
+    let out = cmd.output().map_err(|e| format!("spawn systemctl: {e}"))?;
     if !out.status.success() {
         return Err(format!(
             "systemctl list-timers failed: {}",
@@ -110,8 +108,7 @@ fn parse_timer_line(line: &str, user: bool) -> Option<DiscoveredTask> {
         enabled: true,
         writable: false,
         write_block_reason: Some(if user {
-            "v1 is display-only for systemd user timers (no enable/disable via Bellman yet)"
-                .into()
+            "v1 is display-only for systemd user timers (no enable/disable via Bellman yet)".into()
         } else {
             "v1 is read-only for system systemd units; Bellman will not call sudo".into()
         }),
@@ -393,8 +390,7 @@ fn enrich_timer(task: &mut DiscoveredTask, user: bool) {
                     start_ts = v.to_string();
                 }
             }
-            task.last_result =
-                last_result_from_props(&start_ts, &result, status, task.last_run);
+            task.last_result = last_result_from_props(&start_ts, &result, status, task.last_run);
         }
     }
 }
@@ -447,10 +443,7 @@ mod tests {
     fn never_run_service_is_never_not_ok() {
         // Supervisor REPRO: defaults Result=success + ExecMainStatus=0 with empty start.
         let r = last_result_from_props("", "success", Some(0), None);
-        assert!(
-            matches!(r, LastResult::Never),
-            "expected Never, got {r:?}"
-        );
+        assert!(matches!(r, LastResult::Never), "expected Never, got {r:?}");
         let r2 = last_result_from_props("n/a", "success", Some(0), None);
         assert!(matches!(r2, LastResult::Never), "{r2:?}");
     }
@@ -479,9 +472,18 @@ mod tests {
         let cal = "{ OnCalendar=*-*-* 6:00:00 ; next_elapse=Thu 2026-07-30 06:00:00 EEST }";
         let (expr, human) = parse_timer_schedule(cal, "");
         assert!(expr.contains("OnCalendar="), "{expr}");
-        assert!(expr.contains("6:00:00") || expr.contains("06:00:00"), "{expr}");
-        assert!(!human.contains(".timer"), "should not just echo unit name: {human}");
-        assert!(human.to_lowercase().contains("calendar") || human.contains("OnCalendar"), "{human}");
+        assert!(
+            expr.contains("6:00:00") || expr.contains("06:00:00"),
+            "{expr}"
+        );
+        assert!(
+            !human.contains(".timer"),
+            "should not just echo unit name: {human}"
+        );
+        assert!(
+            human.to_lowercase().contains("calendar") || human.contains("OnCalendar"),
+            "{human}"
+        );
     }
 
     #[test]

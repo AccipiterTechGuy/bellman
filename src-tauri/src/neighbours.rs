@@ -48,6 +48,7 @@ pub enum NeighbourRelation {
 }
 
 impl NeighbourRelation {
+    /// The camelCase spelling sent to the webview.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Collision => "collision",
@@ -60,12 +61,19 @@ impl NeighbourRelation {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NeighbourHitDto {
+    /// The existing timer that fires here.
     pub timer_id: String,
+    /// Its display name, so the warning can name it.
     pub name: String,
+    /// The fire instant, in UTC.
     pub fire_utc: DateTime<Utc>,
+    /// Its local date.
     pub local_date: String,
+    /// Its local time of day.
     pub local_time: String,
+    /// The UTC offset in force then.
     pub offset: String,
+    /// The zone abbreviation in force then.
     pub tz_name: String,
     /// Occurrence kind name: once|interval|daily|weekly|monthly|yearly|cron.
     pub occurrence_kind: String,
@@ -81,8 +89,11 @@ pub struct NeighbourHitDto {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CandidateNeighboursDto {
+    /// The instant the user's edit would fire at.
     pub candidate_utc: DateTime<Utc>,
+    /// Existing fires on the very same second.
     pub collisions: Vec<NeighbourHitDto>,
+    /// Existing fires close by but not identical.
     pub nearby: Vec<NeighbourHitDto>,
 }
 
@@ -90,27 +101,37 @@ pub struct CandidateNeighboursDto {
 #[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct NeighbourStatsDto {
+    /// Timers considered.
     pub timers_scanned: usize,
+    /// Skipped because they are paused.
     pub timers_skipped_disabled: usize,
+    /// Skipped because the caller excluded them (the timer being edited).
     pub timers_skipped_excluded: usize,
+    /// Fires expanded in total — the bound this query is kept inside.
     pub fires_expanded: usize,
 }
 
+/// Everything the edit dialog needs to warn about a crowded instant.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryNeighboursResponse {
+    /// Neighbours grouped under each candidate.
     pub by_candidate: Vec<CandidateNeighboursDto>,
     /// Flat union of all collisions (stable: by fire_utc then name).
     pub collisions: Vec<NeighbourHitDto>,
     /// Flat union of all nearby hits (not collisions).
     pub nearby: Vec<NeighbourHitDto>,
+    /// How much work this answer cost.
     pub stats: NeighbourStatsDto,
     /// Window used for this response (seconds).
     pub window_secs: i64,
+    /// How far ahead fires were expanded, in seconds.
     pub horizon_secs: i64,
+    /// Per-timer expansion cap, so one dense schedule cannot dominate.
     pub max_fires_per_timer: usize,
 }
 
+/// Arguments for the neighbour query.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryNeighboursArgs {
@@ -176,7 +197,10 @@ fn format_offset_secs(secs: i32) -> String {
     }
 }
 
-fn local_parts(occ: &bellman_core::Occurrence, fire_utc: DateTime<Utc>) -> (String, String, String, String) {
+fn local_parts(
+    occ: &bellman_core::Occurrence,
+    fire_utc: DateTime<Utc>,
+) -> (String, String, String, String) {
     let local_dt = fire_utc.with_timezone(&occ.timezone());
     let local_date = local_dt.date_naive().format("%Y-%m-%d").to_string();
     let local_time = local_dt.time().format("%H:%M:%S").to_string();
@@ -241,7 +265,7 @@ pub fn query_neighbours_from_timers(
     let min_cand = cand_secs.iter().copied().min().unwrap_or(now);
     let max_cand = cand_secs.iter().copied().max().unwrap_or(now);
     let _ = now; // reserved for future near-now-only entry points
-    // Cursor just before the earliest candidate so "nearby before" still matches.
+                 // Cursor just before the earliest candidate so "nearby before" still matches.
     let after = min_cand - Duration::seconds(window_secs + 1);
     let horizon_end = max_cand + Duration::seconds(window_secs + 1);
 
@@ -273,8 +297,7 @@ pub fn query_neighbours_from_timers(
                 let Some(rel) = classify_delta(delta, window_secs) else {
                     continue;
                 };
-                let (local_date, local_time, offset, tz_name) =
-                    local_parts(&t.occurrence, fire_s);
+                let (local_date, local_time, offset, tz_name) = local_parts(&t.occurrence, fire_s);
                 let hit = NeighbourHitDto {
                     timer_id: t.id.to_string(),
                     name: t.name.clone(),
@@ -383,12 +406,7 @@ mod tests {
     use bellman_core::{Action, MisfirePolicy, Occurrence, OverlapPolicy, RetryPolicy};
     use chrono::{NaiveDate, NaiveTime, TimeZone};
 
-    fn make_timer(
-        name: &str,
-        occ: Occurrence,
-        enabled: bool,
-        action: Action,
-    ) -> Timer {
+    fn make_timer(name: &str, occ: Occurrence, enabled: bool, action: Action) -> Timer {
         let id = Uuid::new_v4();
         // Seed next_fire via a throwaway open store? Simpler: construct Timer directly.
         let now = Utc::now();
@@ -484,12 +502,7 @@ mod tests {
                 workdir: None,
             },
         );
-        let t3 = make_timer(
-            "gamma-notify",
-            daily_at(9, 0, 0, tz),
-            true,
-            Action::None,
-        );
+        let t3 = make_timer("gamma-notify", daily_at(9, 0, 0, tz), true, Action::None);
         // Far away — must not appear.
         let t4 = make_timer("other-hour", daily_at(10, 0, 0, tz), true, Action::None);
 
@@ -615,16 +628,19 @@ mod tests {
         let candidate = fire_local.with_timezone(&Utc);
 
         let now = Utc.with_ymd_and_hms(2030, 3, 30, 0, 0, 0).unwrap();
-        let resp = query_neighbours_from_timers(
-            &[a, b],
-            &[candidate],
-            None,
-            NEIGHBOUR_WINDOW_SECS,
-            now,
+        let resp =
+            query_neighbours_from_timers(&[a, b], &[candidate], None, NEIGHBOUR_WINDOW_SECS, now);
+        assert_eq!(
+            resp.collisions.len(),
+            2,
+            "both should collide: {:?}",
+            resp.collisions
         );
-        assert_eq!(resp.collisions.len(), 2, "both should collide: {:?}", resp.collisions);
         for h in &resp.collisions {
-            assert_eq!(truncate_to_second(h.fire_utc), truncate_to_second(candidate));
+            assert_eq!(
+                truncate_to_second(h.fire_utc),
+                truncate_to_second(candidate)
+            );
         }
     }
 
@@ -634,6 +650,8 @@ mod tests {
         assert_eq!(NEIGHBOUR_HORIZON_SECS, 14 * 24 * 3600);
         assert_eq!(NEIGHBOUR_MAX_FIRES_PER_TIMER, 48);
         // Compile-time check: collision granularity is to-the-second (product pin).
-        const { assert!(NEIGHBOUR_COLLISION_TO_SECOND); }
+        const {
+            assert!(NEIGHBOUR_COLLISION_TO_SECOND);
+        }
     }
 }

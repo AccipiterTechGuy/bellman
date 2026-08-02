@@ -1,0 +1,835 @@
+{
+  "noack_fired_at": 481767.931342895,
+  "watchdog_reply_sha_before": "d1b3a536c49218f598ba29c75d9b71ca9bdcdb50f39ca9470bb608f48f2edfae",
+  "watchdog_reply_body_before": "{\n  \"app_name\": \"wd-app\",\n  \"hint\": \"set state to acknowledged | running | completed | failed\",\n  \"run_id\": \"a3d30479-f5cd-43ea-93f5-c328e1de3e63\",\n  \"schema\": \"bellman-reply/1\",\n  \"state\": \"running\",\n  \"acknowledged_at\": \"2026-08-01T21:12:16Z\",\n  \"expected_secs\": 5,\n  \"error_detection\": true\n}",
+  "watchdog_armed_at": "2026-08-01T21:12:16Z",
+  "heartbeat_armed_at": "2026-08-01T21:12:16Z",
+  "heartbeat_status_mid": {
+    "schema": "bellman-run/1",
+    "state": "running",
+    "run_id": "0d2db0c9-fe12-45d2-a5f3-972999f6c3ec",
+    "timer_id": "0c0120a5-145b-41ee-96eb-becb769c4519",
+    "timer_name": "rc-heartbeat",
+    "occurrence_kind": "once",
+    "scheduled_for": "2026-08-01T21:12:13Z",
+    "fired_at": "2026-08-01T21:12:13.001254868Z",
+    "app_name": "hb-app",
+    "acknowledged_at": "2026-08-01T21:12:16Z",
+    "expected_secs": 5,
+    "error_detection": true,
+    "heartbeat_at": "2026-08-01T21:12:31Z",
+    "progress": "step 5/6",
+    "transport": "json"
+  },
+  "heartbeat_status_final": {
+    "schema": "bellman-run/1",
+    "state": "completed",
+    "run_id": "0d2db0c9-fe12-45d2-a5f3-972999f6c3ec",
+    "timer_id": "0c0120a5-145b-41ee-96eb-becb769c4519",
+    "timer_name": "rc-heartbeat",
+    "occurrence_kind": "once",
+    "scheduled_for": "2026-08-01T21:12:13Z",
+    "fired_at": "2026-08-01T21:12:13.001254868Z",
+    "app_name": "hb-app",
+    "acknowledged_at": "2026-08-01T21:12:16Z",
+    "expected_secs": 5,
+    "error_detection": true,
+    "heartbeat_at": "2026-08-01T21:12:34Z",
+    "progress": "step 6/6",
+    "completed_at": "2026-08-01T21:12:34Z",
+    "result": {
+      "heartbeats": 6
+    },
+    "transport": "json"
+  },
+  "reject_cases": {
+    "malformed_bytes": {
+      "sent_bytes": 29,
+      "reply_rejected_event": {
+        "schema": "bellman-event/1",
+        "logged_at": "2026-08-01T21:12:36.404310928Z",
+        "kind": "reply_rejected",
+        "event_id": "6617765c-8b94-4df8-bbb0-cbb6e64521dd",
+        "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+        "run_id": "c3d0d500-2a8e-40a5-9f13-2731b64c56da",
+        "timer_name": "rc-rejects",
+        "message": "invalid JSON"
+      },
+      "live_file_still_present": true,
+      "live_file_bytes": 29,
+      "quarantine_new": [
+        "01d0ef371ff95bbc-674701508088311e.payload",
+        "01d0ef371ff95bbc-674701508088311e.sidecar.json"
+      ]
+    },
+    "wrong_app_name": {
+      "sent_bytes": 198,
+      "reply_rejected_event": {
+        "schema": "bellman-event/1",
+        "logged_at": "2026-08-01T21:12:39.096108876Z",
+        "kind": "reply_rejected",
+        "event_id": "020943be-ef81-4dc3-8a2c-e058d2660cee",
+        "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+        "run_id": "c3d0d500-2a8e-40a5-9f13-2731b64c56da",
+        "timer_name": "rc-rejects",
+        "message": "app_name does not match the run's owner"
+      },
+      "live_file_still_present": true,
+      "live_file_bytes": 198,
+      "quarantine_new": [
+        "01d0ef371ff95bbc-76310d3fdf819f64.payload",
+        "01d0ef371ff95bbc-76310d3fdf819f64.sidecar.json"
+      ]
+    },
+    "unknown_run_id": {
+      "sent_bytes": 192,
+      "reply_rejected_event": {
+        "schema": "bellman-event/1",
+        "logged_at": "2026-08-01T21:12:39.459879881Z",
+        "kind": "reply_rejected",
+        "event_id": "f883d715-64dc-4e86-9eb3-84da324f7494",
+        "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+        "run_id": "c3d0d500-2a8e-40a5-9f13-2731b64c56da",
+        "timer_name": "rc-rejects",
+        "message": "run_id does not match the reply filename"
+      },
+      "live_file_still_present": true,
+      "live_file_bytes": 192,
+      "quarantine_new": [
+        "01d0ef371ff95bbc-ec09a501a50552e1.payload",
+        "01d0ef371ff95bbc-ec09a501a50552e1.sidecar.json"
+      ]
+    },
+    "oversize_payload": {
+      "sent_bytes": 70216,
+      "reply_rejected_event": {
+        "schema": "bellman-event/1",
+        "logged_at": "2026-08-01T21:12:39.960271326Z",
+        "kind": "reply_rejected",
+        "event_id": "05977937-e7d0-4431-a2bf-e3ab1a999d17",
+        "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+        "run_id": "c3d0d500-2a8e-40a5-9f13-2731b64c56da",
+        "timer_name": "rc-rejects",
+        "message": "oversize"
+      },
+      "live_file_still_present": true,
+      "live_file_bytes": 70216,
+      "quarantine_new": [
+        "01d0ef371ff95bbc-unread-6c7de6378027532f.sidecar.json"
+      ]
+    },
+    "reserved_state": {
+      "sent_bytes": 189,
+      "reply_rejected_event": {
+        "schema": "bellman-event/1",
+        "logged_at": "2026-08-01T21:12:40.462757106Z",
+        "kind": "reply_rejected",
+        "event_id": "228e1d27-673c-4cab-853f-a50aa97ca3fd",
+        "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+        "run_id": "c3d0d500-2a8e-40a5-9f13-2731b64c56da",
+        "timer_name": "rc-rejects",
+        "message": "state is reserved to Bellman"
+      },
+      "live_file_still_present": true,
+      "live_file_bytes": 189,
+      "quarantine_new": [
+        "01d0ef371ff95bbc-ec1842a1f6dbcb21.payload",
+        "01d0ef371ff95bbc-ec1842a1f6dbcb21.sidecar.json"
+      ]
+    }
+  },
+  "reject_quarantine_listing": [
+    "01d0ef371ff95bbc-674701508088311e.payload",
+    "01d0ef371ff95bbc-674701508088311e.sidecar.json",
+    "01d0ef371ff95bbc-76310d3fdf819f64.payload",
+    "01d0ef371ff95bbc-76310d3fdf819f64.sidecar.json",
+    "01d0ef371ff95bbc-ec09a501a50552e1.payload",
+    "01d0ef371ff95bbc-ec09a501a50552e1.sidecar.json",
+    "01d0ef371ff95bbc-ec1842a1f6dbcb21.payload",
+    "01d0ef371ff95bbc-ec1842a1f6dbcb21.sidecar.json",
+    "01d0ef371ff95bbc-unread-6c7de6378027532f.sidecar.json"
+  ],
+  "watchdog_status": {
+    "schema": "bellman-run/1",
+    "state": "failed",
+    "run_id": "a3d30479-f5cd-43ea-93f5-c328e1de3e63",
+    "timer_id": "a33841f5-a40c-435c-8efb-764933494baf",
+    "timer_name": "rc-watchdog",
+    "occurrence_kind": "once",
+    "scheduled_for": "2026-08-01T21:12:13Z",
+    "fired_at": "2026-08-01T21:12:13.010254111Z",
+    "app_name": "wd-app",
+    "acknowledged_at": "2026-08-01T21:12:16Z",
+    "expected_secs": 5,
+    "error_detection": true,
+    "failed_at": "2026-08-01T21:12:26.197888491Z",
+    "failure_kind": "timed_out",
+    "transport": "json"
+  },
+  "watchdog_reply_sha_after": "d1b3a536c49218f598ba29c75d9b71ca9bdcdb50f39ca9470bb608f48f2edfae",
+  "watchdog_reply_body_after": "{\n  \"app_name\": \"wd-app\",\n  \"hint\": \"set state to acknowledged | running | completed | failed\",\n  \"run_id\": \"a3d30479-f5cd-43ea-93f5-c328e1de3e63\",\n  \"schema\": \"bellman-reply/1\",\n  \"state\": \"running\",\n  \"acknowledged_at\": \"2026-08-01T21:12:16Z\",\n  \"expected_secs\": 5,\n  \"error_detection\": true\n}",
+  "stale_stub_present_after_supersede": false,
+  "stale_run_id": "29614e3f-8bb8-4520-9081-d72b05e3aa5f",
+  "stale_current_run_id": "63018e77-0981-49a1-8c12-cd69b013b8fc",
+  "stale_event": {
+    "schema": "bellman-event/1",
+    "logged_at": "2026-08-01T21:12:41.966182563Z",
+    "kind": "superseded",
+    "event_id": "6aaf2f47-e2e4-485d-af6a-e65bd188bce2",
+    "timer_id": "3f7ba42d-eceb-4d2d-a16e-c9a70d73818b",
+    "run_id": "29614e3f-8bb8-4520-9081-d72b05e3aa5f",
+    "timer_name": "rc-stale",
+    "scheduled_for": "2026-08-01T21:11:33.167241815Z",
+    "message": "reply arrived for a run that is no longer current"
+  },
+  "stale_status_after": {
+    "schema": "bellman-run/1",
+    "state": "fired",
+    "run_id": "63018e77-0981-49a1-8c12-cd69b013b8fc",
+    "timer_id": "3f7ba42d-eceb-4d2d-a16e-c9a70d73818b",
+    "timer_name": "rc-stale",
+    "occurrence_kind": "interval",
+    "scheduled_for": "2026-08-01T21:12:33.167241815Z",
+    "fired_at": "2026-08-01T21:12:33.168427110Z",
+    "app_name": "stale-app",
+    "transport": "json"
+  },
+  "noack_event": {
+    "schema": "bellman-event/1",
+    "logged_at": "2026-08-01T21:13:13.021466672Z",
+    "kind": "no_ack",
+    "event_id": "e7228b8c-8695-4ca2-9901-cf6da88dd81a",
+    "timer_id": "ad0b0724-c49f-44d5-93b3-2ed0093a6698",
+    "run_id": "31c4bccc-d47c-459d-a569-857d26479099",
+    "timer_name": "rc-noack",
+    "scheduled_for": "2026-08-01T21:12:13Z",
+    "message": "no acknowledgement was received"
+  },
+  "noack_status_at_no_ack": {
+    "schema": "bellman-run/1",
+    "state": "no_ack",
+    "run_id": "31c4bccc-d47c-459d-a569-857d26479099",
+    "timer_id": "ad0b0724-c49f-44d5-93b3-2ed0093a6698",
+    "timer_name": "rc-noack",
+    "occurrence_kind": "once",
+    "scheduled_for": "2026-08-01T21:12:13Z",
+    "fired_at": "2026-08-01T21:12:13.020463699Z",
+    "app_name": "ghost-app",
+    "no_ack_at": "2026-08-01T21:13:13.021466672Z",
+    "transport": "json"
+  },
+  "noack_status_after_late_reply": {
+    "schema": "bellman-run/1",
+    "state": "completed",
+    "run_id": "31c4bccc-d47c-459d-a569-857d26479099",
+    "timer_id": "ad0b0724-c49f-44d5-93b3-2ed0093a6698",
+    "timer_name": "rc-noack",
+    "occurrence_kind": "once",
+    "scheduled_for": "2026-08-01T21:12:13Z",
+    "fired_at": "2026-08-01T21:12:13.020463699Z",
+    "app_name": "ghost-app",
+    "completed_at": "2026-08-01T21:13:13Z",
+    "result": {
+      "late": true
+    },
+    "no_ack_at": "2026-08-01T21:13:13.021466672Z",
+    "transport": "json"
+  },
+  "scenario_states": {
+    "happy": "done",
+    "noack": "done",
+    "watchdog": "done",
+    "heartbeat": "done",
+    "rejects": "done",
+    "stale": "done"
+  },
+  "created": {
+    "happy": {
+      "app_name": "happy-app",
+      "occurrence": {
+        "kind": "once",
+        "time": "2026-08-02T00:12:13"
+      },
+      "timer_id": "d1c775a9-44a0-4323-a6e1-e8f4543f1bb5",
+      "next_fire_at": "2026-08-01T21:12:13Z"
+    },
+    "noack": {
+      "app_name": "ghost-app",
+      "occurrence": {
+        "kind": "once",
+        "time": "2026-08-02T00:12:13"
+      },
+      "timer_id": "ad0b0724-c49f-44d5-93b3-2ed0093a6698",
+      "next_fire_at": "2026-08-01T21:12:13Z"
+    },
+    "watchdog": {
+      "app_name": "wd-app",
+      "occurrence": {
+        "kind": "once",
+        "time": "2026-08-02T00:12:13"
+      },
+      "timer_id": "a33841f5-a40c-435c-8efb-764933494baf",
+      "next_fire_at": "2026-08-01T21:12:13Z"
+    },
+    "heartbeat": {
+      "app_name": "hb-app",
+      "occurrence": {
+        "kind": "once",
+        "time": "2026-08-02T00:12:13"
+      },
+      "timer_id": "0c0120a5-145b-41ee-96eb-becb769c4519",
+      "next_fire_at": "2026-08-01T21:12:13Z"
+    },
+    "rejects": {
+      "app_name": "rej-app",
+      "occurrence": {
+        "kind": "once",
+        "time": "2026-08-02T00:12:13"
+      },
+      "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+      "next_fire_at": "2026-08-01T21:12:13Z"
+    },
+    "stale": {
+      "app_name": "stale-app",
+      "occurrence": {
+        "kind": "interval",
+        "every_secs": 60
+      },
+      "timer_id": "3f7ba42d-eceb-4d2d-a16e-c9a70d73818b",
+      "next_fire_at": "2026-08-01T21:11:33.167241815Z"
+    }
+  },
+  "status_files": {
+    "happy": {
+      "schema": "bellman-run/1",
+      "state": "completed",
+      "run_id": "fb304cc8-394f-4191-88e4-211b120d7703",
+      "timer_id": "d1c775a9-44a0-4323-a6e1-e8f4543f1bb5",
+      "timer_name": "rc-happy",
+      "occurrence_kind": "once",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "fired_at": "2026-08-01T21:12:13.030927482Z",
+      "app_name": "happy-app",
+      "acknowledged_at": "2026-08-01T21:12:13Z",
+      "expected_secs": 3,
+      "completed_at": "2026-08-01T21:12:16Z",
+      "result": {
+        "note": "answered from the fire notification",
+        "ok": true
+      },
+      "transport": "json"
+    },
+    "noack": {
+      "schema": "bellman-run/1",
+      "state": "completed",
+      "run_id": "31c4bccc-d47c-459d-a569-857d26479099",
+      "timer_id": "ad0b0724-c49f-44d5-93b3-2ed0093a6698",
+      "timer_name": "rc-noack",
+      "occurrence_kind": "once",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "fired_at": "2026-08-01T21:12:13.020463699Z",
+      "app_name": "ghost-app",
+      "completed_at": "2026-08-01T21:13:13Z",
+      "result": {
+        "late": true
+      },
+      "no_ack_at": "2026-08-01T21:13:13.021466672Z",
+      "transport": "json"
+    },
+    "watchdog": {
+      "schema": "bellman-run/1",
+      "state": "failed",
+      "run_id": "a3d30479-f5cd-43ea-93f5-c328e1de3e63",
+      "timer_id": "a33841f5-a40c-435c-8efb-764933494baf",
+      "timer_name": "rc-watchdog",
+      "occurrence_kind": "once",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "fired_at": "2026-08-01T21:12:13.010254111Z",
+      "app_name": "wd-app",
+      "acknowledged_at": "2026-08-01T21:12:16Z",
+      "expected_secs": 5,
+      "error_detection": true,
+      "failed_at": "2026-08-01T21:12:26.197888491Z",
+      "failure_kind": "timed_out",
+      "transport": "json"
+    },
+    "heartbeat": {
+      "schema": "bellman-run/1",
+      "state": "completed",
+      "run_id": "0d2db0c9-fe12-45d2-a5f3-972999f6c3ec",
+      "timer_id": "0c0120a5-145b-41ee-96eb-becb769c4519",
+      "timer_name": "rc-heartbeat",
+      "occurrence_kind": "once",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "fired_at": "2026-08-01T21:12:13.001254868Z",
+      "app_name": "hb-app",
+      "acknowledged_at": "2026-08-01T21:12:16Z",
+      "expected_secs": 5,
+      "error_detection": true,
+      "heartbeat_at": "2026-08-01T21:12:34Z",
+      "progress": "step 6/6",
+      "completed_at": "2026-08-01T21:12:34Z",
+      "result": {
+        "heartbeats": 6
+      },
+      "transport": "json"
+    },
+    "rejects": {
+      "schema": "bellman-run/1",
+      "state": "no_ack",
+      "run_id": "c3d0d500-2a8e-40a5-9f13-2731b64c56da",
+      "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+      "timer_name": "rc-rejects",
+      "occurrence_kind": "once",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "fired_at": "2026-08-01T21:12:13.041738414Z",
+      "app_name": "rej-app",
+      "no_ack_at": "2026-08-01T21:13:13.042878515Z",
+      "transport": "json"
+    },
+    "stale": {
+      "schema": "bellman-run/1",
+      "state": "fired",
+      "run_id": "63018e77-0981-49a1-8c12-cd69b013b8fc",
+      "timer_id": "3f7ba42d-eceb-4d2d-a16e-c9a70d73818b",
+      "timer_name": "rc-stale",
+      "occurrence_kind": "interval",
+      "scheduled_for": "2026-08-01T21:12:33.167241815Z",
+      "fired_at": "2026-08-01T21:12:33.168427110Z",
+      "app_name": "stale-app",
+      "transport": "json"
+    }
+  },
+  "log": [
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:10:33.119291118Z",
+      "kind": "registered",
+      "event_id": "f591cb9e-2149-4925-bb8f-b84f04949757",
+      "timer_id": "d1c775a9-44a0-4323-a6e1-e8f4543f1bb5",
+      "timer_name": "rc-happy",
+      "message": "slot-submit 06886b5e-c0c7-44e6-ad36-b7ca2b1a916b"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:10:33.129908268Z",
+      "kind": "registered",
+      "event_id": "b013caa6-72a8-449a-83be-24cd536568b4",
+      "timer_id": "ad0b0724-c49f-44d5-93b3-2ed0093a6698",
+      "timer_name": "rc-noack",
+      "message": "slot-submit 3c1448a2-8f89-4f7a-9d84-c2992e8af4f6"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:10:33.140178057Z",
+      "kind": "registered",
+      "event_id": "572e4e29-e842-4d8f-90aa-f793851c05c5",
+      "timer_id": "a33841f5-a40c-435c-8efb-764933494baf",
+      "timer_name": "rc-watchdog",
+      "message": "slot-submit 242ec76c-0a55-4962-a445-f1f0c22b9905"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:10:33.150039660Z",
+      "kind": "registered",
+      "event_id": "1e665523-4cc9-498c-95f5-ab85290b3639",
+      "timer_id": "0c0120a5-145b-41ee-96eb-becb769c4519",
+      "timer_name": "rc-heartbeat",
+      "message": "slot-submit 25da22c4-e37a-4f89-848d-cc57738c90de"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:10:33.160131276Z",
+      "kind": "registered",
+      "event_id": "2ede0b46-e41d-4417-acb9-73d07e2a826d",
+      "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+      "timer_name": "rc-rejects",
+      "message": "slot-submit bd19f591-d1df-45ec-baf8-88573b1229c2"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:10:33.170356400Z",
+      "kind": "registered",
+      "event_id": "47fe2319-e4c8-4b35-9657-f0385505f06a",
+      "timer_id": "3f7ba42d-eceb-4d2d-a16e-c9a70d73818b",
+      "timer_name": "rc-stale",
+      "message": "slot-submit d371396b-74dc-420a-acee-fd02ba4d799a"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:11:33.168610912Z",
+      "kind": "fired",
+      "event_id": "39d1e811-7ce1-4b3f-ba05-bb043f53683f",
+      "timer_id": "3f7ba42d-eceb-4d2d-a16e-c9a70d73818b",
+      "run_id": "29614e3f-8bb8-4520-9081-d72b05e3aa5f",
+      "timer_name": "rc-stale",
+      "scheduled_for": "2026-08-01T21:11:33.167241815Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:11:33.173091931Z",
+      "kind": "wake_delivered",
+      "event_id": "7dce5d61-8c1b-44ac-acdb-77d575f53e74",
+      "timer_id": "3f7ba42d-eceb-4d2d-a16e-c9a70d73818b",
+      "run_id": "29614e3f-8bb8-4520-9081-d72b05e3aa5f",
+      "timer_name": "rc-stale",
+      "scheduled_for": "2026-08-01T21:11:33.167241815Z",
+      "count": 0,
+      "message": "action=none"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:13.001291379Z",
+      "kind": "fired",
+      "event_id": "f2686153-a32b-498b-a16f-59751be986b9",
+      "timer_id": "0c0120a5-145b-41ee-96eb-becb769c4519",
+      "run_id": "0d2db0c9-fe12-45d2-a5f3-972999f6c3ec",
+      "timer_name": "rc-heartbeat",
+      "scheduled_for": "2026-08-01T21:12:13Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:13.010291423Z",
+      "kind": "fired",
+      "event_id": "f3b79264-45e7-4d3f-a4a5-d754f22d9f54",
+      "timer_id": "a33841f5-a40c-435c-8efb-764933494baf",
+      "run_id": "a3d30479-f5cd-43ea-93f5-c328e1de3e63",
+      "timer_name": "rc-watchdog",
+      "scheduled_for": "2026-08-01T21:12:13Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:13.014703397Z",
+      "kind": "wake_delivered",
+      "event_id": "e00eadb0-971f-48a8-b17f-4ebb8054c40a",
+      "timer_id": "0c0120a5-145b-41ee-96eb-becb769c4519",
+      "run_id": "0d2db0c9-fe12-45d2-a5f3-972999f6c3ec",
+      "timer_name": "rc-heartbeat",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "count": 0,
+      "message": "action=none"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:13.017995852Z",
+      "kind": "wake_delivered",
+      "event_id": "63f2ce5e-95ca-4816-9672-9b156de9d1e7",
+      "timer_id": "a33841f5-a40c-435c-8efb-764933494baf",
+      "run_id": "a3d30479-f5cd-43ea-93f5-c328e1de3e63",
+      "timer_name": "rc-watchdog",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "count": 0,
+      "message": "action=none"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:13.020524105Z",
+      "kind": "fired",
+      "event_id": "e7f8f1f7-2057-47b1-bbd3-43ae75602593",
+      "timer_id": "ad0b0724-c49f-44d5-93b3-2ed0093a6698",
+      "run_id": "31c4bccc-d47c-459d-a569-857d26479099",
+      "timer_name": "rc-noack",
+      "scheduled_for": "2026-08-01T21:12:13Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:13.029835250Z",
+      "kind": "wake_delivered",
+      "event_id": "ac4827d2-31a9-4a22-b8c0-f553f30b2bef",
+      "timer_id": "ad0b0724-c49f-44d5-93b3-2ed0093a6698",
+      "run_id": "31c4bccc-d47c-459d-a569-857d26479099",
+      "timer_name": "rc-noack",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "count": 0,
+      "message": "action=none"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:13.030986682Z",
+      "kind": "fired",
+      "event_id": "feac2359-c3e5-4426-8ef3-5a8f1721597c",
+      "timer_id": "d1c775a9-44a0-4323-a6e1-e8f4543f1bb5",
+      "run_id": "fb304cc8-394f-4191-88e4-211b120d7703",
+      "timer_name": "rc-happy",
+      "scheduled_for": "2026-08-01T21:12:13Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:13.039269163Z",
+      "kind": "wake_delivered",
+      "event_id": "06b6d711-7581-49a5-91da-b8e1e2fdd1d0",
+      "timer_id": "d1c775a9-44a0-4323-a6e1-e8f4543f1bb5",
+      "run_id": "fb304cc8-394f-4191-88e4-211b120d7703",
+      "timer_name": "rc-happy",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "count": 0,
+      "message": "action=none"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:13.041775846Z",
+      "kind": "fired",
+      "event_id": "cba37fcb-b032-47bd-a522-afb61cd1d1e7",
+      "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+      "run_id": "c3d0d500-2a8e-40a5-9f13-2731b64c56da",
+      "timer_name": "rc-rejects",
+      "scheduled_for": "2026-08-01T21:12:13Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:13.046228194Z",
+      "kind": "wake_delivered",
+      "event_id": "da43a7af-5a77-4faa-bf1a-2dedaf30b33d",
+      "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+      "run_id": "c3d0d500-2a8e-40a5-9f13-2731b64c56da",
+      "timer_name": "rc-rejects",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "count": 0,
+      "message": "action=none"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:13Z",
+      "kind": "acknowledged",
+      "event_id": "1cd993e5-f150-4c11-93d6-275fe9af9def",
+      "timer_id": "d1c775a9-44a0-4323-a6e1-e8f4543f1bb5",
+      "run_id": "fb304cc8-394f-4191-88e4-211b120d7703",
+      "timer_name": "rc-happy",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "detail": {
+        "app_name": "happy-app",
+        "expected_secs": 3
+      }
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:16Z",
+      "kind": "acknowledged",
+      "event_id": "32898391-f667-44d1-a49f-1253dedd5284",
+      "timer_id": "0c0120a5-145b-41ee-96eb-becb769c4519",
+      "run_id": "0d2db0c9-fe12-45d2-a5f3-972999f6c3ec",
+      "timer_name": "rc-heartbeat",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "detail": {
+        "app_name": "hb-app",
+        "error_detection": true,
+        "expected_secs": 5
+      }
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:16Z",
+      "kind": "completed",
+      "event_id": "66f0e49a-cab0-4f7d-9a5f-465d88b38fdd",
+      "timer_id": "d1c775a9-44a0-4323-a6e1-e8f4543f1bb5",
+      "run_id": "fb304cc8-394f-4191-88e4-211b120d7703",
+      "timer_name": "rc-happy",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "duration_ms": 3166,
+      "detail": {
+        "result": {
+          "note": "answered from the fire notification",
+          "ok": true
+        }
+      }
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:16Z",
+      "kind": "acknowledged",
+      "event_id": "a6904c07-5c68-4d43-89c0-7c7f2ea9dabf",
+      "timer_id": "a33841f5-a40c-435c-8efb-764933494baf",
+      "run_id": "a3d30479-f5cd-43ea-93f5-c328e1de3e63",
+      "timer_name": "rc-watchdog",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "detail": {
+        "app_name": "wd-app",
+        "error_detection": true,
+        "expected_secs": 5
+      }
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:16.197838063Z",
+      "kind": "running",
+      "event_id": "686236f7-b131-4d80-be3e-6f3ff3cb5175",
+      "timer_id": "0c0120a5-145b-41ee-96eb-becb769c4519",
+      "run_id": "0d2db0c9-fe12-45d2-a5f3-972999f6c3ec",
+      "timer_name": "rc-heartbeat",
+      "scheduled_for": "2026-08-01T21:12:13Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:16.197838063Z",
+      "kind": "running",
+      "event_id": "cb016ba3-e9d5-4a1b-8d3d-98bd04678280",
+      "timer_id": "a33841f5-a40c-435c-8efb-764933494baf",
+      "run_id": "a3d30479-f5cd-43ea-93f5-c328e1de3e63",
+      "timer_name": "rc-watchdog",
+      "scheduled_for": "2026-08-01T21:12:13Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:26.197888491Z",
+      "kind": "failed",
+      "event_id": "1f9cffd5-926e-4934-8461-cb77ad9fa866",
+      "timer_id": "a33841f5-a40c-435c-8efb-764933494baf",
+      "run_id": "a3d30479-f5cd-43ea-93f5-c328e1de3e63",
+      "timer_name": "rc-watchdog",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "duration_ms": 13187,
+      "message": "error_detection watchdog expired",
+      "detail": {
+        "failure_kind": "timed_out"
+      }
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:33.168362070Z",
+      "kind": "superseded",
+      "event_id": "30f1a881-a7be-4662-b441-a56579a6efe0",
+      "timer_id": "3f7ba42d-eceb-4d2d-a16e-c9a70d73818b",
+      "run_id": "29614e3f-8bb8-4520-9081-d72b05e3aa5f",
+      "timer_name": "rc-stale",
+      "scheduled_for": "2026-08-01T21:11:33.167241815Z",
+      "message": "superseded by a new firing while still unresolved"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:33.168457653Z",
+      "kind": "fired",
+      "event_id": "48796138-cc78-4aea-b8e6-9562e37570cd",
+      "timer_id": "3f7ba42d-eceb-4d2d-a16e-c9a70d73818b",
+      "run_id": "63018e77-0981-49a1-8c12-cd69b013b8fc",
+      "timer_name": "rc-stale",
+      "scheduled_for": "2026-08-01T21:12:33.167241815Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:33.173271347Z",
+      "kind": "wake_delivered",
+      "event_id": "255fdae2-8729-4211-a2d3-dcb7d6e5132d",
+      "timer_id": "3f7ba42d-eceb-4d2d-a16e-c9a70d73818b",
+      "run_id": "63018e77-0981-49a1-8c12-cd69b013b8fc",
+      "timer_name": "rc-stale",
+      "scheduled_for": "2026-08-01T21:12:33.167241815Z",
+      "count": 0,
+      "message": "action=none"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:34Z",
+      "kind": "completed",
+      "event_id": "8f140624-aafd-476b-b729-434851871b1f",
+      "timer_id": "0c0120a5-145b-41ee-96eb-becb769c4519",
+      "run_id": "0d2db0c9-fe12-45d2-a5f3-972999f6c3ec",
+      "timer_name": "rc-heartbeat",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "duration_ms": 21243,
+      "detail": {
+        "result": {
+          "heartbeats": 6
+        }
+      }
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:36.404310928Z",
+      "kind": "reply_rejected",
+      "event_id": "6617765c-8b94-4df8-bbb0-cbb6e64521dd",
+      "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+      "run_id": "c3d0d500-2a8e-40a5-9f13-2731b64c56da",
+      "timer_name": "rc-rejects",
+      "message": "invalid JSON"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:39.096108876Z",
+      "kind": "reply_rejected",
+      "event_id": "020943be-ef81-4dc3-8a2c-e058d2660cee",
+      "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+      "run_id": "c3d0d500-2a8e-40a5-9f13-2731b64c56da",
+      "timer_name": "rc-rejects",
+      "message": "app_name does not match the run's owner"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:39.459879881Z",
+      "kind": "reply_rejected",
+      "event_id": "f883d715-64dc-4e86-9eb3-84da324f7494",
+      "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+      "run_id": "c3d0d500-2a8e-40a5-9f13-2731b64c56da",
+      "timer_name": "rc-rejects",
+      "message": "run_id does not match the reply filename"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:39.960271326Z",
+      "kind": "reply_rejected",
+      "event_id": "05977937-e7d0-4431-a2bf-e3ab1a999d17",
+      "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+      "run_id": "c3d0d500-2a8e-40a5-9f13-2731b64c56da",
+      "timer_name": "rc-rejects",
+      "message": "oversize"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:40.462757106Z",
+      "kind": "reply_rejected",
+      "event_id": "228e1d27-673c-4cab-853f-a50aa97ca3fd",
+      "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+      "run_id": "c3d0d500-2a8e-40a5-9f13-2731b64c56da",
+      "timer_name": "rc-rejects",
+      "message": "state is reserved to Bellman"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:12:41.966182563Z",
+      "kind": "superseded",
+      "event_id": "6aaf2f47-e2e4-485d-af6a-e65bd188bce2",
+      "timer_id": "3f7ba42d-eceb-4d2d-a16e-c9a70d73818b",
+      "run_id": "29614e3f-8bb8-4520-9081-d72b05e3aa5f",
+      "timer_name": "rc-stale",
+      "scheduled_for": "2026-08-01T21:11:33.167241815Z",
+      "message": "reply arrived for a run that is no longer current"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:13:13.021466672Z",
+      "kind": "no_ack",
+      "event_id": "e7228b8c-8695-4ca2-9901-cf6da88dd81a",
+      "timer_id": "ad0b0724-c49f-44d5-93b3-2ed0093a6698",
+      "run_id": "31c4bccc-d47c-459d-a569-857d26479099",
+      "timer_name": "rc-noack",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "message": "no acknowledgement was received"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:13:13.042878515Z",
+      "kind": "no_ack",
+      "event_id": "c6cc91ba-4943-40a5-8ee4-981531ac343f",
+      "timer_id": "fc649566-5f6b-4583-951f-8a73f829cbc6",
+      "run_id": "c3d0d500-2a8e-40a5-9f13-2731b64c56da",
+      "timer_name": "rc-rejects",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "message": "no acknowledgement was received"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:13:13Z",
+      "kind": "completed",
+      "event_id": "73334d3e-089e-4869-aa0a-699f688154cb",
+      "timer_id": "ad0b0724-c49f-44d5-93b3-2ed0093a6698",
+      "run_id": "31c4bccc-d47c-459d-a569-857d26479099",
+      "timer_name": "rc-noack",
+      "scheduled_for": "2026-08-01T21:12:13Z",
+      "duration_ms": 60929,
+      "detail": {
+        "result": {
+          "late": true
+        }
+      }
+    }
+  ]
+}

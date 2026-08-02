@@ -1,0 +1,276 @@
+{
+  "mode": "fold",
+  "tz": "Europe/Helsinki",
+  "fake_start_local": "2026-10-25 02:58:00",
+  "watch_secs": 5100,
+  "target_local_time": "03:02:00",
+  "created": {
+    "dst-target": {
+      "command": "slot-submit",
+      "error": null,
+      "next_fire_at": "2026-10-25T00:02:00+00:00",
+      "ok": true,
+      "processed": 1,
+      "request_id": "8a64afbc-40ce-4885-a8b2-c3b68bd4577e",
+      "response": {
+        "events": [],
+        "next_fire_at": "2026-10-25T00:02:00Z",
+        "request_id": "8a64afbc-40ce-4885-a8b2-c3b68bd4577e",
+        "schema": "bellman-slot/1",
+        "slot_id": "0001",
+        "status": "ok",
+        "timer_id": "3ebf6c1c-4dbd-46dc-ac09-6b9fe7c86c10"
+      },
+      "slot_id": "0001",
+      "status": "ok",
+      "timer_id": "3ebf6c1c-4dbd-46dc-ac09-6b9fe7c86c10"
+    },
+    "dst-control-daily": {
+      "command": "slot-submit",
+      "error": null,
+      "next_fire_at": "2026-10-25T00:03:00+00:00",
+      "ok": true,
+      "processed": 1,
+      "request_id": "7d4f9113-b9a5-407f-a582-20c42ac9f0e6",
+      "response": {
+        "events": [],
+        "next_fire_at": "2026-10-25T00:03:00Z",
+        "request_id": "7d4f9113-b9a5-407f-a582-20c42ac9f0e6",
+        "schema": "bellman-slot/1",
+        "slot_id": "0002",
+        "status": "ok",
+        "timer_id": "a15bc97c-7a2b-4f6b-80be-7231e6de31eb"
+      },
+      "slot_id": "0002",
+      "status": "ok",
+      "timer_id": "a15bc97c-7a2b-4f6b-80be-7231e6de31eb"
+    },
+    "dst-control-interval": {
+      "command": "slot-submit",
+      "error": null,
+      "next_fire_at": "2026-10-25T00:03:00.523817713+00:00",
+      "ok": true,
+      "processed": 1,
+      "request_id": "b0aedeef-ce4b-44d9-9908-2dc0183736b5",
+      "response": {
+        "events": [],
+        "next_fire_at": "2026-10-25T00:03:00.523817713Z",
+        "request_id": "b0aedeef-ce4b-44d9-9908-2dc0183736b5",
+        "schema": "bellman-slot/1",
+        "slot_id": "0003",
+        "status": "ok",
+        "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b"
+      },
+      "slot_id": "0003",
+      "status": "ok",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b"
+    }
+  },
+  "fires": [
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T00:02:00.002721616Z",
+      "kind": "fired",
+      "event_id": "f411df9d-de19-4d78-a2ed-d56830852259",
+      "timer_id": "3ebf6c1c-4dbd-46dc-ac09-6b9fe7c86c10",
+      "run_id": "14fbb461-b938-4704-84d7-7cce2b15ffc7",
+      "timer_name": "dst-target",
+      "scheduled_for": "2026-10-25T00:02:00Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T00:03:00.001413618Z",
+      "kind": "fired",
+      "event_id": "e826215e-93f1-4916-87f2-71697e92b084",
+      "timer_id": "a15bc97c-7a2b-4f6b-80be-7231e6de31eb",
+      "run_id": "fb91611b-33c4-4f2a-9317-4bc59882b686",
+      "timer_name": "dst-control-daily",
+      "scheduled_for": "2026-10-25T00:03:00Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T00:03:00.524896548Z",
+      "kind": "fired",
+      "event_id": "8580d88b-64b6-4b7b-9be5-de00ced41c1d",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "44de0760-5635-4811-8dc6-9aedfbca1e03",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T00:03:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T00:08:00.525388508Z",
+      "kind": "fired",
+      "event_id": "e16feea2-828d-46a6-9969-4a2409c8d957",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "90298702-60eb-4bb1-a8c4-b2fade0e3ef4",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T00:08:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T00:13:00.525391375Z",
+      "kind": "fired",
+      "event_id": "22aa9201-e09b-4199-8b7f-83273c0c8e00",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "317419dd-54fc-4374-aa2b-b91ecafebd95",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T00:13:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T00:18:00.525367012Z",
+      "kind": "fired",
+      "event_id": "438d174c-0513-4763-ab19-3806791d40e8",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "9f734c20-4f62-4e14-99f5-520339e85542",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T00:18:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T00:23:00.525997302Z",
+      "kind": "fired",
+      "event_id": "e471d245-8a31-46f0-ba28-5c0843dca84c",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "1ad05dfc-48bb-42f1-bd6e-8e30f2a7c195",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T00:23:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T00:28:00.525901110Z",
+      "kind": "fired",
+      "event_id": "23e1f604-c88c-4715-87fb-de0d18c042fa",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "08b6d14f-4f73-417d-8ad9-50ce90ee01e6",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T00:28:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T00:33:00.526534906Z",
+      "kind": "fired",
+      "event_id": "62098183-d4be-4810-b919-61dccf0e9bb4",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "5deb1d70-d7ca-48c5-86eb-10e5c0b63daf",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T00:33:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T00:38:00.531964357Z",
+      "kind": "fired",
+      "event_id": "bbaa9c22-8166-416e-9b30-797a5c5024a9",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "00bd53bf-a0d4-468f-9738-b69b0c806dcb",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T00:38:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T00:43:00.545681300Z",
+      "kind": "fired",
+      "event_id": "20f1f290-d9bc-413a-8569-806ca0bfa0e4",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "dbbdeb95-bf30-46fa-8a7f-9764e6d530ea",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T00:43:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T00:48:00.525754993Z",
+      "kind": "fired",
+      "event_id": "195bfb6a-8efe-456b-81ab-859ef1d70374",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "bcb5cc5d-fbf2-41e9-a36a-9c9768efacf9",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T00:48:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T00:53:00.525884314Z",
+      "kind": "fired",
+      "event_id": "3d075fc4-8999-482c-8464-a92266d78133",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "1c09972a-e661-4677-b76c-81f8bd712a9f",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T00:53:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T00:58:00.530013602Z",
+      "kind": "fired",
+      "event_id": "c4203201-19ea-4957-97fd-c605b3d95cab",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "ad0d384d-1efa-4f68-85c2-eebad452d8ad",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T00:58:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T01:03:00.525720862Z",
+      "kind": "fired",
+      "event_id": "ca5023bc-7b1a-407a-ac17-6228d13e071b",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "1ba996d0-efc2-4ba9-bb37-6b331eada970",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T01:03:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T01:08:00.525674354Z",
+      "kind": "fired",
+      "event_id": "327d19c5-7e97-4b70-bc48-ebec0ff8ec95",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "3d36d0cb-5916-403f-84d5-421e7893baab",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T01:08:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T01:13:00.525607284Z",
+      "kind": "fired",
+      "event_id": "530578d6-4f29-4ab2-9c22-d7d1a228a1a4",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "549d37fa-2db3-4144-8c78-b09edbf6746f",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T01:13:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T01:18:00.525881431Z",
+      "kind": "fired",
+      "event_id": "6c480251-2722-40b0-8422-1987ebe822b2",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "2fc32f79-b0fa-46d8-9eb3-b47c7bd896ff",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T01:18:00.523817713Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T01:23:00.525661114Z",
+      "kind": "fired",
+      "event_id": "4ad82365-7f56-4d1e-9211-cb47eaf0bf71",
+      "timer_id": "2565a0b4-be14-4343-b64b-e33482f03b6b",
+      "run_id": "82afdcf6-8e36-4914-ac01-530e7e611bec",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2026-10-25T01:23:00.523817713Z"
+    }
+  ],
+  "target_fire_count": 1,
+  "target_fires": [
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-10-25T00:02:00.002721616Z",
+      "kind": "fired",
+      "event_id": "f411df9d-de19-4d78-a2ed-d56830852259",
+      "timer_id": "3ebf6c1c-4dbd-46dc-ac09-6b9fe7c86c10",
+      "run_id": "14fbb461-b938-4704-84d7-7cce2b15ffc7",
+      "timer_name": "dst-target",
+      "scheduled_for": "2026-10-25T00:02:00Z"
+    }
+  ],
+  "interval_fire_count": 17,
+  "final_fake_clock": "2026-10-25 02:58:00 EEST+0300"
+}

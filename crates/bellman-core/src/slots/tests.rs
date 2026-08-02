@@ -207,7 +207,10 @@ fn malformed_input_quarantined_to_bad() {
     let _ = name;
     service.poll(&mut store).unwrap();
     let bad = service.layout().bad_dir();
-    let entries: Vec<_> = fs::read_dir(&bad).unwrap().filter_map(std::result::Result::ok).collect();
+    let entries: Vec<_> = fs::read_dir(&bad)
+        .unwrap()
+        .filter_map(std::result::Result::ok)
+        .collect();
     assert!(
         !entries.is_empty(),
         "expected quarantine files in bad/, got none"
@@ -269,7 +272,10 @@ fn symlink_input_quarantined() {
         fs::symlink_metadata(&link).is_err(),
         "live-target symlink must leave free/"
     );
-    assert!(outside.exists(), "quarantine must not delete the link target");
+    assert!(
+        outside.exists(),
+        "quarantine must not delete the link target"
+    );
     let bad_entries: Vec<_> = fs::read_dir(service.layout().bad_dir())
         .unwrap()
         .filter_map(std::result::Result::ok)
@@ -302,7 +308,10 @@ fn dangling_symlink_input_quarantined() {
         return;
     }
     assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
-    assert!(!link.exists(), "precondition: dangling (exists follows target)");
+    assert!(
+        !link.exists(),
+        "precondition: dangling (exists follows target)"
+    );
 
     service.poll(&mut store).unwrap();
 
@@ -573,8 +582,7 @@ fn concurrent_duplicate_request_id_single_side_effect() {
             .iter()
             .find(|p| {
                 let b = read_capped(p, DEFAULT_MAX_READ_BYTES).unwrap();
-                serde_json::from_slice::<SlotRequest>(&b)
-                    .is_ok_and(|r| r.is_free_stub())
+                serde_json::from_slice::<SlotRequest>(&b).is_ok_and(|r| r.is_free_stub())
             })
             .unwrap()
             .clone();
@@ -703,9 +711,14 @@ fn unacked_events_drain_via_ack_through() {
     let m1id = m1.request_id.clone().unwrap();
     service.publish(m1).unwrap();
     service.poll(&mut store).unwrap();
-    let r1: SlotResponse =
-        serde_json::from_str(&store.get_slot_request(&m1id).unwrap().unwrap().response_json)
-            .unwrap();
+    let r1: SlotResponse = serde_json::from_str(
+        &store
+            .get_slot_request(&m1id)
+            .unwrap()
+            .unwrap()
+            .response_json,
+    )
+    .unwrap();
     assert_eq!(r1.events.len(), 2);
     assert_eq!(r1.events[0].event_sequence, 1);
     assert_eq!(r1.events[1].event_sequence, 2);
@@ -728,9 +741,14 @@ fn unacked_events_drain_via_ack_through() {
     let m2id = m2.request_id.clone().unwrap();
     service.publish(m2).unwrap();
     service.poll(&mut store).unwrap();
-    let r2: SlotResponse =
-        serde_json::from_str(&store.get_slot_request(&m2id).unwrap().unwrap().response_json)
-            .unwrap();
+    let r2: SlotResponse = serde_json::from_str(
+        &store
+            .get_slot_request(&m2id)
+            .unwrap()
+            .unwrap()
+            .response_json,
+    )
+    .unwrap();
     assert_eq!(r2.events.len(), 2);
     assert_eq!(r2.events[0].event_sequence, 3);
     assert_eq!(r2.events[1].event_sequence, 4);
@@ -864,7 +882,9 @@ fn slot_id_path_traversal_quarantined_no_escape_write() {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     assert!(
-        bad.iter().any(|n| n.contains(&format!("slot-{reserved}")) || n.contains(&name) || n.ends_with(".err.json")),
+        bad.iter().any(|n| n.contains(&format!("slot-{reserved}"))
+            || n.contains(&name)
+            || n.ends_with(".err.json")),
         "expected quarantine in bad/, got {bad:?}"
     );
 }
@@ -1056,7 +1076,13 @@ fn watcher_claimed_slot_add_fires_running_scheduler() {
     let ext_service = SlotService::open(&slots_root, SlotConfig::default()).unwrap();
     let t_publish = Utc::now();
     ext_service
-        .publish(make_add_request("app-a", "watched", "interval", None, Some(1)))
+        .publish(make_add_request(
+            "app-a",
+            "watched",
+            "interval",
+            None,
+            Some(1),
+        ))
         .unwrap();
 
     // Wait past two intervals, then shut everything down.
@@ -1083,4 +1109,288 @@ fn watcher_claimed_slot_add_fires_running_scheduler() {
         "first fire must land within seconds of publishing (prompt refill), got {:?} (published {t_publish:?})",
         first.scheduled_for
     );
+}
+
+/// C11 regression: the ONE background watcher must survive a data directory
+/// whose `timers/` root does not exist yet.
+///
+/// `timers/` is created lazily by the first timer folder, but the watcher
+/// watches it **recursively from startup** — and `notify`'s `watch()` on a
+/// missing path is a hard error that ends the thread. When that happened the
+/// app kept running and looked healthy while reply ingest, the slot channel
+/// and the event publisher were all dead for the life of the process.
+///
+/// Seen for real: a container whose `/etc/localtime` pointed at
+/// `/usr/share/zoneinfo//UTC` made `startup_maintenance` abort, so nothing
+/// had created `timers/` by the time the watcher started; the packaged demo
+/// then answered its fire correctly and the run still went `no_ack`.
+#[test]
+fn watcher_starts_on_a_data_dir_with_no_timers_root_yet() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let data_dir = dir.path().to_path_buf();
+    let db = data_dir.join("timers.db");
+    // Only what the app creates up front — deliberately no `timers/`.
+    fs::create_dir_all(data_dir.join("logs")).unwrap();
+    fs::create_dir_all(data_dir.join("slots")).unwrap();
+    let _store = Store::open_with(
+        &db,
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        !data_dir.join("timers").exists(),
+        "precondition: the tree root must be missing"
+    );
+
+    let engine = crate::reply::ReplyEngine {
+        tree: crate::tree::TimersTree::new(&data_dir),
+        data_dir: data_dir.clone(),
+        pickup_grace: Duration::from_secs(60),
+        watchdog_factor: 2.0,
+        anchors: crate::reply::new_anchors(),
+        deadlines: crate::reply::new_deadlines(),
+        fire_slot_file: None,
+        status_listener: None,
+        ipc: None,
+    };
+    let stop = crate::slots::watcher::spawn_watch_thread(crate::slots::watcher::WatchConfig {
+        slots_root: data_dir.join("slots"),
+        data_dir: data_dir.clone(),
+        db_path: db.clone(),
+        reply_engine: Some(engine),
+        scheduler: None,
+        poll_interval: Duration::from_millis(100),
+    })
+    .expect("watcher spawns");
+
+    // Give the thread time to reach its watch calls and its first poll.
+    thread::sleep(Duration::from_millis(600));
+    assert!(
+        data_dir.join("timers").is_dir(),
+        "the watcher must create the tree root rather than die on it"
+    );
+
+    // Still alive and doing its job: publish a slot request and see it applied.
+    let service = SlotService::open(data_dir.join("slots"), SlotConfig::default()).unwrap();
+    let free = service.layout().free_dir();
+    let stub = fs::read_dir(&free)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "json"))
+        .expect("a free stub is pre-generated");
+    let slot_id = stub.file_stem().unwrap().to_string_lossy().to_string();
+    let slot_id = slot_id.trim_start_matches("slot-").to_string();
+    let req = serde_json::json!({
+        "schema": "bellman-slot/1",
+        "slot_id": slot_id,
+        "request_id": Uuid::new_v4().to_string(),
+        "operation": "add",
+        "payload": {
+            "app_name": "watcher-liveness",
+            "timer_name": "watcher-liveness-timer",
+            "tz": "UTC",
+            "occurrence": {"kind": "interval", "every_secs": 3600}
+        }
+    });
+    let tmp = free.join("publish.tmp");
+    fs::write(&tmp, serde_json::to_vec(&req).unwrap()).unwrap();
+    fs::rename(&tmp, &stub).unwrap();
+
+    let store = Store::open_with(
+        &db,
+        OpenOptions {
+            refuse_network_fs: false,
+            ..OpenOptions::default()
+        },
+    )
+    .unwrap();
+    let mut seen = false;
+    for _ in 0..100 {
+        thread::sleep(Duration::from_millis(100));
+        if store
+            .list_timers()
+            .unwrap()
+            .iter()
+            .any(|t| t.name == "watcher-liveness-timer")
+        {
+            seen = true;
+            break;
+        }
+    }
+    stop.stop();
+    assert!(
+        seen,
+        "a live watcher applies the request; a dead one silently never does"
+    );
+}
+
+/// C11 regression: the replenisher must never write over a published request.
+///
+/// A producer claims a free stub by renaming it away and then writes its
+/// request back onto that reserved name. Between those two steps the name
+/// does not exist — and `replenish()` used to test `path.exists()` and then
+/// write a fresh stub with a *replacing* write. Landing in that window
+/// destroyed the request: the producer was told it succeeded, nothing was
+/// quarantined, and the timer simply never appeared. Every
+/// `SlotService::open` replenishes, so two apps integrating at the same
+/// moment were enough — this surfaced as a 1-in-20 flake in
+/// `concurrent_producers_all_get_unique_slots`, which is the same bug seen
+/// end to end.
+///
+/// This drives the window directly instead of hoping for it: producers
+/// publish in a loop while a second thread hammers `replenish()`.
+#[test]
+fn replenish_never_overwrites_a_published_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("slots");
+    let layout = SlotLayout::open(&root).unwrap();
+    let service = SlotService::open(&root, SlotConfig::default()).unwrap();
+
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let hammer = {
+        let layout = layout.clone();
+        let stop = Arc::clone(&stop);
+        thread::spawn(move || {
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                // Ignore errors: the point is the writes it attempts.
+                let _ = layout.replenish();
+            }
+        })
+    };
+
+    let mut published: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for i in 0..60 {
+        let req = make_add_request(
+            &format!("app-{i}"),
+            &format!("timer-{i}"),
+            "interval",
+            None,
+            Some(60),
+        );
+        let rid = req.request_id.clone().unwrap();
+        let path = service.publish(req).expect("publish should succeed");
+        published.push((rid, path));
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    hammer.join().unwrap();
+
+    // Every published request must still be on disk, byte-for-byte its own.
+    // A replaced one reads back as a free stub (or a different request_id).
+    let mut lost: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for (rid, path) in &published {
+        let ok = match read_capped(path, DEFAULT_MAX_READ_BYTES) {
+            Ok(bytes) => serde_json::from_slice::<SlotRequest>(&bytes)
+                .map(|r| r.request_id.as_deref() == Some(rid.as_str()))
+                .unwrap_or(false),
+            Err(_) => false,
+        };
+        if !ok {
+            lost.push((rid.clone(), path.clone()));
+        }
+    }
+    assert!(
+        lost.is_empty(),
+        "{} of {} published requests were overwritten by the replenisher: {lost:?}",
+        lost.len(),
+        published.len()
+    );
+}
+
+/// C11 regression: two producers must never be handed the same slot name.
+///
+/// `publish` reserves a slot by reading a free stub and then renaming that
+/// name away. `rename` moves whatever is at the name — it does not check
+/// that the name still holds the stub that was read. Between one producer's
+/// read and its rename, another can claim the same stub, publish its request
+/// back onto the same name and finish; the first then renames away the
+/// SECOND's request, writes its own over the name, and deletes the second's
+/// with the claim temp. Both producers are told `Ok`, nothing is
+/// quarantined, and one timer simply never appears.
+///
+/// Seen live as a ~1-in-20 failure of
+/// `concurrent_producers_all_get_unique_slots` ("expected 8 timers, got 7"),
+/// with two threads reporting the same reserved path. This test asks the
+/// question directly and over enough rounds to be reliable.
+#[test]
+fn concurrent_publishers_never_share_a_reserved_slot_name() {
+    for round in 0..25 {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("slots");
+        let layout = SlotLayout::open(&root).unwrap();
+        // Headroom, exactly as `concurrent_producers_all_get_unique_slots`
+        // does: with only MIN_FREE_SLOTS stubs some producers legitimately
+        // get NoFreeSlot, and this test is about name collisions, not
+        // exhaustion.
+        for i in 100..120 {
+            let id = format!("{i:04}");
+            let name = format!("slot-{id}.json");
+            if !layout.free_dir().join(&name).exists() {
+                atomic_write_json(&layout.free_dir(), &name, &SlotRequest::free_stub(&id)).unwrap();
+            }
+        }
+
+        let n = 8usize;
+        let barrier = Arc::new(Barrier::new(n));
+        let root = Arc::new(root);
+        let out = Arc::new(Mutex::new(Vec::new()));
+        let mut handles = Vec::new();
+        for i in 0..n {
+            let barrier = Arc::clone(&barrier);
+            let root = Arc::clone(&root);
+            let out = Arc::clone(&out);
+            handles.push(thread::spawn(move || {
+                let svc = SlotService::open(root.as_path(), SlotConfig::default()).unwrap();
+                barrier.wait();
+                let req = make_add_request(
+                    &format!("app-{i}"),
+                    &format!("timer-{i}"),
+                    "interval",
+                    None,
+                    Some(60),
+                );
+                let rid = req.request_id.clone().unwrap();
+                if let Ok(path) = svc.publish(req) {
+                    out.lock().unwrap().push((rid, path));
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        let out = out.lock().unwrap();
+        assert_eq!(out.len(), n, "round {round}: every producer should publish");
+
+        // 1. No two producers may be given the same name.
+        let mut names: Vec<String> = out
+            .iter()
+            .map(|(_, p)| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        let unique = names
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        assert_eq!(
+            unique, n,
+            "round {round}: two producers were handed the same slot name: {names:?}"
+        );
+
+        // 2. And every request must still be the one its producer wrote.
+        for (rid, path) in out.iter() {
+            let bytes = read_capped(path, DEFAULT_MAX_READ_BYTES)
+                .unwrap_or_else(|e| panic!("round {round}: {} unreadable: {e}", path.display()));
+            let got: SlotRequest = serde_json::from_slice(&bytes)
+                .unwrap_or_else(|e| panic!("round {round}: {} not JSON: {e}", path.display()));
+            assert_eq!(
+                got.request_id.as_deref(),
+                Some(rid.as_str()),
+                "round {round}: {} was overwritten by another producer",
+                path.display()
+            );
+        }
+    }
 }

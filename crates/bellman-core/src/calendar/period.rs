@@ -210,18 +210,12 @@ mod tests {
         // 2026-07-29 is Wednesday
         let now = d(2026, 7, 29);
         assert_eq!(resolve_day_phrase("today", now).unwrap(), now);
-        assert_eq!(
-            resolve_day_phrase("tomorrow", now).unwrap(),
-            d(2026, 7, 30)
-        );
+        assert_eq!(resolve_day_phrase("tomorrow", now).unwrap(), d(2026, 7, 30));
         assert_eq!(
             resolve_day_phrase("next tuesday", now).unwrap(),
             d(2026, 8, 4)
         );
-        assert_eq!(
-            resolve_day_phrase("tuesday", now).unwrap(),
-            d(2026, 8, 4)
-        );
+        assert_eq!(resolve_day_phrase("tuesday", now).unwrap(), d(2026, 8, 4));
         // On a Tuesday, bare "tuesday" means today; "next tuesday" means +7.
         let tue = d(2026, 8, 4);
         assert_eq!(resolve_day_phrase("tuesday", tue).unwrap(), tue);

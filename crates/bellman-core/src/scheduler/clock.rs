@@ -13,10 +13,13 @@ use std::time::{Duration, Instant};
 pub struct MonoTime(pub Duration);
 
 impl MonoTime {
+    /// The reading as a `Duration` since this clock's origin.
     pub fn as_duration(self) -> Duration {
         self.0
     }
 
+    /// Elapsed time since `other`, clamped at zero. A monotonic clock does
+    /// not go backwards, so a negative result would be a bug, not a fact.
     pub fn saturating_sub(self, other: MonoTime) -> Duration {
         self.0.saturating_sub(other.0)
     }
@@ -49,6 +52,7 @@ pub struct SystemClock {
 }
 
 impl SystemClock {
+    /// A clock reading the real wall and monotonic clocks.
     pub fn new() -> Self {
         Self {
             origin: Instant::now(),
@@ -126,10 +130,14 @@ impl SimulatedClock {
         g.wall = wall;
     }
 
+    /// The simulated wall clock.
     pub fn wall(&self) -> DateTime<Utc> {
         self.state.lock().expect("sim clock lock").wall
     }
 
+    /// The simulated monotonic clock. Advancing wall without mono is how a
+    /// clock jump is staged in tests; advancing mono without wall is a
+    /// suspend.
     pub fn mono(&self) -> Duration {
         self.state.lock().expect("sim clock lock").mono
     }

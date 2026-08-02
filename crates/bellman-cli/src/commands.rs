@@ -4,9 +4,7 @@ use crate::output;
 use crate::parse;
 use crate::resolve::{resolve_timer, ResolveError};
 use bellman_core::events::{EventRecord, RunState};
-use bellman_core::slots::{
-    SlotConfig, SlotRequest, SlotService, SlotStatus, SCHEMA_V1,
-};
+use bellman_core::slots::{SlotConfig, SlotRequest, SlotService, SlotStatus, SCHEMA_V1};
 use bellman_core::store::{
     Action, NewTimer, OpenOptions, Store, StoreError, Timer, TimerPatch, TimerUpdate,
 };
@@ -358,7 +356,9 @@ fn build_action(flags: ActionFlags, raw: Option<String>) -> Result<Option<Action
                 || flags.title.is_some()
                 || flags.body.is_some()
             {
-                return Err("--action none takes no --command/--args/--workdir/--title/--body".into());
+                return Err(
+                    "--action none takes no --command/--args/--workdir/--title/--body".into(),
+                );
             }
             Ok(Some(Action::None))
         }
@@ -366,9 +366,7 @@ fn build_action(flags: ActionFlags, raw: Option<String>) -> Result<Option<Action
             if flags.title.is_some() || flags.body.is_some() {
                 return Err("--title/--body belong to --action notify".into());
             }
-            let command = flags
-                .command
-                .ok_or("--action launch requires --command")?;
+            let command = flags.command.ok_or("--action launch requires --command")?;
             if command.trim().is_empty() {
                 return Err("--command must not be empty".into());
             }
@@ -411,8 +409,8 @@ pub fn add(db: &Path, args: AddArgs) -> Result<CommandPayload, CliError> {
     })
     .map_err(|m| CliError::new(CMD, "invalid_args", m))?;
 
-    let transport = parse_transport(args.transport)
-        .map_err(|m| CliError::new(CMD, "invalid_args", m))?;
+    let transport =
+        parse_transport(args.transport).map_err(|m| CliError::new(CMD, "invalid_args", m))?;
 
     let action = build_action(
         ActionFlags {
@@ -439,9 +437,7 @@ pub fn add(db: &Path, args: AddArgs) -> Result<CommandPayload, CliError> {
         e.command = CMD;
         e
     })?;
-    let timer = store
-        .create_timer(new)
-        .map_err(|e| e.with_command(CMD))?;
+    let timer = store.create_timer(new).map_err(|e| e.with_command(CMD))?;
 
     // Lifecycle: every successful registration enqueues a `registered` line.
     emit_and_drain(
@@ -507,7 +503,9 @@ pub fn edit(db: &Path, name_or_id: &str, args: EditArgs) -> Result<CommandPayloa
     let timer = resolve_timer(&store, name_or_id).map_err(|e| e.with_command(CMD))?;
 
     let enabled = match args.enabled.as_deref() {
-        Some(s) => Some(parse::parse_enabled(s).map_err(|m| CliError::new(CMD, "invalid_args", m))?),
+        Some(s) => {
+            Some(parse::parse_enabled(s).map_err(|m| CliError::new(CMD, "invalid_args", m))?)
+        }
         None => None,
     };
 
@@ -524,8 +522,8 @@ pub fn edit(db: &Path, name_or_id: &str, args: EditArgs) -> Result<CommandPayloa
     )
     .map_err(|m| CliError::new(CMD, "invalid_args", m))?;
 
-    let transport = parse_transport(args.transport)
-        .map_err(|m| CliError::new(CMD, "invalid_args", m))?;
+    let transport =
+        parse_transport(args.transport).map_err(|m| CliError::new(CMD, "invalid_args", m))?;
 
     let action = build_action(
         ActionFlags {
@@ -750,13 +748,8 @@ pub fn slot_submit(
             format!("read {}: {e}", request_path.display()),
         )
     })?;
-    let mut request: SlotRequest = serde_json::from_str(&raw).map_err(|e| {
-        CliError::new(
-            CMD,
-            "invalid_args",
-            format!("parse slot request JSON: {e}"),
-        )
-    })?;
+    let mut request: SlotRequest = serde_json::from_str(&raw)
+        .map_err(|e| CliError::new(CMD, "invalid_args", format!("parse slot request JSON: {e}")))?;
     if request.schema.is_empty() {
         request.schema = SCHEMA_V1.to_string();
     }
@@ -779,26 +772,21 @@ pub fn slot_submit(
     }
 
     let service = SlotService::open(slots_dir, SlotConfig::default())
-        .map_err(|e| {
-            CliError::new(CMD, "store_error", format!("open slots: {e}"))
-        })?
+        .map_err(|e| CliError::new(CMD, "store_error", format!("open slots: {e}")))?
         // IK2: slot add/modify/delete also projects the per-timer folder tree.
         .with_timers_tree(bellman_core::TimersTree::new(
             db.parent().unwrap_or_else(|| std::path::Path::new(".")),
         ));
 
-    let request_id = request
-        .request_id
-        .clone()
-        .expect("request_id filled above");
+    let request_id = request.request_id.clone().expect("request_id filled above");
 
-    service.publish(request).map_err(|e| {
-        CliError::new(CMD, "store_error", format!("publish: {e}"))
-    })?;
+    service
+        .publish(request)
+        .map_err(|e| CliError::new(CMD, "store_error", format!("publish: {e}")))?;
 
-    let processed = service.poll(&mut store).map_err(|e| {
-        CliError::new(CMD, "store_error", format!("poll slots: {e}"))
-    })?;
+    let processed = service
+        .poll(&mut store)
+        .map_err(|e| CliError::new(CMD, "store_error", format!("poll slots: {e}")))?;
 
     let rec = store
         .get_slot_request(&request_id)
@@ -811,16 +799,9 @@ pub fn slot_submit(
             )
         })?;
 
-    let response: bellman_core::slots::SlotResponse =
-        serde_json::from_str(&rec.response_json).map_err(|e| {
-            CliError::new(
-                CMD,
-                "store_error",
-                format!("parse response JSON: {e}"),
-            )
-        })?;
-    let response_val =
-        serde_json::to_value(&response).unwrap_or(json!(null));
+    let response: bellman_core::slots::SlotResponse = serde_json::from_str(&rec.response_json)
+        .map_err(|e| CliError::new(CMD, "store_error", format!("parse response JSON: {e}")))?;
+    let response_val = serde_json::to_value(&response).unwrap_or(json!(null));
     let status = response.status.as_str().to_string();
     let slot_id = response.slot_id.clone();
     let timer_id = response.timer_id;

@@ -27,9 +27,8 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         self.heap.clear();
         let now = self.clock.wall_now();
         let horizon = now
-            + ChronoDuration::from_std(self.config.horizon).map_err(|e| {
-                SchedulerError::Internal(format!("horizon duration: {e}"))
-            })?;
+            + ChronoDuration::from_std(self.config.horizon)
+                .map_err(|e| SchedulerError::Internal(format!("horizon duration: {e}")))?;
 
         let due = self.store.timers_due_by(horizon)?;
         let mut seen = std::collections::HashSet::new();

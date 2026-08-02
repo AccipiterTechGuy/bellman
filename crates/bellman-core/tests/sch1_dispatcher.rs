@@ -9,9 +9,7 @@
 
 use bellman_core::actions::{Dispatcher, DispatcherConfig, ExecutorConfig};
 use bellman_core::occurrence::{Occurrence, OccurrenceKind};
-use bellman_core::scheduler::{
-    FireKind, Scheduler, SchedulerConfig, SystemClock,
-};
+use bellman_core::scheduler::{FireKind, Scheduler, SchedulerConfig, SystemClock};
 use bellman_core::store::{
     Action, ClaimStatus, NewTimer, OpenOptions, OverlapPolicy, RetryPolicy, RunClaim, RunOutcome,
     Store, Timer,
@@ -29,7 +27,15 @@ use uuid::Uuid;
 /// themselves stay wall-clock strict).
 fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap()
+    // Recover from poisoning instead of unwrapping it. These tests
+    // serialise on this mutex, so ONE genuine failure used to poison it and
+    // turn every later test in the binary into a second panic at this line —
+    // six red tests reporting one problem, with the real one buried. The
+    // guard only orders the tests; a panicking test leaves no shared state
+    // behind that the next one could observe.
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -76,12 +82,7 @@ fn engine(e: &Env) -> bellman_core::reply::ReplyEngine {
     }
 }
 
-fn interval_timer(
-    store: &mut Store,
-    name: &str,
-    action: Action,
-    overlap: OverlapPolicy,
-) -> Timer {
+fn interval_timer(store: &mut Store, name: &str, action: Action, overlap: OverlapPolicy) -> Timer {
     let occ = Occurrence::new(
         OccurrenceKind::Interval {
             every_secs: 3600,
@@ -123,7 +124,7 @@ fn spawn_dispatcher(e: &Env, max: usize) -> Dispatcher {
         notify_sink: Arc::new(bellman_core::actions::StubNotifySink),
         executor: ExecutorConfig::default(),
         tick: Duration::from_millis(50),
-            ipc: None,
+        ipc: None,
     })
     .unwrap()
 }
@@ -137,7 +138,7 @@ fn spawn_dispatcher_inmem(e: &Env, max: usize) -> Dispatcher {
         notify_sink: Arc::new(bellman_core::actions::StubNotifySink),
         executor: ExecutorConfig::default(),
         tick: Duration::from_millis(50),
-            ipc: None,
+        ipc: None,
     })
     .unwrap()
 }
@@ -300,7 +301,10 @@ fn mass_fire_peak_reaches_cap_never_exceeds() {
             launch("sh", &["-c", "sleep 0.4"]),
             OverlapPolicy::Skip,
         );
-        claims.push(st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(1)).unwrap());
+        claims.push(
+            st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(1))
+                .unwrap(),
+        );
     }
     let disp = spawn_dispatcher_inmem(&e, 4);
     disp.begin_startup();
@@ -330,7 +334,10 @@ fn full_queue_drains_without_restart() {
             launch("sh", &["-c", "sleep 0.3"]),
             OverlapPolicy::Skip,
         );
-        claims.push(st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(1)).unwrap());
+        claims.push(
+            st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(1))
+                .unwrap(),
+        );
     }
     let disp = spawn_dispatcher_inmem(&e, 2);
     disp.begin_startup();
@@ -354,7 +361,12 @@ fn overlap_decisions_happen_at_fire_commit_not_dequeue() {
     let _held = spawn_dispatcher(&e, 2); // never begin_startup: queue held.
 
     // Skip: an unfinished older claim skips the new one at commit.
-    let t_skip = interval_timer(&mut st, "skip", launch("sleep", &["30"]), OverlapPolicy::Skip);
+    let t_skip = interval_timer(
+        &mut st,
+        "skip",
+        launch("sleep", &["30"]),
+        OverlapPolicy::Skip,
+    );
     let c1 = fire(&e, &mut st, &t_skip);
     assert_eq!(c1.status, ClaimStatus::Pending);
     let c2 = fire(&e, &mut st, &t_skip);
@@ -364,7 +376,12 @@ fn overlap_decisions_happen_at_fire_commit_not_dequeue() {
     assert_eq!(c2.outcome_reason.as_deref(), Some("overlap_skip"));
 
     // QueueOne: one follow-up admitted; the third firing skips.
-    let t_q = interval_timer(&mut st, "queue", launch("sleep", &["30"]), OverlapPolicy::QueueOne);
+    let t_q = interval_timer(
+        &mut st,
+        "queue",
+        launch("sleep", &["30"]),
+        OverlapPolicy::QueueOne,
+    );
     let q1 = fire(&e, &mut st, &t_q);
     let q2 = fire(&e, &mut st, &t_q);
     assert_eq!(q2.status, ClaimStatus::Pending, "one follow-up admitted");
@@ -408,7 +425,12 @@ fn overlap_decisions_happen_at_fire_commit_not_dequeue() {
     assert_eq!(p0.outcome_reason.as_deref(), Some("overlap_parallel_cap"));
 
     // Replace vs a PENDING predecessor: finished before it ever started.
-    let t_r = interval_timer(&mut st, "rep", launch("sleep", &["30"]), OverlapPolicy::Replace);
+    let t_r = interval_timer(
+        &mut st,
+        "rep",
+        launch("sleep", &["30"]),
+        OverlapPolicy::Replace,
+    );
     let r1 = fire(&e, &mut st, &t_r);
     let r2 = fire(&e, &mut st, &t_r);
     let r1 = st.get_run(r1.run_id).unwrap().unwrap();
@@ -423,7 +445,12 @@ fn overlap_decisions_happen_at_fire_commit_not_dequeue() {
 
     // Replace vs an ACTIVE predecessor: durable cancel request; the newest
     // claim stays pending (eligible only after the predecessor finishes).
-    let t_r2 = interval_timer(&mut st, "rep2", launch("sleep", &["30"]), OverlapPolicy::Replace);
+    let t_r2 = interval_timer(
+        &mut st,
+        "rep2",
+        launch("sleep", &["30"]),
+        OverlapPolicy::Replace,
+    );
     let a1 = fire(&e, &mut st, &t_r2);
     st.activate_run(a1.run_id).unwrap(); // simulate a worker holding the lane
     let a2 = fire(&e, &mut st, &t_r2);
@@ -448,9 +475,18 @@ fn serial_lane_executes_in_order_never_concurrent() {
         marker.display(),
         marker.display()
     );
-    let t = interval_timer(&mut st, "serial", launch("sh", &["-c", &cmd]), OverlapPolicy::QueueOne);
-    let c1 = st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(2)).unwrap();
-    let c2 = st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(1)).unwrap();
+    let t = interval_timer(
+        &mut st,
+        "serial",
+        launch("sh", &["-c", &cmd]),
+        OverlapPolicy::QueueOne,
+    );
+    let c1 = st
+        .claim_run(t.id, Utc::now() - ChronoDuration::minutes(2))
+        .unwrap();
+    let c2 = st
+        .claim_run(t.id, Utc::now() - ChronoDuration::minutes(1))
+        .unwrap();
 
     let disp = spawn_dispatcher_inmem(&e, 4);
     disp.begin_startup();
@@ -461,8 +497,14 @@ fn serial_lane_executes_in_order_never_concurrent() {
     disp.shutdown_drain();
 
     let log = std::fs::read_to_string(&marker).unwrap();
-    let expect = format!("S:{}\nE:{}\nS:{}\nE:{}\n", c1.run_id, c1.run_id, c2.run_id, c2.run_id);
-    assert_eq!(log, expect, "serial lane must run oldest first, never overlap");
+    let expect = format!(
+        "S:{}\nE:{}\nS:{}\nE:{}\n",
+        c1.run_id, c1.run_id, c2.run_id, c2.run_id
+    );
+    assert_eq!(
+        log, expect,
+        "serial lane must run oldest first, never overlap"
+    );
 }
 
 /// A `Parallel { cap: 2 }` timer runs two actions concurrently (asserted),
@@ -478,9 +520,15 @@ fn parallel_cap_two_concurrent_never_three() {
         launch("sh", &["-c", "sleep 0.6"]),
         OverlapPolicy::Parallel { cap: 2 },
     );
-    let c1 = st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(3)).unwrap();
-    let c2 = st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(2)).unwrap();
-    let c3 = st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(1)).unwrap();
+    let c1 = st
+        .claim_run(t.id, Utc::now() - ChronoDuration::minutes(3))
+        .unwrap();
+    let c2 = st
+        .claim_run(t.id, Utc::now() - ChronoDuration::minutes(2))
+        .unwrap();
+    let c3 = st
+        .claim_run(t.id, Utc::now() - ChronoDuration::minutes(1))
+        .unwrap();
 
     let disp = spawn_dispatcher_inmem(&e, 8);
     disp.begin_startup();
@@ -502,7 +550,13 @@ fn parallel_cap_two_concurrent_never_three() {
     let c3_completed = f3.completed_at.unwrap();
     assert!(
         c3_completed >= f1.completed_at.unwrap()
-            || c3_completed >= st.get_run(c2.run_id).unwrap().unwrap().completed_at.unwrap(),
+            || c3_completed
+                >= st
+                    .get_run(c2.run_id)
+                    .unwrap()
+                    .unwrap()
+                    .completed_at
+                    .unwrap(),
         "cap 2 means the third runs only after a lane frees"
     );
     assert!(disp.limiter().stats().peak_in_flight <= 8);
@@ -519,7 +573,12 @@ fn replace_interrupts_running_action_then_runs_new() {
     let started = e.data.join("started.log");
     let cmd = format!("echo $BELLMAN_RUN_ID >> '{}'; sleep 5", started.display());
     let mut st = store(&e);
-    let t = interval_timer(&mut st, "repl", launch("sh", &["-c", &cmd]), OverlapPolicy::Replace);
+    let t = interval_timer(
+        &mut st,
+        "repl",
+        launch("sh", &["-c", &cmd]),
+        OverlapPolicy::Replace,
+    );
 
     let disp = spawn_dispatcher(&e, 2);
     disp.begin_startup();
@@ -573,13 +632,22 @@ fn restart_requeues_unfinished_same_run_id_finished_never_reruns() {
     let marker = e.data.join("runs.log");
     let cmd = format!("echo $BELLMAN_RUN_ID >> '{}'", marker.display());
     let mut st = store(&e);
-    let t = interval_timer(&mut st, "crash", launch("sh", &["-c", &cmd]), OverlapPolicy::Skip);
+    let t = interval_timer(
+        &mut st,
+        "crash",
+        launch("sh", &["-c", &cmd]),
+        OverlapPolicy::Skip,
+    );
 
     // Simulate a crashed dispatcher: a claim left `active` with no worker.
-    let crashed = st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(2)).unwrap();
+    let crashed = st
+        .claim_run(t.id, Utc::now() - ChronoDuration::minutes(2))
+        .unwrap();
     st.activate_run(crashed.run_id).unwrap();
     // And one already finished — it must never run again.
-    let done = st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(1)).unwrap();
+    let done = st
+        .claim_run(t.id, Utc::now() - ChronoDuration::minutes(1))
+        .unwrap();
     st.activate_run(done.run_id).unwrap();
     st.complete_run(done.run_id).unwrap();
 
@@ -612,13 +680,25 @@ fn active_claim_requeued_may_execute_twice_finishes_once() {
     let marker = e.data.join("twice.log");
     let cmd = format!("echo $BELLMAN_RUN_ID >> '{}'; sleep 2", marker.display());
     let mut st = store(&e);
-    let t = interval_timer(&mut st, "twice", launch("sh", &["-c", &cmd]), OverlapPolicy::Parallel { cap: 2 });
-    let claim = st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(1)).unwrap();
+    let t = interval_timer(
+        &mut st,
+        "twice",
+        launch("sh", &["-c", &cmd]),
+        OverlapPolicy::Parallel { cap: 2 },
+    );
+    let claim = st
+        .claim_run(t.id, Utc::now() - ChronoDuration::minutes(1))
+        .unwrap();
 
     // First executor (lock-free in-memory dispatcher).
     let a = spawn_dispatcher_inmem(&e, 2);
     a.begin_startup();
-    wait_status(&st, claim.run_id, ClaimStatus::Active, Duration::from_secs(10));
+    wait_status(
+        &st,
+        claim.run_id,
+        ClaimStatus::Active,
+        Duration::from_secs(10),
+    );
     std::thread::sleep(Duration::from_millis(200));
 
     // "Crash" recovery while the first run is still executing: the lock
@@ -656,9 +736,18 @@ fn follower_dispatcher_never_pumps_beside_the_owner() {
         marker.display()
     );
     let mut st = store(&e);
-    let t = interval_timer(&mut st, "lane", launch("sh", &["-c", &cmd]), OverlapPolicy::QueueOne);
-    let c1 = st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(2)).unwrap();
-    let c2 = st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(1)).unwrap();
+    let t = interval_timer(
+        &mut st,
+        "lane",
+        launch("sh", &["-c", &cmd]),
+        OverlapPolicy::QueueOne,
+    );
+    let c1 = st
+        .claim_run(t.id, Utc::now() - ChronoDuration::minutes(2))
+        .unwrap();
+    let c2 = st
+        .claim_run(t.id, Utc::now() - ChronoDuration::minutes(1))
+        .unwrap();
 
     let owner = spawn_dispatcher(&e, 4);
     assert!(owner.owns_lock());
@@ -682,7 +771,10 @@ fn follower_dispatcher_never_pumps_beside_the_owner() {
     let log = std::fs::read_to_string(&marker).unwrap();
     assert_eq!(
         log,
-        format!("S:{}\nE:{}\nS:{}\nE:{}\n", c1.run_id, c1.run_id, c2.run_id, c2.run_id),
+        format!(
+            "S:{}\nE:{}\nS:{}\nE:{}\n",
+            c1.run_id, c1.run_id, c2.run_id, c2.run_id
+        ),
         "serial lane holds even with a second process present: {log:?}"
     );
     owner.shutdown_drain();
@@ -711,8 +803,15 @@ fn shutdown_drains_busy_lanes_and_outbox() {
     let marker = e.data.join("drain.log");
     let cmd = format!("echo done >> '{}'", marker.display());
     let mut st = store(&e);
-    let t = interval_timer(&mut st, "drain", launch("sh", &["-c", &cmd]), OverlapPolicy::Skip);
-    let c = st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(1)).unwrap();
+    let t = interval_timer(
+        &mut st,
+        "drain",
+        launch("sh", &["-c", &cmd]),
+        OverlapPolicy::Skip,
+    );
+    let c = st
+        .claim_run(t.id, Utc::now() - ChronoDuration::minutes(1))
+        .unwrap();
 
     let disp = spawn_dispatcher(&e, 2);
     disp.begin_startup();
@@ -730,7 +829,10 @@ fn shutdown_drains_busy_lanes_and_outbox() {
     let f = st.get_run(c.run_id).unwrap().unwrap();
     assert_eq!(f.status, ClaimStatus::Finished);
     assert_eq!(f.outcome, Some(RunOutcome::WakeDelivered));
-    assert!(marker.exists(), "the in-flight action completed during drain");
+    assert!(
+        marker.exists(),
+        "the in-flight action completed during drain"
+    );
     // The outbox row was published (drained), not truncated.
     assert_eq!(
         st.count_pending_events().unwrap(),
@@ -754,7 +856,12 @@ fn replace_after_worker_committed_success_keeps_truthful_wake_delivered() {
     let _g = test_lock();
     let e = env();
     let mut st = store(&e);
-    let t = interval_timer(&mut st, "replwin", launch("true", &[]), OverlapPolicy::Replace);
+    let t = interval_timer(
+        &mut st,
+        "replwin",
+        launch("true", &[]),
+        OverlapPolicy::Replace,
+    );
 
     let disp = spawn_dispatcher(&e, 2);
     disp.begin_startup();
@@ -785,8 +892,9 @@ fn replace_after_worker_committed_success_keeps_truthful_wake_delivered() {
     );
     let events = st.pending_events(64).unwrap();
     assert!(
-        !events.iter().any(|(_, p)| p.contains("overlap_replace")
-            && p.contains(&c1.run_id.to_string())),
+        !events
+            .iter()
+            .any(|(_, p)| p.contains("overlap_replace") && p.contains(&c1.run_id.to_string())),
         "no replace event may name the already-delivered predecessor"
     );
 
@@ -807,8 +915,15 @@ fn crash_after_completion_tx_drains_event_without_rerunning_action() {
     let marker = e.data.join("crashwin.log");
     let cmd = format!("echo $BELLMAN_RUN_ID >> '{}'", marker.display());
     let mut st = store(&e);
-    let t = interval_timer(&mut st, "crashwin", launch("sh", &["-c", &cmd]), OverlapPolicy::Skip);
-    let c = st.claim_run(t.id, Utc::now() - ChronoDuration::minutes(1)).unwrap();
+    let t = interval_timer(
+        &mut st,
+        "crashwin",
+        launch("sh", &["-c", &cmd]),
+        OverlapPolicy::Skip,
+    );
+    let c = st
+        .claim_run(t.id, Utc::now() - ChronoDuration::minutes(1))
+        .unwrap();
 
     let disp = spawn_dispatcher_inmem(&e, 1);
     disp.begin_startup();
@@ -837,7 +952,8 @@ fn crash_after_completion_tx_drains_event_without_rerunning_action() {
     .unwrap();
     publisher.publish_cycle(&st2);
     assert_eq!(st2.count_pending_events().unwrap(), 0, "outbox drained");
-    let content = std::fs::read_to_string(e.data.join("logs").join("events.current.jsonl")).unwrap();
+    let content =
+        std::fs::read_to_string(e.data.join("logs").join("events.current.jsonl")).unwrap();
     let hits: Vec<&str> = content
         .lines()
         .filter(|l| l.contains("wake_delivered") && l.contains(&c.run_id.to_string()))
@@ -867,7 +983,12 @@ fn run_now_standalone_executes_and_returns_durable_result() {
     let mut st = store(&e);
     let marker = e.data.join("runnow.log");
     let cmd = format!("echo ran >> '{}'", marker.display());
-    let t = interval_timer(&mut st, "rn", launch("sh", &["-c", &cmd]), OverlapPolicy::Skip);
+    let t = interval_timer(
+        &mut st,
+        "rn",
+        launch("sh", &["-c", &cmd]),
+        OverlapPolicy::Skip,
+    );
 
     let outcome = bellman_core::run_now(&mut st, &e.db, t.id, &RunNowOptions::default()).unwrap();
     assert!(
@@ -899,7 +1020,12 @@ fn run_now_with_live_dispatcher_waits_for_the_claim_result() {
     let mut st = store(&e);
     let marker = e.data.join("live.log");
     let cmd = format!("echo ran >> '{}'", marker.display());
-    let t = interval_timer(&mut st, "rn-live", launch("sh", &["-c", &cmd]), OverlapPolicy::Skip);
+    let t = interval_timer(
+        &mut st,
+        "rn-live",
+        launch("sh", &["-c", &cmd]),
+        OverlapPolicy::Skip,
+    );
 
     let disp = spawn_dispatcher(&e, 2);
     assert!(disp.owns_lock());
@@ -921,7 +1047,12 @@ fn run_now_second_fire_obeys_overlap_lane() {
     let _g = test_lock();
     let e = env();
     let mut st = store(&e);
-    let t = interval_timer(&mut st, "rn-skip", launch("sleep", &["3"]), OverlapPolicy::Skip);
+    let t = interval_timer(
+        &mut st,
+        "rn-skip",
+        launch("sleep", &["3"]),
+        OverlapPolicy::Skip,
+    );
 
     let disp = spawn_dispatcher(&e, 2);
     disp.begin_startup();

@@ -7,9 +7,7 @@
 //! 4. else `access(wakealarm, W_OK)` → Enabled(LinuxWakealarmSysfs)
 //! 5. else Disabled(NoPermission{…})
 
-use super::{
-    Caveat, DisabledReason, MachineWake, WakeCapability, WakeError, WakeMechanism,
-};
+use super::{Caveat, DisabledReason, MachineWake, WakeCapability, WakeError, WakeMechanism};
 use chrono::{DateTime, Utc};
 use std::fs;
 use std::io::{self, Write};
@@ -22,7 +20,8 @@ const RTC_DIR: &str = "/sys/class/rtc/rtc0";
 const WAKEALARM: &str = "/sys/class/rtc/rtc0/wakealarm";
 const WAKEUP: &str = "/sys/class/rtc/rtc0/device/power/wakeup";
 
-const NO_PERM_HINT: &str = "systemd ≥254 local session / AmbientCapabilities=CAP_WAKE_ALARM / setcap / udev rule";
+const NO_PERM_HINT: &str =
+    "systemd ≥254 local session / AmbientCapabilities=CAP_WAKE_ALARM / setcap / udev rule";
 
 /// Linux in-process wake controller.
 pub struct LinuxWake {
@@ -135,11 +134,7 @@ fn create_alarm_timerfd() -> io::Result<OwnedFd> {
 }
 
 fn wakealarm_writable() -> bool {
-    Path::new(WAKEALARM).exists()
-        && fs::OpenOptions::new()
-            .write(true)
-            .open(WAKEALARM)
-            .is_ok()
+    Path::new(WAKEALARM).exists() && fs::OpenOptions::new().write(true).open(WAKEALARM).is_ok()
 }
 
 fn read_trimmed(path: &str) -> io::Result<String> {
@@ -153,7 +148,11 @@ fn epoch_secs(at: DateTime<Utc>) -> i64 {
 
 impl MachineWake for LinuxWake {
     fn capability(&self) -> WakeCapability {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).capability.clone()
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .capability
+            .clone()
     }
 
     fn re_probe(&self) -> WakeCapability {
@@ -187,9 +186,10 @@ impl MachineWake for LinuxWake {
                 mechanism: WakeMechanism::LinuxAlarmTimerfd,
                 ..
             } => {
-                let fd = st.timerfd.as_ref().ok_or_else(|| {
-                    WakeError::Io("timerfd missing despite Enabled".into())
-                })?;
+                let fd = st
+                    .timerfd
+                    .as_ref()
+                    .ok_or_else(|| WakeError::Io("timerfd missing despite Enabled".into()))?;
                 set_timerfd_absolute(fd, at).map_err(|e| WakeError::Io(e.to_string()))?;
                 st.armed_epoch = Some(epoch_secs(at));
                 Ok(())
@@ -197,14 +197,10 @@ impl MachineWake for LinuxWake {
             WakeCapability::Enabled {
                 mechanism: WakeMechanism::LinuxWakealarmSysfs,
                 ..
-            } => {
-                program_sysfs(&mut st, at).map_err(|e| WakeError::Io(e.to_string()))
-            }
-            WakeCapability::Enabled { mechanism, .. } => {
-                Err(WakeError::Io(format!(
-                    "linux controller cannot arm via {mechanism}"
-                )))
-            }
+            } => program_sysfs(&mut st, at).map_err(|e| WakeError::Io(e.to_string())),
+            WakeCapability::Enabled { mechanism, .. } => Err(WakeError::Io(format!(
+                "linux controller cannot arm via {mechanism}"
+            ))),
         }
     }
 
@@ -225,9 +221,7 @@ impl MachineWake for LinuxWake {
             WakeCapability::Enabled {
                 mechanism: WakeMechanism::LinuxWakealarmSysfs,
                 ..
-            } => {
-                cancel_sysfs(&mut st).map_err(|e| WakeError::Io(e.to_string()))
-            }
+            } => cancel_sysfs(&mut st).map_err(|e| WakeError::Io(e.to_string())),
             _ => {
                 st.armed_epoch = None;
                 Ok(())
@@ -293,8 +287,13 @@ fn disarm_timerfd(fd: &OwnedFd) -> io::Result<()> {
 /// - `own_slot`: whether we now own the register
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SysfsProgramPlan {
+    /// Epoch second to program, or `None` to leave a foreign alarm alone.
     pub write_epoch: Option<i64>,
+    /// A foreign alarm we displaced and must put back afterwards. The sysfs
+    /// register holds exactly one alarm, so sharing it politely is the whole
+    /// job of this plan.
     pub displace_foreign: Option<i64>,
+    /// Whether we now own the register.
     pub own_slot: bool,
 }
 
@@ -320,10 +319,7 @@ pub fn plan_sysfs_program(current: Option<i64>, ours: i64) -> SysfsProgramPlan {
 }
 
 /// On resume: restore displaced foreign alarm, or clear our one-shot.
-pub fn plan_sysfs_restore(
-    sysfs_owned: bool,
-    displaced_foreign: Option<i64>,
-) -> Option<i64> {
+pub fn plan_sysfs_restore(sysfs_owned: bool, displaced_foreign: Option<i64>) -> Option<i64> {
     if !sysfs_owned && displaced_foreign.is_none() {
         return None;
     }
@@ -417,25 +413,40 @@ pub fn informational_facts() -> LinuxInfo {
     }
 }
 
+/// What the Linux probe read off this machine, for diagnostics.
 #[derive(Debug, Clone)]
 pub struct LinuxInfo {
+    /// Whether `/sys/class/rtc/rtc0` exists at all.
     pub rtc_present: bool,
+    /// The RTC's `wakeup` sysfs value, when readable.
     pub wakeup: Option<String>,
+    /// The kernel's supported sleep states.
     pub power_state: Option<String>,
+    /// The configured suspend-to-memory variant.
     pub mem_sleep: Option<String>,
+    /// `CLOCK_BOOTTIME`-style seconds since boot.
     pub since_epoch: Option<i64>,
+    /// Current wall-clock epoch second — paired with the above so a clock
+    /// step is visible in the diagnostics.
     pub wall_epoch: Option<i64>,
 }
 
 /// Decision-tree helper for unit tests (inject probe outcomes).
 #[derive(Debug, Clone)]
 pub struct LinuxProbeFacts {
+    /// Whether an RTC device is present.
     pub rtc_present: bool,
+    /// Whether the RTC is marked wake-capable; `None` when unreadable.
     pub wakeup_enabled: Option<bool>,
-    pub timerfd_result: Result<(), i32>, // Ok or errno
+    /// `Ok(())` if a `CLOCK_REALTIME_ALARM` timerfd could be armed, else the
+    /// errno — `EPERM` is the ordinary "no `CAP_WAKE_ALARM`" answer.
+    pub timerfd_result: Result<(), i32>,
+    /// Whether the sysfs `wakealarm` fallback is writable by this user.
     pub wakealarm_writable: bool,
 }
 
+/// The whole Linux decision tree as one pure function of the probe facts, so
+/// every branch is unit-testable without a machine that has the hardware.
 pub fn decide_from_facts(facts: &LinuxProbeFacts) -> WakeCapability {
     if !facts.rtc_present {
         return WakeCapability::Disabled {

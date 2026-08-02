@@ -73,25 +73,65 @@ pub fn acquire_file(path: &Path) -> io::Result<GateGuard> {
     acquire_path(path.to_path_buf())
 }
 
+/// How long [`try_acquire_file`] keeps retrying before it calls itself a
+/// follower. Sized to swallow the fork/exec window (microseconds) while
+/// staying far below the time a genuine leader holds the lease (a whole
+/// publish cycle), so a real contest is still reported promptly.
+const TRY_ACQUIRE_WINDOW: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// Non-blocking exclusive acquire of an arbitrary lock file (the R11
 /// publisher lease). Returns `Ok(None)` when another process holds it —
 /// the caller is then a follower, not an error case.
+///
+/// # Why this retries instead of asking once
+///
+/// `fork(2)` copies the whole file-descriptor table, and `O_CLOEXEC` is
+/// honoured at `exec(2)`, **not** at `fork(2)`. So between the fork and the
+/// exec, a brand-new child holds a duplicate of every open file description
+/// in the process — and an `flock` belongs to the *description*, not to the
+/// fd. For that window the lock is held by a process that has no interest in
+/// it and will drop it a few microseconds later, and any other thread asking
+/// for that lock is told `EWOULDBLOCK`.
+///
+/// Bellman forks constantly (every launch action, the demo, the wake helper),
+/// so a single-shot election loses this race at a measurable rate. Measured
+/// on Linux 7.0 with no competing lock holder anywhere in the process:
+/// 0 failures in 5.2M attempts with no children being spawned, and 7.3–7.5%
+/// failures in 7.5M attempts with one thread spawning `/bin/true` in a loop.
+///
+/// The window is bounded by the child reaching `exec`, not by how long the
+/// child then runs: a 5-second child leaves the lease free again ~6µs after
+/// the parent releases it. So a short bounded retry closes the hole
+/// completely, and no caller has to treat a spurious loss as real.
+///
+/// A genuine holder keeps the lease for an entire publish cycle, which is
+/// orders of magnitude longer than `TRY_ACQUIRE_WINDOW`, so real contention
+/// still returns `Ok(None)` and the caller is still correctly a follower.
 pub fn try_acquire_file(path: &Path) -> io::Result<Option<GateGuard>> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)?;
-    match try_lock_exclusive(&file)? {
-        true => Ok(Some(GateGuard {
-            file,
-            path: path.to_path_buf(),
-        })),
-        false => Ok(None),
+    let deadline = std::time::Instant::now() + TRY_ACQUIRE_WINDOW;
+    loop {
+        // Reopened per attempt: a fresh description cannot be one some child
+        // inherited before we got here.
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)?;
+        if try_lock_exclusive(&file)? {
+            return Ok(Some(GateGuard {
+                file,
+                path: path.to_path_buf(),
+            }));
+        }
+        drop(file);
+        if std::time::Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }
 
@@ -131,7 +171,10 @@ fn lock_exclusive(file: &File) -> io::Result<()> {
 #[cfg(unix)]
 fn try_lock_exclusive(file: &File) -> io::Result<bool> {
     use std::os::unix::io::AsFd;
-    match rustix::fs::flock(file.as_fd(), rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+    match rustix::fs::flock(
+        file.as_fd(),
+        rustix::fs::FlockOperation::NonBlockingLockExclusive,
+    ) {
         Ok(()) => Ok(true),
         Err(rustix::io::Errno::WOULDBLOCK) => Ok(false),
         Err(e) => Err(io::Error::from_raw_os_error(e.raw_os_error())),
@@ -206,6 +249,114 @@ mod tests {
         let mut bytes = [0u8; 16];
         bytes[0] = byte;
         Uuid::from_bytes(bytes)
+    }
+
+    /// FLK1. An election held while the process is forking must not report
+    /// "someone else leads" when nobody does. `fork(2)` duplicates the fd
+    /// table and `O_CLOEXEC` only fires at `exec(2)`, so every child briefly
+    /// owns a copy of the open file description the lock belongs to.
+    ///
+    /// Nothing in this test ever holds the lease across an attempt: each
+    /// acquire drops its guard before the next one asks. Every `Ok(None)` is
+    /// therefore spurious by construction. Without the retry in
+    /// `try_acquire_file` this fails within a few hundred attempts.
+    ///
+    /// The forking has to be proven, not assumed: a test that spawns nothing
+    /// sees zero spurious elections for the trivial reason that there is no
+    /// race to lose, and would pass just as happily against the bug. So the
+    /// elections do not begin until children are actually being produced, the
+    /// loop keeps going until enough of them have overlapped it, and the spawn
+    /// count and any spawn error are asserted BEFORE the result is believed.
+    #[cfg(unix)]
+    #[test]
+    fn election_is_not_lost_to_a_concurrent_forks_inherited_fd() {
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        /// Children that must overlap the elections for the race to have been
+        /// exercised at all.
+        const MIN_CHILDREN: u32 = 20;
+        const MIN_ATTEMPTS: u32 = 3_000;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let lock = dir.path().join("logs").join("publisher.lock");
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let spawned = Arc::new(AtomicU32::new(0));
+        let spawn_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+        let spawner = {
+            let (stop, spawned, spawn_err) = (stop.clone(), spawned.clone(), spawn_err.clone());
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    match std::process::Command::new("/bin/true")
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                    {
+                        Ok(mut child) => {
+                            let _ = child.wait();
+                            spawned.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(e) => {
+                            // Recorded, not swallowed: dying quietly here is
+                            // exactly how this test would go vacuous.
+                            *spawn_err.lock().unwrap() = Some(e.to_string());
+                            return;
+                        }
+                    }
+                }
+            })
+        };
+
+        // Do not start measuring until forks are demonstrably happening.
+        let warmup = Instant::now();
+        while spawned.load(Ordering::Relaxed) == 0 {
+            if let Some(e) = spawn_err.lock().unwrap().as_ref() {
+                stop.store(true, Ordering::Relaxed);
+                panic!("cannot spawn children, so the fork race cannot be exercised: {e}");
+            }
+            assert!(
+                warmup.elapsed() < Duration::from_secs(10),
+                "the spawner produced no children in 10s"
+            );
+            std::thread::yield_now();
+        }
+
+        let mut attempts = 0u32;
+        let mut spurious = 0u32;
+        let started = Instant::now();
+        while (attempts < MIN_ATTEMPTS || spawned.load(Ordering::Relaxed) < MIN_CHILDREN)
+            && started.elapsed() < Duration::from_secs(20)
+        {
+            attempts += 1;
+            match try_acquire_file(&lock).expect("acquire must not error") {
+                Some(guard) => drop(guard),
+                None => spurious += 1,
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        spawner.join().expect("spawner thread");
+        let children = spawned.load(Ordering::Relaxed);
+
+        // Assert the race was exercised BEFORE believing that it was survived.
+        assert!(
+            spawn_err.lock().unwrap().is_none(),
+            "spawning failed partway through, so the later elections raced \
+             nothing: {:?}",
+            spawn_err.lock().unwrap()
+        );
+        assert!(
+            children >= MIN_CHILDREN && attempts >= MIN_ATTEMPTS,
+            "the fork race was never exercised: {children} children (need \
+             {MIN_CHILDREN}) across {attempts} elections (need {MIN_ATTEMPTS})"
+        );
+        assert_eq!(
+            spurious, 0,
+            "{spurious}/{attempts} elections reported a follower while no one \
+             held the lease ({children} children spawned concurrently)"
+        );
     }
 
     #[test]

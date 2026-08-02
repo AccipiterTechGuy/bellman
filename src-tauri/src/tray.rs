@@ -47,14 +47,10 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     }
 
     let _tray = TrayIconBuilder::with_id("bellman-tray")
-        .icon(
-            app.default_window_icon()
-                .cloned()
-                .unwrap_or_else(|| {
-                    tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))
-                        .expect("tray.png present")
-                }),
-        )
+        .icon(app.default_window_icon().cloned().unwrap_or_else(|| {
+            tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))
+                .expect("tray.png present")
+        }))
         .tooltip("Bellman")
         .menu(&menu)
         .show_menu_on_left_click(false)

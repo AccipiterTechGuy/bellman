@@ -32,9 +32,7 @@ use super::gate;
 use super::notification::{
     fire_notification_name, fires_dir, write_fire_notification, FireNotification,
 };
-use super::quarantine::{
-    fnv1a64_hex, quarantine_bytes, quarantine_dir, quarantine_unread,
-};
+use super::quarantine::{fnv1a64_hex, quarantine_bytes, quarantine_dir, quarantine_unread};
 
 /// Reuse the slot watcher's debounce: a parse failure is usually a file
 /// being written, so identical invalid bytes must be stable across this
@@ -58,27 +56,54 @@ enum ReplyRead {
     Missing,
 }
 
+/// What opening a reply path produced on unix.
+#[cfg(unix)]
+enum ReplyOpen {
+    File(std::fs::File),
+    Missing,
+    Special(&'static str),
+}
+
+/// Open a reply path with the flags R9/R12 require: no-follow (a symlink is
+/// refused, not followed), non-blocking (a FIFO can never park us), and
+/// **close-on-exec**.
+///
+/// `std::fs::File::open` sets `O_CLOEXEC` for you; `rustix::fs::open` passes
+/// its `OFlags` through verbatim, so it has to be asked for here. Without it
+/// this descriptor is inherited by every process Bellman launches — and those
+/// are user-supplied commands from timer configuration (D11).
+///
+/// Split out from [`read_reply_file`] so the flags can be tested on the real
+/// call rather than on a copy of it.
+#[cfg(unix)]
+fn open_reply_file(path: &Path) -> std::io::Result<ReplyOpen> {
+    use std::os::unix::io::FromRawFd;
+    let flags = rustix::fs::OFlags::RDONLY
+        | rustix::fs::OFlags::NOFOLLOW
+        | rustix::fs::OFlags::NONBLOCK
+        | rustix::fs::OFlags::CLOEXEC;
+    match rustix::fs::open(path, flags, rustix::fs::Mode::empty()) {
+        Ok(fd) => Ok(ReplyOpen::File(unsafe {
+            std::fs::File::from_raw_fd(std::os::unix::io::IntoRawFd::into_raw_fd(fd))
+        })),
+        Err(rustix::io::Errno::NOENT) => Ok(ReplyOpen::Missing),
+        Err(rustix::io::Errno::LOOP) => Ok(ReplyOpen::Special("symlink")),
+        Err(e) => Err(std::io::Error::from_raw_os_error(e.raw_os_error())),
+    }
+}
+
 /// Read a reply path safely (R9/R12):
 ///
-/// - open **no-follow** and non-blocking (a FIFO can never park us),
+/// - open no-follow, non-blocking and close-on-exec (see [`open_reply_file`]),
 /// - verify a regular file on the OPENED HANDLE (never a second path lookup),
 /// - size-check from that handle; over 64 KB the body is never read,
 /// - read at most the cap from the same handle.
 fn read_reply_file(path: &Path) -> std::io::Result<ReplyRead> {
     #[cfg(unix)]
-    let file = {
-        use std::os::unix::io::FromRawFd;
-        let flags = rustix::fs::OFlags::RDONLY
-            | rustix::fs::OFlags::NOFOLLOW
-            | rustix::fs::OFlags::NONBLOCK;
-        match rustix::fs::open(path, flags, rustix::fs::Mode::empty()) {
-            Ok(fd) => unsafe {
-                std::fs::File::from_raw_fd(std::os::unix::io::IntoRawFd::into_raw_fd(fd))
-            },
-            Err(rustix::io::Errno::NOENT) => return Ok(ReplyRead::Missing),
-            Err(rustix::io::Errno::LOOP) => return Ok(ReplyRead::Special("symlink")),
-            Err(e) => return Err(std::io::Error::from_raw_os_error(e.raw_os_error())),
-        }
+    let file = match open_reply_file(path)? {
+        ReplyOpen::File(f) => f,
+        ReplyOpen::Missing => return Ok(ReplyRead::Missing),
+        ReplyOpen::Special(s) => return Ok(ReplyRead::Special(s)),
     };
     #[cfg(windows)]
     let file = {
@@ -137,11 +162,17 @@ struct InvalidEntry {
 /// Counts from one watcher pass (mostly for tests and ops logging).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PollStats {
+    /// Replies accepted and folded in.
     pub applied: usize,
+    /// Byte-identical repeats of an already-accepted reply — a no-op.
     pub duplicates: usize,
+    /// Replies for a run a newer firing has already replaced.
     pub superseded: usize,
+    /// Replies rejected and quarantined.
     pub rejected: usize,
+    /// Pickup or watchdog deadlines that expired this pass.
     pub deadline_transitions: usize,
+    /// I/O or store failures during the pass.
     pub errors: usize,
 }
 
@@ -165,12 +196,15 @@ pub fn poll_once(
         }
     };
     for timer in &timers {
-        if let Err(e) = poll_timer(engine, store, timer, now_wall, mono_now, tracker, &mut stats) {
+        if let Err(e) = poll_timer(
+            engine, store, timer, now_wall, mono_now, tracker, &mut stats,
+        ) {
             eprintln!("bellman: reply watcher: timer {}: {e}", timer.id);
             stats.errors += 1;
         }
     }
-    stats.deadline_transitions += expire_all_deadlines(engine, store, now_wall, mono_now, &mut stats);
+    stats.deadline_transitions +=
+        expire_all_deadlines(engine, store, now_wall, mono_now, &mut stats);
     stats
 }
 
@@ -202,7 +236,16 @@ fn poll_timer(
         match read_reply_file(&path) {
             Ok(ReplyRead::Missing) => {}
             Ok(ReplyRead::Oversize(len)) => {
-                condemn_unread(engine, store, timer, &path, file_run_id, len, "oversize", stats);
+                condemn_unread(
+                    engine,
+                    store,
+                    timer,
+                    &path,
+                    file_run_id,
+                    len,
+                    "oversize",
+                    stats,
+                );
             }
             Ok(ReplyRead::Special(kind)) => {
                 condemn_unread(engine, store, timer, &path, file_run_id, 0, kind, stats);
@@ -278,7 +321,16 @@ fn handle_bytes(
         Ok(d) => d,
         Err(_) => {
             track_invalid(
-                engine, store, timer, path, file_run_id, &bytes, digest, now_wall, tracker, stats,
+                engine,
+                store,
+                timer,
+                path,
+                file_run_id,
+                &bytes,
+                digest,
+                now_wall,
+                tracker,
+                stats,
             );
             return;
         }
@@ -324,7 +376,10 @@ fn handle_bytes(
             // The current run's file is never touched by this path — the
             // filename/document identity check above guarantees it.
             if let Err(e) = std::fs::remove_file(path) {
-                eprintln!("bellman: reply watcher: remove stale {}: {e}", path.display());
+                eprintln!(
+                    "bellman: reply watcher: remove stale {}: {e}",
+                    path.display()
+                );
             }
             stats.superseded += 1;
         }
@@ -371,7 +426,16 @@ fn track_invalid(
                 .unwrap_or_default()
                 >= DEFAULT_DEBOUNCE
             {
-                condemn_bytes(engine, store, timer, path, run_id, bytes, "invalid JSON", stats);
+                condemn_bytes(
+                    engine,
+                    store,
+                    timer,
+                    path,
+                    run_id,
+                    bytes,
+                    "invalid JSON",
+                    stats,
+                );
                 entry.condemned = true;
             }
         }
@@ -512,9 +576,7 @@ fn expire_all_deadlines(
         };
         for (run_id, kind) in runs {
             let transitioned = match kind {
-                DeadlineKind::Pickup => {
-                    engine.expire_pickup_one(store, &timer, run_id, now_wall)
-                }
+                DeadlineKind::Pickup => engine.expire_pickup_one(store, &timer, run_id, now_wall),
                 DeadlineKind::Watchdog => {
                     engine.expire_watchdog_one(store, &timer, run_id, now_wall)
                 }
@@ -544,8 +606,11 @@ pub enum BarrierRead {
     /// fire transaction. `bytes` are kept for the post-commit quarantine
     /// copy when the ingest is semantically rejected.
     Valid {
+        /// The parsed reply.
         doc: Box<ReplyDocument>,
+        /// Digest of the bytes, so an exact repeat is recognised.
         digest: String,
+        /// The bytes as read, kept for quarantine if ingest rejects them.
         bytes: Vec<u8>,
     },
     /// Rejected on sight (identity mismatch or stable-invalid bytes):
@@ -766,7 +831,9 @@ fn reconcile_timer(
     let fresh = serde_json::to_vec_pretty(&status).map_err(|e| {
         super::engine::ReplyError::Tree(crate::tree::TreeError::Serialize(e.to_string()))
     })?;
-    let stale = std::fs::read(&status_path).map(|b| b != fresh).unwrap_or(true);
+    let stale = std::fs::read(&status_path)
+        .map(|b| b != fresh)
+        .unwrap_or(true);
     if stale {
         crate::tree::write_status(&engine.tree, timer, &status)?;
         *repaired += 1;
@@ -776,8 +843,7 @@ fn reconcile_timer(
     // IK6: an IPC-selected run deliberately has no stub; never repair one
     // into existence (the folder README explains its absence).
     let stub_path = folder.join(reply_file_name(claim.run_id));
-    let ipc_selected =
-        row.selected_transport.as_deref() == Some(crate::store::TRANSPORT_IPC);
+    let ipc_selected = row.selected_transport.as_deref() == Some(crate::store::TRANSPORT_IPC);
     if !ipc_selected && !stub_path.exists() {
         engine
             .tree
@@ -812,7 +878,14 @@ fn reconcile_timer(
             let fire_path = fires_dir(&engine.data_dir.join("slots"))
                 .join(fire_notification_name(claim.run_id));
             if !fire_path.exists() && stub_path.exists() {
-                publish_fire_notification(engine, timer, &claim, &row.state, &folder, &row.app_name)?;
+                publish_fire_notification(
+                    engine,
+                    timer,
+                    &claim,
+                    &row.state,
+                    &folder,
+                    &row.app_name,
+                )?;
                 *repaired += 1;
             }
         }
@@ -837,4 +910,58 @@ pub fn startup_scan(engine: &ReplyEngine, store: &Store, now_wall: DateTime<Utc>
         }
     }
     reconcile(engine, store);
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod cloexec_tests {
+    use super::*;
+
+    /// D11 regression: a reply-file descriptor must not survive into a child.
+    ///
+    /// Bellman launches user-supplied commands from timer configuration. Any
+    /// descriptor open without `O_CLOEXEC` at the moment of a `fork` is still
+    /// there after the `exec`, so the launched command inherits a live handle
+    /// on a reply file it has no business holding.
+    ///
+    /// This asserts the real thing rather than a flag: it opens through
+    /// [`open_reply_file`] — the exact call `read_reply_file` makes — holds
+    /// the handle, spawns a child, and asks the child which descriptors it
+    /// actually ended up with. Drop `OFlags::CLOEXEC` from `open_reply_file`
+    /// and the child reports the reply path and this fails.
+    #[test]
+    fn a_reply_file_descriptor_is_not_inherited_by_a_launched_command() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let reply = dir.path().join("reply-cloexec-probe.json");
+        std::fs::write(&reply, b"{\"schema\":\"bellman-reply/1\"}").expect("write reply");
+
+        let opened = open_reply_file(&reply).expect("open must succeed");
+        let ReplyOpen::File(handle) = opened else {
+            panic!("the probe file is a regular readable file");
+        };
+
+        // The child reports what it inherited. Reading its own /proc/self/fd
+        // after exec is the only view that reflects O_CLOEXEC having fired.
+        let out = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("for f in /proc/self/fd/*; do readlink \"$f\" 2>/dev/null; done; exit 0")
+            .output()
+            .expect("spawn the probe child");
+        assert!(
+            out.status.success(),
+            "probe child failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        // Kept open across the spawn on purpose: a closed handle would pass
+        // this test for the wrong reason.
+        drop(handle);
+
+        let inherited = String::from_utf8_lossy(&out.stdout);
+        let target = reply.to_string_lossy();
+        assert!(
+            !inherited.contains(target.as_ref()),
+            "a launched command inherited the reply-file descriptor {target}; \
+             it saw:\n{inherited}"
+        );
+    }
 }

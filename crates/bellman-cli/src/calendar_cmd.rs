@@ -38,17 +38,20 @@ pub struct AgendaArgs {
 /// or a JSON value for the shared envelope path.
 pub enum CalendarOutcome {
     /// Caller should not print again (bytes already written).
-    Written { format: &'static str, path: Option<PathBuf> },
+    Written {
+        format: &'static str,
+        path: Option<PathBuf>,
+    },
     /// JSON body for `--json` / default human summary when format=json.
     Json(Value),
 }
 
 pub fn cmd_calendar(db: &Path, args: CalendarArgs) -> Result<CalendarOutcome, CliError> {
     const CMD: &str = "calendar";
-    let fmt = CalendarFormat::parse(&args.format)
-        .map_err(|m| CliError::new(CMD, "invalid_args", m))?;
-    let week_start = WeekStart::parse(&args.week_start)
-        .map_err(|m| CliError::new(CMD, "invalid_args", m))?;
+    let fmt =
+        CalendarFormat::parse(&args.format).map_err(|m| CliError::new(CMD, "invalid_args", m))?;
+    let week_start =
+        WeekStart::parse(&args.week_start).map_err(|m| CliError::new(CMD, "invalid_args", m))?;
     let tz_name = args.tz.clone().unwrap_or_else(system_tz_name);
     let tz = parse_tz(&tz_name).map_err(|m| CliError::new(CMD, "invalid_args", m))?;
     let now_utc = Utc::now();
@@ -91,8 +94,8 @@ pub fn cmd_calendar(db: &Path, args: CalendarArgs) -> Result<CalendarOutcome, Cl
 
 pub fn cmd_agenda(db: &Path, args: AgendaArgs) -> Result<CalendarOutcome, CliError> {
     const CMD: &str = "agenda";
-    let fmt = CalendarFormat::parse(&args.format)
-        .map_err(|m| CliError::new(CMD, "invalid_args", m))?;
+    let fmt =
+        CalendarFormat::parse(&args.format).map_err(|m| CliError::new(CMD, "invalid_args", m))?;
     let tz_name = args.tz.clone().unwrap_or_else(system_tz_name);
     let tz = parse_tz(&tz_name).map_err(|m| CliError::new(CMD, "invalid_args", m))?;
     let now_utc = Utc::now();
@@ -121,11 +124,7 @@ pub fn cmd_agenda(db: &Path, args: AgendaArgs) -> Result<CalendarOutcome, CliErr
     emit_snapshot(CMD, &snap, fmt, args.out.as_deref())
 }
 
-type CalendarRange = (
-    chrono::NaiveDate,
-    chrono::NaiveDate,
-    Option<(i32, u32)>,
-);
+type CalendarRange = (chrono::NaiveDate, chrono::NaiveDate, Option<(i32, u32)>);
 
 fn resolve_range(
     args: &CalendarArgs,
@@ -134,10 +133,10 @@ fn resolve_range(
 ) -> Result<CalendarRange, CliError> {
     match (&args.month, &args.from, &args.to) {
         (Some(m), None, None) => {
-            let (y, mon) = resolve_month(m, now_local)
-                .map_err(|e| CliError::new(cmd, "invalid_args", e))?;
-            let (from, to) = month_bounds(y, mon)
-                .map_err(|e| CliError::new(cmd, "invalid_args", e))?;
+            let (y, mon) =
+                resolve_month(m, now_local).map_err(|e| CliError::new(cmd, "invalid_args", e))?;
+            let (from, to) =
+                month_bounds(y, mon).map_err(|e| CliError::new(cmd, "invalid_args", e))?;
             Ok((from, to, Some((y, mon))))
         }
         (None, Some(f), Some(t)) => {
@@ -159,8 +158,8 @@ fn resolve_range(
         (None, None, None) => {
             // Default: this month.
             let (y, mon) = (now_local.year(), now_local.month());
-            let (from, to) = month_bounds(y, mon)
-                .map_err(|e| CliError::new(cmd, "invalid_args", e))?;
+            let (from, to) =
+                month_bounds(y, mon).map_err(|e| CliError::new(cmd, "invalid_args", e))?;
             Ok((from, to, Some((y, mon))))
         }
         (Some(_), Some(_), _) | (Some(_), _, Some(_)) => Err(CliError::new(
@@ -168,11 +167,7 @@ fn resolve_range(
             "invalid_args",
             "use either --month or --from/--to, not both",
         )),
-        (None, None, Some(_)) => Err(CliError::new(
-            cmd,
-            "invalid_args",
-            "--to requires --from",
-        )),
+        (None, None, Some(_)) => Err(CliError::new(cmd, "invalid_args", "--to requires --from")),
     }
 }
 
@@ -184,9 +179,8 @@ fn emit_snapshot(
 ) -> Result<CalendarOutcome, CliError> {
     match fmt {
         CalendarFormat::Json => {
-            let mut body = serde_json::to_value(snap).map_err(|e| {
-                CliError::new(cmd, "store_error", format!("serialize: {e}"))
-            })?;
+            let mut body = serde_json::to_value(snap)
+                .map_err(|e| CliError::new(cmd, "store_error", format!("serialize: {e}")))?;
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("command".into(), json!(cmd));
                 obj.insert("ok".into(), json!(true));
@@ -259,13 +253,8 @@ fn write_bytes(path: &Path, data: &[u8], cmd: &'static str) -> Result<(), CliErr
             })?;
         }
     }
-    fs::write(path, data).map_err(|e| {
-        CliError::new(
-            cmd,
-            "store_error",
-            format!("write {}: {e}", path.display()),
-        )
-    })
+    fs::write(path, data)
+        .map_err(|e| CliError::new(cmd, "store_error", format!("write {}: {e}", path.display())))
 }
 
 fn open_store(db: &Path, cmd: &'static str) -> Result<Store, CliError> {

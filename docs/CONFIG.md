@@ -27,6 +27,26 @@ the defaults below.
 | `quarantine_budget_bytes` | u64 | `67108864` (64 MiB) | Aggregate ceiling for the reply quarantine (`timers/bad/`); oldest payload/sidecar pairs pruned first |
 | `ipc_enabled` | bool | `true` | Run the local IPC socket server (`$XDG_RUNTIME_DIR/bellman/bellman.sock` on Linux); per-timer `transport.mode` chooses who uses it, everything else stays on files |
 
+## Values are sanitised on load — the floors are real
+
+Bellman clamps a few keys when it reads the file, so a value below a floor is
+**silently raised** rather than honoured. A too-small rotation threshold is
+the one that surprises people: the log simply never rotates at the size you
+asked for.
+
+| Key | Floor / clamp |
+|---|---|
+| `log_rotation_max_bytes` | **1 MiB** — smaller values are raised to 1 MiB |
+| `log_retention_budget_bytes` | **4 MiB** — smaller values are raised to 4 MiB |
+| `max_concurrent_actions` | clamped into `1..=256` |
+| `horizon_secs`, `retention_days`, `min_free_slots`, `prune_interval_secs`, `ack_grace_secs`, `pickup_grace_secs`, `default_misfire_grace_secs` | `0` means "unset" and falls back to the default in the table above |
+| `watchdog_factor` | must be finite and > 0, else the default `2.0` |
+| `default_misfire_policy` | anything outside `skip` / `coalesce` / `catch_up` falls back to `coalesce` |
+
+`prune_interval_secs` is the **startup catch-up** threshold ("is a prune
+overdue?"), not the cadence of the visible `system.prune` timer — that one is
+weekly and is listed by `bellman list` like any other timer.
+
 Sidecar (not JSON): `pause_all` file contains `1`/`0` for vacation mode.
 
 Example minimal ship default:

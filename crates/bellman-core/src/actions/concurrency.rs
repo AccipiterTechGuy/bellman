@@ -60,6 +60,8 @@ impl ActionLimiter {
         }
     }
 
+    /// The global cap on wake actions running at once — what stops a
+    /// mass-fire after a long suspend from forking a hundred processes.
     pub fn max_concurrent(&self) -> usize {
         self.max
     }
@@ -90,12 +92,18 @@ impl ActionLimiter {
     }
 
     fn acquire(&self) {
-        let mut g = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if g.in_flight >= self.max {
             g.queue_waits = g.queue_waits.saturating_add(1);
             g.waiters = g.waiters.saturating_add(1);
             while g.in_flight >= self.max {
-                g = self.cv.wait(g).unwrap_or_else(std::sync::PoisonError::into_inner);
+                g = self
+                    .cv
+                    .wait(g)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
             }
             g.waiters = g.waiters.saturating_sub(1);
         }
@@ -106,7 +114,10 @@ impl ActionLimiter {
     }
 
     fn try_acquire(&self) -> bool {
-        let mut g = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if g.in_flight >= self.max {
             return false;
         }
@@ -118,7 +129,10 @@ impl ActionLimiter {
     }
 
     fn release(&self) {
-        let mut g = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         g.in_flight = g.in_flight.saturating_sub(1);
         g.completed = g.completed.saturating_add(1);
         drop(g);
@@ -127,7 +141,10 @@ impl ActionLimiter {
 
     /// Current stats snapshot.
     pub fn stats(&self) -> LimiterStats {
-        let g = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         LimiterStats {
             peak_in_flight: g.peak_in_flight,
             completed: g.completed,
@@ -137,7 +154,10 @@ impl ActionLimiter {
 
     /// Reset counters (tests).
     pub fn reset_stats(&self) {
-        let mut g = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         g.peak_in_flight = g.in_flight;
         g.completed = 0;
         g.queue_waits = 0;

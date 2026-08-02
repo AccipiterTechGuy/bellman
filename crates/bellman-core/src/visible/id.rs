@@ -31,16 +31,16 @@ mod tests {
 
     #[test]
     fn stable_across_calls() {
-        let a = task_id(SourceKind::CronUser, &["sami", "0 * * * *", "echo hi"]);
-        let b = task_id(SourceKind::CronUser, &["sami", "0 * * * *", "echo hi"]);
+        let a = task_id(SourceKind::CronUser, &["alice", "0 * * * *", "echo hi"]);
+        let b = task_id(SourceKind::CronUser, &["alice", "0 * * * *", "echo hi"]);
         assert_eq!(a, b);
         assert!(a.starts_with("cron_user:"));
     }
 
     #[test]
     fn different_inputs_differ() {
-        let a = task_id(SourceKind::CronUser, &["sami", "0 * * * *", "a"]);
-        let b = task_id(SourceKind::CronUser, &["sami", "0 * * * *", "b"]);
+        let a = task_id(SourceKind::CronUser, &["alice", "0 * * * *", "a"]);
+        let b = task_id(SourceKind::CronUser, &["alice", "0 * * * *", "b"]);
         assert_ne!(a, b);
     }
 }

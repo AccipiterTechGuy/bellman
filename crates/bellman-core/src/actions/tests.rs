@@ -11,7 +11,12 @@ use uuid::Uuid;
 /// Serialize tests that assert on process timing / global PATH noise.
 fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    // Recover from poisoning instead of unwrapping it — see the same note
+    // in tests/sch1_dispatcher.rs. One genuine failure must report as one
+    // failure, not poison the guard and take every later test with it.
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn sample_timer(action: Action, retry: RetryPolicy) -> Timer {
@@ -121,10 +126,7 @@ fn launch_sets_bellman_run_id_env() {
     let run_id = Uuid::new_v4();
     let cfg = LaunchConfig {
         command: "sh".into(),
-        args: vec![
-            "-c".into(),
-            "printf '%s' \"$BELLMAN_RUN_ID\"".into(),
-        ],
+        args: vec!["-c".into(), "printf '%s' \"$BELLMAN_RUN_ID\"".into()],
         workdir: None,
         timeout: Duration::from_secs(5),
         output_cap: 1024,

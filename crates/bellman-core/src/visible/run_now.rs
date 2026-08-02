@@ -13,11 +13,13 @@ use std::time::Duration;
 /// `task.command` is the shell-executable command with **literal** `%`
 /// characters (already unescaped from crontab `\%`). Optional cron stdin is
 /// taken from `task.stdin_payload` — we never split `command` on `%`.
-pub fn run_task(task: &DiscoveredTask, confirm: bool, timeout_secs: u64) -> Result<RunOutcome, String> {
+pub fn run_task(
+    task: &DiscoveredTask,
+    confirm: bool,
+    timeout_secs: u64,
+) -> Result<RunOutcome, String> {
     if !confirm {
-        return Err(
-            "refusing to run without --confirm (run-now must never be implicit)".into(),
-        );
+        return Err("refusing to run without --confirm (run-now must never be implicit)".into());
     }
     if matches!(task.source_kind, SourceKind::Unsupported) {
         return Err("cannot run an unsupported-platform placeholder".into());
@@ -80,9 +82,7 @@ fn run_with_timeout(
     loop {
         match child.try_wait() {
             Ok(Some(_)) => {
-                let out = child
-                    .wait_with_output()
-                    .map_err(|e| format!("wait: {e}"))?;
+                let out = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
                 return Ok(CmdOutput {
                     status: out.status,
                     stdout: out.stdout,
@@ -101,8 +101,7 @@ fn run_with_timeout(
                         stderr: {
                             let mut e = out.stderr;
                             e.extend_from_slice(
-                                format!("\nkilled after {}s timeout", timeout.as_secs())
-                                    .as_bytes(),
+                                format!("\nkilled after {}s timeout", timeout.as_secs()).as_bytes(),
                             );
                             e
                         },

@@ -4,8 +4,8 @@
 
 pub mod wake;
 
+pub use wake::single_next_wake::WakeCandidate;
 pub use wake::{
     create_wake, elect_next_wake, status_line, Caveat, DisabledReason, MachineWake, PowerEvent,
     PowerRail, SingleNextWake, WakeCapability, WakeError, WakeMechanism, ARM_SLACK_SECS,
 };
-pub use wake::single_next_wake::WakeCandidate;

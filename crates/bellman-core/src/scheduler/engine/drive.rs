@@ -191,9 +191,8 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         }
         let start = self.clock.wall_now();
         let end = start
-            + ChronoDuration::from_std(duration).map_err(|e| {
-                SchedulerError::Internal(format!("run_for duration: {e}"))
-            })?;
+            + ChronoDuration::from_std(duration)
+                .map_err(|e| SchedulerError::Internal(format!("run_for duration: {e}")))?;
         let mut acc = TickResult::default();
         loop {
             let t = self.tick()?;
@@ -289,11 +288,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         }
     }
 
-    fn apply_control_msg(
-        &mut self,
-        msg: ControlMsg,
-        acc: &mut TickResult,
-    ) -> SchedulerResult<()> {
+    fn apply_control_msg(&mut self, msg: ControlMsg, acc: &mut TickResult) -> SchedulerResult<()> {
         match msg {
             ControlMsg::Refill => {
                 self.rebuild_horizon()?;
@@ -344,10 +339,7 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
     /// rebuild floor elapsed. A failed probe answers false — the floor is the
     /// backstop, and rebuilding on every tick would be a busy loop.
     fn external_store_changed(&self) -> bool {
-        let floor_elapsed = self
-            .clock
-            .mono_now()
-            .saturating_sub(self.last_rebuild_mono)
+        let floor_elapsed = self.clock.mono_now().saturating_sub(self.last_rebuild_mono)
             >= self.config.external_rebuild_interval;
         if floor_elapsed {
             return true;

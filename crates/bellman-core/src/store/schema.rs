@@ -408,8 +408,11 @@ fn migrate_v9(conn: &Connection) -> StoreResult<()> {
         .map_err(|e| StoreError::Sqlite(format!("migrate v9 add timers.transport: {e}")))?;
     }
     if !table_has_column(conn, "run_states", "selected_transport")? {
-        conn.execute("ALTER TABLE run_states ADD COLUMN selected_transport TEXT", [])
-            .map_err(|e| StoreError::Sqlite(format!("migrate v9 add selected_transport: {e}")))?;
+        conn.execute(
+            "ALTER TABLE run_states ADD COLUMN selected_transport TEXT",
+            [],
+        )
+        .map_err(|e| StoreError::Sqlite(format!("migrate v9 add selected_transport: {e}")))?;
     }
     if !table_has_column(conn, "run_states", "transport")? {
         conn.execute("ALTER TABLE run_states ADD COLUMN transport TEXT", [])

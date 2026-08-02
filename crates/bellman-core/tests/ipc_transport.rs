@@ -7,7 +7,8 @@
 //! state, log lines and `status.json`.
 #![cfg(unix)]
 
-use bellman_core::events::{read_events, EventPublisher, EventLogConfig};
+use bellman_core::events::{read_events, EventLogConfig, EventPublisher};
+use bellman_core::ipc::{IpcConfig, IpcHandle, IpcServer, CLAIM_SCHEMA_V1};
 use bellman_core::occurrence::{Occurrence, OccurrenceKind};
 use bellman_core::reply::{
     self, new_anchors, new_deadlines, publication, ReplyEngine, REPLY_SCHEMA_V1,
@@ -15,7 +16,6 @@ use bellman_core::reply::{
 use bellman_core::scheduler::FireKind;
 use bellman_core::store::{NewTimer, OpenOptions, Store, Timer, TransportMode};
 use bellman_core::tree::{project_fire, reply_file_name, TimersTree, STATUS_FILE_NAME};
-use bellman_core::ipc::{IpcConfig, IpcHandle, IpcServer, CLAIM_SCHEMA_V1};
 use chrono::{NaiveTime, Utc};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -96,7 +96,9 @@ fn owned_timer(e: &Env, store: &mut Store, name: &str, transport: TransportMode)
     new.transport = transport;
     let timer = store.create_timer(new).unwrap();
     store.set_timer_owner(timer.id, APP).unwrap();
-    TimersTree::new(&e.data).create_for_timer(&timer, Some(APP)).ok();
+    TimersTree::new(&e.data)
+        .create_for_timer(&timer, Some(APP))
+        .ok();
     timer
 }
 
@@ -138,20 +140,30 @@ fn run_row(st: &Store, run_id: Uuid) -> bellman_core::RunStateRow {
     st.get_run_state(run_id).unwrap().expect("run_states row")
 }
 
-fn wait_row(st: &Store, run_id: Uuid, timeout: Duration, pred: impl Fn(&bellman_core::RunStateRow) -> bool) -> bellman_core::RunStateRow {
+fn wait_row(
+    st: &Store,
+    run_id: Uuid,
+    timeout: Duration,
+    pred: impl Fn(&bellman_core::RunStateRow) -> bool,
+) -> bellman_core::RunStateRow {
     let deadline = Instant::now() + timeout;
     loop {
         let row = run_row(st, run_id);
         if pred(&row) {
             return row;
         }
-        assert!(Instant::now() < deadline, "timed out waiting for run row; last state: {}", row.state);
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for run row; last state: {}",
+            row.state
+        );
         std::thread::sleep(Duration::from_millis(25));
     }
 }
 
 fn drain_log(e: &Env, st: &Store) -> Vec<bellman_core::events::EventRecord> {
-    let mut publisher = EventPublisher::with_config(EventLogConfig::new(e.data.join("logs"))).unwrap();
+    let mut publisher =
+        EventPublisher::with_config(EventLogConfig::new(e.data.join("logs"))).unwrap();
     publisher.publish_cycle(st);
     let (recs, _) = read_events(e.data.join("logs/events.current.jsonl")).unwrap_or_default();
     recs
@@ -239,7 +251,9 @@ fn same_reply_bytes_identical_records_via_socket_and_file() {
     std::fs::write(&stub1, &bytes1).unwrap();
     let mut tracker = reply::InvalidTracker::default();
     reply::poll_once(&eng, &st, Utc::now(), Instant::now(), &mut tracker);
-    let row1 = wait_row(&st, run1, Duration::from_secs(2), |r| r.state == "acknowledged");
+    let row1 = wait_row(&st, run1, Duration::from_secs(2), |r| {
+        r.state == "acknowledged"
+    });
 
     // ── Run 2: the SOCKET transport, same reply content ──
     let t2 = owned_timer(&e, &mut st, "parity-ipc", TransportMode::Ipc);
@@ -248,7 +262,10 @@ fn same_reply_bytes_identical_records_via_socket_and_file() {
     assert_eq!(ok["ok"], json!(true), "claim accepted: {ok}");
     let run2 = fire(&e, &mut st, &eng, &t2);
     let frame = client.fire_for(run2);
-    assert!(frame.get("reply_path").is_none(), "IPC fire omits reply_path");
+    assert!(
+        frame.get("reply_path").is_none(),
+        "IPC fire omits reply_path"
+    );
     let bytes2 = reply_json(run2);
     assert_eq!(
         bytes1.replace(&run1.to_string(), "RUN"),
@@ -256,33 +273,82 @@ fn same_reply_bytes_identical_records_via_socket_and_file() {
         "the reply bytes are identical modulo the run id"
     );
     client.send(&bytes2);
-    let row2 = wait_row(&st, run2, Duration::from_secs(5), |r| r.state == "acknowledged");
+    let row2 = wait_row(&st, run2, Duration::from_secs(5), |r| {
+        r.state == "acknowledged"
+    });
 
     // ── Identical accumulated state ──
     for (name, a, b) in [
         ("state", json!(row1.state), json!(row2.state)),
-        ("expected_secs", json!(row1.expected_secs), json!(row2.expected_secs)),
-        ("error_detection", json!(row1.error_detection), json!(row2.error_detection)),
-        ("has acknowledged_at", json!(row1.acknowledged_at.is_some()), json!(row2.acknowledged_at.is_some())),
-        ("has heartbeat_at", json!(row1.heartbeat_at.is_some()), json!(row2.heartbeat_at.is_some())),
-        ("watchdog armed", json!(row1.watchdog_deadline.is_some()), json!(row2.watchdog_deadline.is_some())),
-        ("pickup consumed", json!(row1.pickup_deadline.is_none()), json!(row2.pickup_deadline.is_none())),
-        ("ack logged once", json!(row1.acknowledged_logged), json!(row2.acknowledged_logged)),
+        (
+            "expected_secs",
+            json!(row1.expected_secs),
+            json!(row2.expected_secs),
+        ),
+        (
+            "error_detection",
+            json!(row1.error_detection),
+            json!(row2.error_detection),
+        ),
+        (
+            "has acknowledged_at",
+            json!(row1.acknowledged_at.is_some()),
+            json!(row2.acknowledged_at.is_some()),
+        ),
+        (
+            "has heartbeat_at",
+            json!(row1.heartbeat_at.is_some()),
+            json!(row2.heartbeat_at.is_some()),
+        ),
+        (
+            "watchdog armed",
+            json!(row1.watchdog_deadline.is_some()),
+            json!(row2.watchdog_deadline.is_some()),
+        ),
+        (
+            "pickup consumed",
+            json!(row1.pickup_deadline.is_none()),
+            json!(row2.pickup_deadline.is_none()),
+        ),
+        (
+            "ack logged once",
+            json!(row1.acknowledged_logged),
+            json!(row2.acknowledged_logged),
+        ),
     ] {
         assert_eq!(a, b, "state mismatch: {name}");
     }
 
     // ── Identical status.json modulo identity/timing/transport ──
     let norm = |mut v: Value, run: Uuid, t: &Timer| {
-        for k in ["run_id", "fired_at", "acknowledged_at", "heartbeat_at", "timer_id", "timer_name", "transport", "scheduled_for"] {
+        for k in [
+            "run_id",
+            "fired_at",
+            "acknowledged_at",
+            "heartbeat_at",
+            "timer_id",
+            "timer_name",
+            "transport",
+            "scheduled_for",
+        ] {
             v.as_object_mut().unwrap().remove(k);
         }
         let _ = (run, t);
         v
     };
-    let s1: Value = serde_json::from_str(&std::fs::read_to_string(folder(&e, t1.id).join(STATUS_FILE_NAME)).unwrap()).unwrap();
-    let s2: Value = serde_json::from_str(&std::fs::read_to_string(folder(&e, t2.id).join(STATUS_FILE_NAME)).unwrap()).unwrap();
-    assert_eq!(norm(s1, run1, &t1), norm(s2, run2, &t2), "status.json identical modulo identity");
+    let s1: Value = serde_json::from_str(
+        &std::fs::read_to_string(folder(&e, t1.id).join(STATUS_FILE_NAME)).unwrap(),
+    )
+    .unwrap();
+    let s2: Value = serde_json::from_str(
+        &std::fs::read_to_string(folder(&e, t2.id).join(STATUS_FILE_NAME)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        norm(s1, run1, &t1),
+        norm(s2, run2, &t2),
+        "status.json identical modulo identity"
+    );
 
     // ── Identical log lines modulo run identity/timestamps ──
     let recs = drain_log(&e, &st);
@@ -315,7 +381,10 @@ fn no_live_server_degrades_every_firing_to_files() {
     assert!(!handle.is_live());
     let eng = engine(&e, Some(&handle), Duration::from_secs(0));
 
-    for (name, mode) in [("t-dead-ipc", TransportMode::Ipc), ("t-dead-auto", TransportMode::Auto)] {
+    for (name, mode) in [
+        ("t-dead-ipc", TransportMode::Ipc),
+        ("t-dead-auto", TransportMode::Auto),
+    ] {
         let t = owned_timer(&e, &mut st, name, mode);
         let run = fire(&e, &mut st, &eng, &t);
         let row = run_row(&st, run);
@@ -330,7 +399,10 @@ fn no_live_server_degrades_every_firing_to_files() {
             "{name}: the stub an app can answer on exists"
         );
         assert!(
-            e.data.join("slots/fires").join(reply::fire_notification_name(run)).exists(),
+            e.data
+                .join("slots/fires")
+                .join(reply::fire_notification_name(run))
+                .exists(),
             "{name}: the fire file exists"
         );
     }
@@ -352,16 +424,25 @@ fn stopped_server_degrades_later_firings_to_files() {
     assert_eq!(client.claim(t.id, APP)["ok"], json!(true));
     let run1 = fire(&e, &mut st, &eng, &t);
     let _ = client.fire_for(run1);
-    assert_eq!(run_row(&st, run1).selected_transport.as_deref(), Some("ipc"));
+    assert_eq!(
+        run_row(&st, run1).selected_transport.as_deref(),
+        Some("ipc")
+    );
     client.send(&reply_json(run1));
-    wait_row(&st, run1, Duration::from_secs(5), |r| r.state == "acknowledged");
+    wait_row(&st, run1, Duration::from_secs(5), |r| {
+        r.state == "acknowledged"
+    });
     drop(client);
 
     server.stop();
     assert!(!handle.is_live(), "stop clears the live flag");
     let run2 = fire(&e, &mut st, &eng, &t);
     let row2 = run_row(&st, run2);
-    assert_eq!(row2.selected_transport.as_deref(), Some("json"), "post-stop firing uses files");
+    assert_eq!(
+        row2.selected_transport.as_deref(),
+        Some("json"),
+        "post-stop firing uses files"
+    );
     assert!(folder(&e, t.id).join(reply_file_name(run2)).exists());
 }
 
@@ -375,15 +456,28 @@ fn json_default_and_auto_without_client_use_files() {
     let eng = engine(&e, Some(&handle), Duration::from_secs(60));
     let _server = spawn_server(&e, eng.clone(), &handle);
 
-    for (name, mode) in [("t-json", TransportMode::Json), ("t-auto", TransportMode::Auto)] {
+    for (name, mode) in [
+        ("t-json", TransportMode::Json),
+        ("t-auto", TransportMode::Auto),
+    ] {
         let t = owned_timer(&e, &mut st, name, mode);
         let run = fire(&e, &mut st, &eng, &t);
         let row = run_row(&st, run);
-        assert_eq!(row.selected_transport.as_deref(), Some("json"), "{name} selected");
+        assert_eq!(
+            row.selected_transport.as_deref(),
+            Some("json"),
+            "{name} selected"
+        );
         assert_eq!(row.transport.as_deref(), Some("json"), "{name} effective");
-        assert!(folder(&e, t.id).join(reply_file_name(run)).exists(), "{name} stub");
         assert!(
-            e.data.join("slots/fires").join(reply::fire_notification_name(run)).exists(),
+            folder(&e, t.id).join(reply_file_name(run)).exists(),
+            "{name} stub"
+        );
+        assert!(
+            e.data
+                .join("slots/fires")
+                .join(reply::fire_notification_name(run))
+                .exists(),
             "{name} fire file"
         );
         let proj = st.transport_projection(run).unwrap().unwrap();
@@ -415,15 +509,27 @@ fn ipc_firing_delivers_over_socket_and_confirms() {
     let frame = client.fire_for(run);
     assert_eq!(frame["schema"], json!("bellman-slot/1"));
     assert_eq!(frame["run_id"], json!(run.to_string()));
-    assert!(frame.get("reply_path").is_none(), "IPC fire message has no reply_path");
     assert!(
-        frame["ipc"]["socket"].as_str().unwrap().ends_with("bellman.sock"),
+        frame.get("reply_path").is_none(),
+        "IPC fire message has no reply_path"
+    );
+    assert!(
+        frame["ipc"]["socket"]
+            .as_str()
+            .unwrap()
+            .ends_with("bellman.sock"),
         "fire message carries the socket endpoint: {frame}"
     );
-    assert!(frame["status_path"].as_str().unwrap().ends_with("status.json"));
+    assert!(frame["status_path"]
+        .as_str()
+        .unwrap()
+        .ends_with("status.json"));
 
     // No stub for an IPC firing; status.json always written.
-    assert!(!folder(&e, t.id).join(reply_file_name(run)).exists(), "no stub for ipc run");
+    assert!(
+        !folder(&e, t.id).join(reply_file_name(run)).exists(),
+        "no stub for ipc run"
+    );
     let status: Value = serde_json::from_str(
         &std::fs::read_to_string(folder(&e, t.id).join(STATUS_FILE_NAME)).unwrap(),
     )
@@ -437,11 +543,16 @@ fn ipc_firing_delivers_over_socket_and_confirms() {
 
     // Confirm over the socket; the projection records pickup and sends stop.
     client.send(&reply_json(run));
-    wait_row(&st, run, Duration::from_secs(5), |r| r.state == "acknowledged");
+    wait_row(&st, run, Duration::from_secs(5), |r| {
+        r.state == "acknowledged"
+    });
     publication::pump(&e.data, &st, 8, Some(&handle));
     let proj = st.transport_projection(run).unwrap().unwrap();
     assert_eq!(proj.kind, "ipc");
-    assert_eq!(proj.state, "picked_up", "confirmation settles the transport");
+    assert_eq!(
+        proj.state, "picked_up",
+        "confirmation settles the transport"
+    );
 
     // A client that confirms and then disconnects is NOT no_ack.
     drop(client);
@@ -484,18 +595,35 @@ fn ipc_kill_before_confirmation_no_ack_then_late_claim_replay() {
     assert!(eng.expire_pickup_one(&st, &t, run, Utc::now()).unwrap());
     let row = run_row(&st, run);
     assert_eq!(row.state, "no_ack");
-    assert_eq!(row.transport.as_deref(), Some("ipc"), "no fallback in explicit ipc");
-    assert!(!folder(&e, t.id).join(reply_file_name(run)).exists(), "no stub minted");
-    assert!(!e.data.join("slots/fires").join(reply::fire_notification_name(run)).exists());
+    assert_eq!(
+        row.transport.as_deref(),
+        Some("ipc"),
+        "no fallback in explicit ipc"
+    );
+    assert!(
+        !folder(&e, t.id).join(reply_file_name(run)).exists(),
+        "no stub minted"
+    );
+    assert!(!e
+        .data
+        .join("slots/fires")
+        .join(reply::fire_notification_name(run))
+        .exists());
 
     // A later claim triggers one replay of the still-current run…
     let mut client = connect(&e);
     assert_eq!(client.claim(t.id, APP)["ok"], json!(true));
     let replay = client.fire_for(run);
-    assert_eq!(replay["run_id"], json!(run.to_string()), "same run_id replayed, never a second run");
+    assert_eq!(
+        replay["run_id"],
+        json!(run.to_string()),
+        "same run_id replayed, never a second run"
+    );
     // …and confirmation revises no_ack exactly like late file pickup.
     client.send(&reply_json(run));
-    wait_row(&st, run, Duration::from_secs(5), |r| r.state == "acknowledged");
+    wait_row(&st, run, Duration::from_secs(5), |r| {
+        r.state == "acknowledged"
+    });
     assert_eq!(run_row(&st, run).state, "acknowledged");
 }
 
@@ -526,14 +654,26 @@ fn auto_unconfirmed_ipc_failure_falls_back_to_files_same_run() {
         std::thread::sleep(Duration::from_millis(25));
     }
     let row = run_row(&st, run);
-    assert_eq!(row.selected_transport.as_deref(), Some("ipc"), "auto selected ipc at fire");
+    assert_eq!(
+        row.selected_transport.as_deref(),
+        Some("ipc"),
+        "auto selected ipc at fire"
+    );
 
     // The pump observes the unconfirmed IPC failure and falls back.
     publication::pump(&e.data, &st, 8, Some(&handle));
 
     let row = run_row(&st, run);
-    assert_eq!(row.transport.as_deref(), Some("ipc_fallback"), "fallback recorded on the run");
-    assert_eq!(row.selected_transport.as_deref(), Some("ipc"), "selected mode never changed");
+    assert_eq!(
+        row.transport.as_deref(),
+        Some("ipc_fallback"),
+        "fallback recorded on the run"
+    );
+    assert_eq!(
+        row.selected_transport.as_deref(),
+        Some("ipc"),
+        "selected mode never changed"
+    );
     let runs = st.runs_for_timer(t.id).unwrap();
     assert_eq!(runs.len(), 1, "no duplicate run minted");
     assert_eq!(runs[0].run_id, run);
@@ -542,7 +682,10 @@ fn auto_unconfirmed_ipc_failure_falls_back_to_files_same_run() {
     // adapter with its reply_path (added only after the stub exists).
     let stub = folder(&e, t.id).join(reply_file_name(run));
     assert!(stub.exists(), "fallback creates the stub");
-    let fire_file = e.data.join("slots/fires").join(reply::fire_notification_name(run));
+    let fire_file = e
+        .data
+        .join("slots/fires")
+        .join(reply::fire_notification_name(run));
     let msg: Value = serde_json::from_str(&std::fs::read_to_string(&fire_file).unwrap()).unwrap();
     assert_eq!(msg["run_id"], json!(run.to_string()));
     assert_eq!(msg["reply_path"], json!(stub.to_string_lossy().to_string()));
@@ -560,7 +703,9 @@ fn auto_unconfirmed_ipc_failure_falls_back_to_files_same_run() {
     std::fs::write(&stub, reply_json(run)).unwrap();
     let mut tracker = reply::InvalidTracker::default();
     reply::poll_once(&eng, &st, Utc::now(), Instant::now(), &mut tracker);
-    wait_row(&st, run, Duration::from_secs(2), |r| r.state == "acknowledged");
+    wait_row(&st, run, Duration::from_secs(2), |r| {
+        r.state == "acknowledged"
+    });
 }
 
 /// A process claiming an owned timer's `app_name` over the socket is
@@ -619,7 +764,10 @@ fn wrong_app_name_rejected_on_socket_and_file_alike() {
             .all(|m| m.as_deref() == Some("app_name does not match the run's owner")),
         "one rejection rule on both paths: {rejections:?}"
     );
-    assert!(rejections.len() >= 2, "both the claim and the file reply were rejected: {rejections:?}");
+    assert!(
+        rejections.len() >= 2,
+        "both the claim and the file reply were rejected: {rejections:?}"
+    );
 }
 
 /// R12 at the socket: a stream exceeding 64 KB without a newline is
@@ -668,7 +816,9 @@ fn oversize_frame_disconnects_peer_others_unaffected() {
 
     // Another client on the same socket is still fully serviceable.
     quiet_client.send(&reply_json(run));
-    wait_row(&st, run, Duration::from_secs(5), |r| r.state == "acknowledged");
+    wait_row(&st, run, Duration::from_secs(5), |r| {
+        r.state == "acknowledged"
+    });
 }
 
 /// Platform rules: private directory/socket permissions, refusal to unlink
@@ -687,7 +837,10 @@ fn socket_permissions_stale_recovery_and_instance_lock() {
     std::fs::create_dir_all(e.sock.parent().unwrap()).unwrap();
     std::fs::write(&e.sock, b"not a socket").unwrap();
     let err = spawn_server_expect_err(&e, eng.clone(), &handle);
-    assert!(std::fs::read(&e.sock).unwrap() == b"not a socket", "file untouched: {err}");
+    assert!(
+        std::fs::read(&e.sock).unwrap() == b"not a socket",
+        "file untouched: {err}"
+    );
 
     // Refuse a symlink at the configured path — never follow/unlink it.
     std::fs::remove_file(&e.sock).unwrap();
@@ -695,7 +848,13 @@ fn socket_permissions_stale_recovery_and_instance_lock() {
     std::fs::write(&target, b"x").unwrap();
     std::os::unix::fs::symlink(&target, &e.sock).unwrap();
     let _ = spawn_server_expect_err(&e, eng.clone(), &handle);
-    assert!(std::fs::symlink_metadata(&e.sock).unwrap().file_type().is_symlink(), "symlink untouched");
+    assert!(
+        std::fs::symlink_metadata(&e.sock)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "symlink untouched"
+    );
     std::fs::remove_file(&e.sock).unwrap();
 
     // A genuinely stale owned socket (server died without cleanup) is
@@ -703,11 +862,18 @@ fn socket_permissions_stale_recovery_and_instance_lock() {
     {
         let _listener = std::os::unix::net::UnixListener::bind(&e.sock).unwrap();
     }
-    assert!(std::fs::symlink_metadata(&e.sock).unwrap().file_type().is_socket());
+    assert!(std::fs::symlink_metadata(&e.sock)
+        .unwrap()
+        .file_type()
+        .is_socket());
     let server = spawn_server(&e, eng.clone(), &handle);
 
     // Private permissions: directory 0700, socket 0600.
-    let dir_mode = std::fs::metadata(e.sock.parent().unwrap()).unwrap().permissions().mode() & 0o777;
+    let dir_mode = std::fs::metadata(e.sock.parent().unwrap())
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
     let sock_mode = std::fs::metadata(&e.sock).unwrap().permissions().mode() & 0o777;
     assert_eq!(dir_mode, 0o700, "private socket dir");
     assert_eq!(sock_mode, 0o600, "owner-only socket");
@@ -715,7 +881,8 @@ fn socket_permissions_stale_recovery_and_instance_lock() {
     // The server-instance lock refuses a second live server on the path.
     let err = spawn_server_expect_err(&e, eng.clone(), &handle);
     assert!(
-        err.kind() == std::io::ErrorKind::AlreadyExists || err.to_string().contains("another Bellman IPC server"),
+        err.kind() == std::io::ErrorKind::AlreadyExists
+            || err.to_string().contains("another Bellman IPC server"),
         "second server refused: {err}"
     );
     server.stop();
@@ -755,7 +922,10 @@ fn timer_json_advertises_socket_and_no_adapter_py_exists() {
     .unwrap();
     assert_eq!(timer_json["transport"]["mode"], json!("auto"));
     assert!(
-        timer_json["ipc"]["socket"].as_str().unwrap().ends_with("bellman.sock"),
+        timer_json["ipc"]["socket"]
+            .as_str()
+            .unwrap()
+            .ends_with("bellman.sock"),
         "timer.json advertises the socket as data: {timer_json}"
     );
 
@@ -769,10 +939,17 @@ fn timer_json_advertises_socket_and_no_adapter_py_exists() {
             for f in std::fs::read_dir(entry.path()).unwrap().flatten() {
                 let fname = f.file_name();
                 let fname = fname.to_string_lossy();
-                assert!(!fname.ends_with(".py"), "no generated python in timer folders: {fname}");
+                assert!(
+                    !fname.ends_with(".py"),
+                    "no generated python in timer folders: {fname}"
+                );
                 assert_ne!(fname, "adapter.py", "no generated adapter: {fname}");
                 let mode = f.metadata().unwrap().permissions().mode();
-                assert_eq!(mode & 0o111, 0, "nothing executable in timer folders: {fname} ({mode:o})");
+                assert_eq!(
+                    mode & 0o111,
+                    0,
+                    "nothing executable in timer folders: {fname} ({mode:o})"
+                );
             }
         }
     }
@@ -797,12 +974,19 @@ fn json_only_app_flow_unaffected_with_ipc_enabled() {
     // The lightbulb protocol: scan slots/fires, dedupe by run_id, take
     // reply_path verbatim from the notification, write acknowledged then
     // completed with a result — never constructs a path.
-    let fire_file = e.data.join("slots/fires").join(reply::fire_notification_name(run));
+    let fire_file = e
+        .data
+        .join("slots/fires")
+        .join(reply::fire_notification_name(run));
     let notif: Value = serde_json::from_str(&std::fs::read_to_string(&fire_file).unwrap()).unwrap();
     let reply_path = PathBuf::from(notif["reply_path"].as_str().expect("reply_path present"));
-    assert!(reply_path.exists(), "the stub the notification names exists");
+    assert!(
+        reply_path.exists(),
+        "the stub the notification names exists"
+    );
 
-    let mut reply_doc: Value = serde_json::from_str(&std::fs::read_to_string(&reply_path).unwrap()).unwrap();
+    let mut reply_doc: Value =
+        serde_json::from_str(&std::fs::read_to_string(&reply_path).unwrap()).unwrap();
     reply_doc["state"] = json!("acknowledged");
     reply_doc["acknowledged_at"] = json!(Utc::now());
     reply_doc["expected_secs"] = json!(15);
@@ -812,9 +996,12 @@ fn json_only_app_flow_unaffected_with_ipc_enabled() {
 
     let mut tracker = reply::InvalidTracker::default();
     reply::poll_once(&eng, &st, Utc::now(), Instant::now(), &mut tracker);
-    wait_row(&st, run, Duration::from_secs(2), |r| r.state == "acknowledged");
+    wait_row(&st, run, Duration::from_secs(2), |r| {
+        r.state == "acknowledged"
+    });
 
-    let mut reply_doc: Value = serde_json::from_str(&std::fs::read_to_string(&reply_path).unwrap()).unwrap();
+    let mut reply_doc: Value =
+        serde_json::from_str(&std::fs::read_to_string(&reply_path).unwrap()).unwrap();
     reply_doc["state"] = json!("completed");
     reply_doc["completed_at"] = json!(Utc::now());
     reply_doc["result"] = json!({"on_duration_secs": 15});
@@ -832,4 +1019,95 @@ fn json_only_app_flow_unaffected_with_ipc_enabled() {
     .unwrap();
     assert_eq!(status["state"], json!("completed"));
     assert_eq!(status["result"], json!({"on_duration_secs": 15}));
+}
+
+/// C11 regression: **the engine the running scheduler actually fires with**
+/// must carry the IPC handle.
+///
+/// Every other test in this file hands `project_fire` an engine it built
+/// itself, with the handle wired in — so all of them passed while the
+/// product could not deliver a single scheduled firing over the socket.
+/// The desktop app's scheduler builds its engine from
+/// `SchedulerConfig::reply_engine()`, and that constructor hardcoded
+/// `ipc: None`, which makes `select_transport` degrade *every* clock-driven
+/// fire to files whatever the timer's `transport.mode` says. This test
+/// drives the same constructor the scheduler does.
+#[test]
+fn scheduler_config_engine_selects_the_socket_for_an_ipc_timer() {
+    use bellman_core::reply::{select_transport, SelectedTransport};
+    use bellman_core::scheduler::SchedulerConfig;
+
+    let e = env();
+    let mut st = store(&e);
+    let handle = IpcHandle::new(e.sock.clone());
+    let _server = spawn_server(
+        &e,
+        engine(&e, Some(&handle), Duration::from_secs(60)),
+        &handle,
+    );
+
+    // The construction path the desktop app uses (src-tauri/src/state.rs).
+    let sched_engine = SchedulerConfig::default()
+        .with_data_dir(e.data.clone())
+        .with_ipc(Some(handle.clone()))
+        .reply_engine()
+        .expect("a data dir was set");
+    assert!(
+        sched_engine.ipc.is_some(),
+        "the scheduler's own reply engine must hold the live IPC handle"
+    );
+
+    let explicit = owned_timer(&e, &mut st, "sched-ipc", TransportMode::Ipc);
+    let auto = owned_timer(&e, &mut st, "sched-auto", TransportMode::Auto);
+    let files = owned_timer(&e, &mut st, "sched-json", TransportMode::Json);
+
+    let mut client = connect(&e);
+    assert_eq!(client.claim(auto.id, APP)["ok"], json!(true));
+
+    assert_eq!(
+        select_transport(&explicit, &sched_engine),
+        SelectedTransport::Ipc,
+        "an explicit `ipc` timer must select the socket on a scheduled fire"
+    );
+    assert_eq!(
+        select_transport(&auto, &sched_engine),
+        SelectedTransport::Ipc,
+        "`auto` with a connected client must select the socket"
+    );
+    assert_eq!(
+        select_transport(&files, &sched_engine),
+        SelectedTransport::Json,
+        "`json` is always files"
+    );
+
+    // And the whole firing, end to end, through that engine.
+    let run = fire(&e, &mut st, &sched_engine, &explicit);
+    let frame = client_for(&e, explicit.id, run);
+    assert_eq!(frame["run_id"], json!(run.to_string()));
+    assert!(
+        frame.get("reply_path").is_none(),
+        "an IPC firing has no reply stub path"
+    );
+    assert_eq!(run_row(&st, run).selected_transport.as_deref(), Some("ipc"));
+
+    // Without the handle — the pre-fix construction — the very same timer
+    // silently degrades to files. That is the bug this test locks out.
+    let blind = SchedulerConfig::default()
+        .with_data_dir(e.data.clone())
+        .reply_engine()
+        .expect("a data dir was set");
+    assert_eq!(
+        select_transport(&explicit, &blind),
+        SelectedTransport::Json,
+        "no handle ⇒ files; this is why the handle has to be wired in"
+    );
+}
+
+/// Connect a fresh client, claim `timer_id`, and read the fire frame for
+/// `run_id` — used by the regression test above, where the claim has to
+/// happen after the fire to prove replay to a late client.
+fn client_for(e: &Env, timer_id: Uuid, run_id: Uuid) -> Value {
+    let mut c = connect(e);
+    assert_eq!(c.claim(timer_id, APP)["ok"], json!(true));
+    c.fire_for(run_id)
 }

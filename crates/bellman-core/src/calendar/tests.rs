@@ -47,8 +47,14 @@ fn empty_month_valid_grid() {
     .unwrap();
     assert!(snap.entries.is_empty());
     assert_eq!(snap.days.len(), 42); // 6 weeks
-    assert!(snap.days.iter().any(|d| d.date == "2026-08-01" && d.in_month));
-    assert!(snap.days.iter().any(|d| d.date == "2026-08-31" && d.in_month));
+    assert!(snap
+        .days
+        .iter()
+        .any(|d| d.date == "2026-08-01" && d.in_month));
+    assert!(snap
+        .days
+        .iter()
+        .any(|d| d.date == "2026-08-31" && d.in_month));
     let svg = render_svg(&snap);
     assert!(svg.contains("August 2026 · UTC"));
     assert!(svg.contains("data-date=\"2026-08-01\""));
@@ -197,19 +203,15 @@ fn commands_absent_unless_opt_in() {
         },
     )
     .unwrap();
-    assert!(shown.entries.iter().any(|e| {
-        e.command
-            .as_ref()
-            .is_some_and(|c| c.contains("SECRET"))
-    }));
+    assert!(shown
+        .entries
+        .iter()
+        .any(|e| { e.command.as_ref().is_some_and(|c| c.contains("SECRET")) }));
 }
 
 #[test]
 fn json_and_svg_same_task_set() {
-    let tasks = vec![
-        daily("alpha", 9, 0, "UTC"),
-        daily("beta", 15, 30, "UTC"),
-    ];
+    let tasks = vec![daily("alpha", 9, 0, "UTC"), daily("beta", 15, 30, "UTC")];
     let (from, to) = month_bounds(2026, 8).unwrap();
     let snap = build_snapshot(
         &tasks,
@@ -288,9 +290,7 @@ fn store_snapshot_integration() {
     let (_dir, mut store) = open_tmp();
     let at = NaiveTime::from_hms_opt(7, 15, 0).unwrap();
     let occ = Occurrence::new(OccurrenceKind::Daily { at }, "UTC").unwrap();
-    store
-        .create_timer(NewTimer::new("morning", occ))
-        .unwrap();
+    store.create_timer(NewTimer::new("morning", occ)).unwrap();
     let snap = snapshot_month_from_store(
         &store,
         2026,

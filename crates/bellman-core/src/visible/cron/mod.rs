@@ -4,7 +4,7 @@ pub mod parse;
 pub mod write;
 
 use crate::visible::cron::parse::{
-    env_tz_before, parse_crontab, CrontabLine, CrontabMode, CronSchedule,
+    env_tz_before, parse_crontab, CronSchedule, CrontabLine, CrontabMode,
 };
 use crate::visible::explain::explain_cron;
 use crate::visible::id::task_id;
@@ -248,9 +248,7 @@ pub fn discover_anacron() -> (Vec<DiscoveredTask>, Vec<String>) {
             last_result: LastResult::Unknown,
             enabled: true,
             writable: false,
-            write_block_reason: Some(
-                "v1 is read-only for /etc/anacrontab; display only.".into(),
-            ),
+            write_block_reason: Some("v1 is read-only for /etc/anacrontab; display only.".into()),
             timezone: Some(system_tz_name()),
             line_no: Some(line_no),
             raw_line: Some(raw.to_string()),
@@ -317,22 +315,15 @@ pub fn tasks_from_crontab_text(
         else {
             continue;
         };
-        let owner = user
-            .clone()
-            .unwrap_or_else(|| default_owner.to_string());
+        let owner = user.clone().unwrap_or_else(|| default_owner.to_string());
         let tz = env_tz_before(&lines, *line_no, &default_tz);
         let expr = schedule.expression();
         let human = explain_cron(schedule, &tz);
-        let next = next_from_schedule(schedule, &tz, Utc::now())
-            .ok()
-            .flatten();
+        let next = next_from_schedule(schedule, &tz, Utc::now()).ok().flatten();
         // Keep command as shell-executable form (literal %). Stdin stays separate
         // so rewrites can re-escape via join_percent and run_task is not confused.
         let id_key_cmd = original_line.as_deref().unwrap_or(raw.as_str());
-        let id = task_id(
-            kind,
-            &[source, &line_no.to_string(), &owner, id_key_cmd],
-        );
+        let id = task_id(kind, &[source, &line_no.to_string(), &owner, id_key_cmd]);
         // Cron never records exit status — always Unknown (or Never if never seen).
         // We do not consult the journal to invent ok.
         tasks.push(DiscoveredTask {
@@ -349,11 +340,7 @@ pub fn tasks_from_crontab_text(
             last_result: LastResult::Unknown,
             enabled: !disabled_by_bellman,
             writable: writable && matches!(kind, SourceKind::CronUser),
-            write_block_reason: if writable {
-                None
-            } else {
-                write_block.clone()
-            },
+            write_block_reason: if writable { None } else { write_block.clone() },
             timezone: Some(tz),
             line_no: Some(*line_no),
             raw_line: Some(raw.clone()),

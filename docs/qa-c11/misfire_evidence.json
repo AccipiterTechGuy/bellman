@@ -1,0 +1,405 @@
+{
+  "created": {
+    "mf-coalesce": {
+      "policy": "coalesce",
+      "timer_id": "2ea6af22-fc01-445f-91c4-88090df166a3",
+      "next_fire_at": "2026-08-01T21:49:58Z"
+    },
+    "mf-skip": {
+      "policy": "skip",
+      "timer_id": "da5e922f-9195-4de8-a535-2f3e67ab42d7",
+      "next_fire_at": "2026-08-01T21:49:58Z"
+    }
+  },
+  "due_local": "2026-08-02T00:49:58.284075+03:00",
+  "stopped_at_utc": "2026-08-01T21:47:49.310296+00:00",
+  "restarted_at_utc": "2026-08-01T21:50:46.321742+00:00",
+  "timers_before": {
+    "command": "list",
+    "count": 3,
+    "ok": true,
+    "timers": [
+      {
+        "accuracy_slack_secs": null,
+        "action": {
+          "type": "none"
+        },
+        "enabled": true,
+        "id": "2ea6af22-fc01-445f-91c4-88090df166a3",
+        "jitter_secs": 0,
+        "last_fired": null,
+        "max_runs": null,
+        "misfire": {
+          "coalesce": {
+            "grace_secs": 3600
+          }
+        },
+        "name": "mf-coalesce",
+        "next_fire_utc": "2026-08-01T21:49:58Z",
+        "occurrence": {
+          "dst_fold": "first_occurrence",
+          "dst_gap": "first_valid_after_gap",
+          "exclusions": [],
+          "invalid_monthday": "clamp",
+          "kind": {
+            "at": "00:49:58",
+            "occ": "daily"
+          },
+          "max_runs": null,
+          "pending_skips": 0,
+          "runs_done": 0,
+          "tz": "Europe/Helsinki",
+          "valid_from": null,
+          "valid_until": null
+        },
+        "overlap": "skip",
+        "retry": {
+          "delay_secs": 30,
+          "max_retries": 1
+        },
+        "revision": 1,
+        "tags": [],
+        "transport": "json",
+        "tz": "Europe/Helsinki",
+        "valid_from": null,
+        "valid_until": null,
+        "wake_machine": false
+      },
+      {
+        "accuracy_slack_secs": null,
+        "action": {
+          "type": "none"
+        },
+        "enabled": true,
+        "id": "da5e922f-9195-4de8-a535-2f3e67ab42d7",
+        "jitter_secs": 0,
+        "last_fired": null,
+        "max_runs": null,
+        "misfire": "skip",
+        "name": "mf-skip",
+        "next_fire_utc": "2026-08-01T21:49:58Z",
+        "occurrence": {
+          "dst_fold": "first_occurrence",
+          "dst_gap": "first_valid_after_gap",
+          "exclusions": [],
+          "invalid_monthday": "clamp",
+          "kind": {
+            "at": "00:49:58",
+            "occ": "daily"
+          },
+          "max_runs": null,
+          "pending_skips": 0,
+          "runs_done": 0,
+          "tz": "Europe/Helsinki",
+          "valid_from": null,
+          "valid_until": null
+        },
+        "overlap": "skip",
+        "retry": {
+          "delay_secs": 30,
+          "max_retries": 1
+        },
+        "revision": 1,
+        "tags": [],
+        "transport": "json",
+        "tz": "Europe/Helsinki",
+        "valid_from": null,
+        "valid_until": null,
+        "wake_machine": false
+      },
+      {
+        "accuracy_slack_secs": null,
+        "action": {
+          "type": "none"
+        },
+        "enabled": true,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "jitter_secs": 0,
+        "last_fired": null,
+        "max_runs": null,
+        "misfire": {
+          "coalesce": {
+            "grace_secs": 3600
+          }
+        },
+        "name": "system.prune",
+        "next_fire_utc": "2026-08-03T00:17:00Z",
+        "occurrence": {
+          "dst_fold": "first_occurrence",
+          "dst_gap": "first_valid_after_gap",
+          "exclusions": [],
+          "invalid_monthday": "clamp",
+          "kind": {
+            "at": "03:17:00",
+            "days": 1,
+            "occ": "weekly"
+          },
+          "max_runs": null,
+          "pending_skips": 0,
+          "runs_done": 0,
+          "tz": "Europe/Helsinki",
+          "valid_from": null,
+          "valid_until": null
+        },
+        "overlap": "skip",
+        "retry": {
+          "delay_secs": 0,
+          "max_retries": 0
+        },
+        "revision": 2,
+        "tags": [
+          "system",
+          "internal"
+        ],
+        "transport": "json",
+        "tz": "Europe/Helsinki",
+        "valid_from": null,
+        "valid_until": null,
+        "wake_machine": false
+      }
+    ]
+  },
+  "post_restart_events": {
+    "mf-skip": [
+      {
+        "schema": "bellman-event/1",
+        "logged_at": "2026-08-01T21:51:08.684501335Z",
+        "kind": "skipped_misfire",
+        "event_id": "041c82ba-bb9f-4e1b-91ca-ff006ce2cdfc",
+        "timer_id": "da5e922f-9195-4de8-a535-2f3e67ab42d7",
+        "timer_name": "mf-skip",
+        "scheduled_for": "2026-08-01T21:49:58Z",
+        "count": 1,
+        "message": "misfire_skip_past_grace",
+        "detail": {
+          "lateness_secs": 70,
+          "missed_count": 1,
+          "oldest_missed": "2026-08-01T21:49:58+00:00",
+          "policy": "skip"
+        }
+      }
+    ],
+    "mf-coalesce": [
+      {
+        "schema": "bellman-event/1",
+        "logged_at": "2026-08-01T21:51:08.685981746Z",
+        "kind": "fired_late",
+        "event_id": "a9ad15e5-5620-4cdf-9580-be69ed719824",
+        "timer_id": "2ea6af22-fc01-445f-91c4-88090df166a3",
+        "run_id": "011a48e3-c1cf-4251-b9e1-874d6dfe2bd1",
+        "timer_name": "mf-coalesce",
+        "scheduled_for": "2026-08-01T21:49:58Z",
+        "duration_ms": 70684
+      }
+    ]
+  },
+  "all_post_restart_log": [
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:51:08.684501335Z",
+      "kind": "skipped_misfire",
+      "event_id": "041c82ba-bb9f-4e1b-91ca-ff006ce2cdfc",
+      "timer_id": "da5e922f-9195-4de8-a535-2f3e67ab42d7",
+      "timer_name": "mf-skip",
+      "scheduled_for": "2026-08-01T21:49:58Z",
+      "count": 1,
+      "message": "misfire_skip_past_grace",
+      "detail": {
+        "lateness_secs": 70,
+        "missed_count": 1,
+        "oldest_missed": "2026-08-01T21:49:58+00:00",
+        "policy": "skip"
+      }
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:51:08.685981746Z",
+      "kind": "fired_late",
+      "event_id": "a9ad15e5-5620-4cdf-9580-be69ed719824",
+      "timer_id": "2ea6af22-fc01-445f-91c4-88090df166a3",
+      "run_id": "011a48e3-c1cf-4251-b9e1-874d6dfe2bd1",
+      "timer_name": "mf-coalesce",
+      "scheduled_for": "2026-08-01T21:49:58Z",
+      "duration_ms": 70684
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:51:08.694760984Z",
+      "kind": "wake_capability",
+      "event_id": "e01c9daf-9989-4eea-9c46-e4516dba1965",
+      "message": "Wake from sleep: OFF \u2014 wake from sleep is turned off in Settings"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2026-08-01T21:51:08.709103017Z",
+      "kind": "wake_delivered",
+      "event_id": "f7e23e38-2e77-404d-bdcc-120ac69c2de7",
+      "timer_id": "2ea6af22-fc01-445f-91c4-88090df166a3",
+      "run_id": "011a48e3-c1cf-4251-b9e1-874d6dfe2bd1",
+      "timer_name": "mf-coalesce",
+      "scheduled_for": "2026-08-01T21:49:58Z",
+      "count": 0,
+      "message": "action=none"
+    }
+  ],
+  "statuses": {
+    "mf-coalesce": {
+      "schema": "bellman-run/1",
+      "state": "fired_late",
+      "run_id": "011a48e3-c1cf-4251-b9e1-874d6dfe2bd1",
+      "timer_id": "2ea6af22-fc01-445f-91c4-88090df166a3",
+      "timer_name": "mf-coalesce",
+      "occurrence_kind": "daily",
+      "scheduled_for": "2026-08-01T21:49:58Z",
+      "fired_at": "2026-08-01T21:51:08.685951052Z",
+      "app_name": "mf-app",
+      "transport": "json"
+    },
+    "mf-skip": null
+  },
+  "timers_after": {
+    "command": "list",
+    "count": 3,
+    "ok": true,
+    "timers": [
+      {
+        "accuracy_slack_secs": null,
+        "action": {
+          "type": "none"
+        },
+        "enabled": true,
+        "id": "2ea6af22-fc01-445f-91c4-88090df166a3",
+        "jitter_secs": 0,
+        "last_fired": "2026-08-01T21:49:58Z",
+        "max_runs": null,
+        "misfire": {
+          "coalesce": {
+            "grace_secs": 3600
+          }
+        },
+        "name": "mf-coalesce",
+        "next_fire_utc": "2026-08-02T21:49:58Z",
+        "occurrence": {
+          "dst_fold": "first_occurrence",
+          "dst_gap": "first_valid_after_gap",
+          "exclusions": [],
+          "invalid_monthday": "clamp",
+          "kind": {
+            "at": "00:49:58",
+            "occ": "daily"
+          },
+          "max_runs": null,
+          "pending_skips": 0,
+          "runs_done": 1,
+          "tz": "Europe/Helsinki",
+          "valid_from": null,
+          "valid_until": null
+        },
+        "overlap": "skip",
+        "retry": {
+          "delay_secs": 30,
+          "max_retries": 1
+        },
+        "revision": 3,
+        "tags": [],
+        "transport": "json",
+        "tz": "Europe/Helsinki",
+        "valid_from": null,
+        "valid_until": null,
+        "wake_machine": false
+      },
+      {
+        "accuracy_slack_secs": null,
+        "action": {
+          "type": "none"
+        },
+        "enabled": true,
+        "id": "da5e922f-9195-4de8-a535-2f3e67ab42d7",
+        "jitter_secs": 0,
+        "last_fired": "2026-08-01T21:49:58Z",
+        "max_runs": null,
+        "misfire": "skip",
+        "name": "mf-skip",
+        "next_fire_utc": "2026-08-02T21:49:58Z",
+        "occurrence": {
+          "dst_fold": "first_occurrence",
+          "dst_gap": "first_valid_after_gap",
+          "exclusions": [],
+          "invalid_monthday": "clamp",
+          "kind": {
+            "at": "00:49:58",
+            "occ": "daily"
+          },
+          "max_runs": null,
+          "pending_skips": 0,
+          "runs_done": 0,
+          "tz": "Europe/Helsinki",
+          "valid_from": null,
+          "valid_until": null
+        },
+        "overlap": "skip",
+        "retry": {
+          "delay_secs": 30,
+          "max_retries": 1
+        },
+        "revision": 2,
+        "tags": [],
+        "transport": "json",
+        "tz": "Europe/Helsinki",
+        "valid_from": null,
+        "valid_until": null,
+        "wake_machine": false
+      },
+      {
+        "accuracy_slack_secs": null,
+        "action": {
+          "type": "none"
+        },
+        "enabled": true,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "jitter_secs": 0,
+        "last_fired": null,
+        "max_runs": null,
+        "misfire": {
+          "coalesce": {
+            "grace_secs": 3600
+          }
+        },
+        "name": "system.prune",
+        "next_fire_utc": "2026-08-03T00:17:00Z",
+        "occurrence": {
+          "dst_fold": "first_occurrence",
+          "dst_gap": "first_valid_after_gap",
+          "exclusions": [],
+          "invalid_monthday": "clamp",
+          "kind": {
+            "at": "03:17:00",
+            "days": 1,
+            "occ": "weekly"
+          },
+          "max_runs": null,
+          "pending_skips": 0,
+          "runs_done": 0,
+          "tz": "Europe/Helsinki",
+          "valid_from": null,
+          "valid_until": null
+        },
+        "overlap": "skip",
+        "retry": {
+          "delay_secs": 0,
+          "max_retries": 0
+        },
+        "revision": 2,
+        "tags": [
+          "system",
+          "internal"
+        ],
+        "transport": "json",
+        "tz": "Europe/Helsinki",
+        "valid_from": null,
+        "valid_until": null,
+        "wake_machine": false
+      }
+    ]
+  }
+}

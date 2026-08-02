@@ -1,3 +1,7 @@
+//! Serde wire-shape regression tests for every DTO that crosses the Tauri
+//! IPC boundary. The frontend reads these keys by name, so a rename here is
+//! a breaking change the compiler cannot see — these tests are the gate.
+
 // -----------------------------------------------------------
 // Real serde-shape regression tests.
 //
@@ -321,10 +325,9 @@ fn wizard_choice_is_camel_case() {
 fn wizard_choice_demo_defaults_to_unticked_when_absent() {
     // An older webview that does not send `demo` must deserialize as
     // declined — the tick's default is unticked (WIZ1 exit gate).
-    let c: WizardChoice = serde_json::from_str(
-        r#"{"autostart":true,"startMinimized":false,"wakeEnabled":false}"#,
-    )
-    .unwrap();
+    let c: WizardChoice =
+        serde_json::from_str(r#"{"autostart":true,"startMinimized":false,"wakeEnabled":false}"#)
+            .unwrap();
     assert!(!c.demo);
 }
 
@@ -638,9 +641,7 @@ fn seven_kinds_round_trip_through_store_crud() {
     }
 
     // Final delete round-trip.
-    let deleted = store
-        .delete_timer(updated.id)
-        .expect("delete_timer");
+    let deleted = store.delete_timer(updated.id).expect("delete_timer");
     assert!(deleted, "delete_timer returned false");
     assert!(store
         .get_timer(updated.id)
@@ -959,7 +960,11 @@ fn tauri_create_update_via_real_ipc_json() {
         serde_json::from_str(create_json).expect("create IPC JSON must round-trip");
     assert_eq!(create_input.name, "ipc-weekly-mwf");
     assert_eq!(
-        create_input.occurrence.days.as_ref().map(|d| d.get("mon").copied()),
+        create_input
+            .occurrence
+            .days
+            .as_ref()
+            .map(|d| d.get("mon").copied()),
         Some(Some(true))
     );
     assert!(matches!(
@@ -990,8 +995,15 @@ fn tauri_create_update_via_real_ipc_json() {
         },
         "actionKind": {"type": "notify", "title": "ok", "body": ""}
     }"#;
-    let patch: WebTimerPatchDto = serde_json::from_str(patch_json).expect("patch IPC JSON must round-trip");
-    assert_eq!(patch.action_kind.as_ref().map(|a| matches!(a, WebActionDto::Notify{..})), Some(true));
+    let patch: WebTimerPatchDto =
+        serde_json::from_str(patch_json).expect("patch IPC JSON must round-trip");
+    assert_eq!(
+        patch
+            .action_kind
+            .as_ref()
+            .map(|a| matches!(a, WebActionDto::Notify { .. })),
+        Some(true)
+    );
     let updated = store
         .update_timer(bellman_core::store::TimerUpdate {
             id: created.id,

@@ -6,7 +6,7 @@
 
 use super::build::ExpandableTask;
 use super::types::CalendarCaps;
-use crate::events::{RunState, EventRecord};
+use crate::events::{EventRecord, RunState};
 use crate::store::RunClaim;
 use chrono::{DateTime, Duration, NaiveDate, Timelike, Utc};
 use chrono_tz::Tz;
@@ -25,6 +25,7 @@ pub enum TruthSource {
 }
 
 impl TruthSource {
+    /// The stable JSON spelling.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Recorded => "recorded",
@@ -37,18 +38,25 @@ impl TruthSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutcomeLabel {
+    /// The wake action was delivered.
     Delivered,
+    /// It failed, and there is an event saying so.
     Failed,
+    /// Policy dropped this instant without firing.
     Skipped,
+    /// It fired, past its scheduled instant.
     Late,
+    /// One recovery fire stood in for several missed instants.
     Coalesced,
     /// Durable evidence a run finished exists (ledger), but no outcome event
     /// remains — never invent success from `ClaimStatus::Completed` alone.
     Unknown,
+    /// Strictly in the future — nothing has happened yet.
     Upcoming,
 }
 
 impl OutcomeLabel {
+    /// The stable JSON spelling.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Delivered => "delivered",
@@ -83,7 +91,9 @@ pub struct TruthEntry {
     pub time: String,
     /// Seconds past local midnight (stable sort).
     pub time_secs: u32,
+    /// Whether this entry is recorded history or a future projection.
     pub source: TruthSource,
+    /// What actually happened, or `Upcoming`.
     pub outcome: OutcomeLabel,
     /// Occurrence kind when known (`daily`, `weekly`, …).
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -97,11 +107,17 @@ pub struct TruthEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TruthWindow {
+    /// Inclusive first local date, `YYYY-MM-DD`.
     pub from: String,
+    /// Inclusive last local date.
     pub to: String,
+    /// IANA zone the dates and times are placed in.
     pub timezone: String,
+    /// The instant that splits recorded history from projection.
     pub now_utc: DateTime<Utc>,
+    /// Every entry in the window, recorded and upcoming.
     pub entries: Vec<TruthEntry>,
+    /// Non-fatal notes, e.g. a cap that trimmed the expansion.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
@@ -109,12 +125,15 @@ pub struct TruthWindow {
 /// Options for [`build_truth_window`].
 #[derive(Debug, Clone)]
 pub struct TruthBuildOptions {
+    /// Inclusive first day.
     pub from: NaiveDate,
+    /// Inclusive last day.
     pub to: NaiveDate,
     /// IANA timezone for civil date/time placement.
     pub timezone: String,
     /// Instant that splits recorded vs upcoming (injectable for tests).
     pub now_utc: DateTime<Utc>,
+    /// Bounds that keep a dense schedule from expanding forever.
     pub caps: CalendarCaps,
 }
 
@@ -271,10 +290,10 @@ pub fn build_truth_window(
         // Recorded history must never rewrite from the live timer definition
         // (rename / edit recurrence / pause). Only immutable event fields are
         // allowed; otherwise stable id and null kind/enabled.
-        let name = b.name.clone().unwrap_or_else(|| {
-            tid.map(short_id)
-                .unwrap_or_else(|| "(unknown)".into())
-        });
+        let name = b
+            .name
+            .clone()
+            .unwrap_or_else(|| tid.map(short_id).unwrap_or_else(|| "(unknown)".into()));
         let kind = None;
         let enabled = None;
         let time = format!(

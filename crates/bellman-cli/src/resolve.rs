@@ -47,7 +47,8 @@ impl std::fmt::Display for ResolveError {
         match self {
             Self::NotFound(s) => write!(f, "timer not found: {s}"),
             Self::Ambiguous { name, count, ids } => {
-                let id_list: Vec<String> = ids.iter().map(std::string::ToString::to_string).collect();
+                let id_list: Vec<String> =
+                    ids.iter().map(std::string::ToString::to_string).collect();
                 write!(
                     f,
                     "ambiguous timer name '{name}' matches {count} timers ({}); use id",

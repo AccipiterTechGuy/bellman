@@ -42,9 +42,9 @@ pub fn build_occurrence(args: &BuildOccurrence) -> Result<Occurrence, String> {
             OccurrenceKind::Once { at }
         }
         "interval" => {
-            let every = args.every_secs.ok_or_else(|| {
-                "--every-secs is required for occurrence interval".to_string()
-            })?;
+            let every = args
+                .every_secs
+                .ok_or_else(|| "--every-secs is required for occurrence interval".to_string())?;
             // Anchor at now (UTC). First fire is every_secs after create's next_fire
             // computation floor (last_fired/now).
             OccurrenceKind::Interval {
@@ -169,10 +169,7 @@ pub fn patch_occurrence(
             };
             OccurrenceKind::Daily { at }
         }
-        OccurrenceKind::Weekly {
-            days: cur_days,
-            at,
-        } => {
+        OccurrenceKind::Weekly { days: cur_days, at } => {
             let at = if let Some(t) = args.time.as_deref() {
                 parse_clock_time(t)?
             } else {
@@ -189,10 +186,7 @@ pub fn patch_occurrence(
             };
             OccurrenceKind::Weekly { days, at }
         }
-        OccurrenceKind::Monthly {
-            day: cur_day,
-            at,
-        } => {
+        OccurrenceKind::Monthly { day: cur_day, at } => {
             let at = if let Some(t) = args.time.as_deref() {
                 parse_clock_time(t)?
             } else {
@@ -265,9 +259,7 @@ pub fn parse_clock_time(s: &str) -> Result<NaiveTime, String> {
     if let Ok(t) = NaiveTime::parse_from_str(s, "%H:%M") {
         return Ok(t);
     }
-    Err(format!(
-        "invalid time '{s}' (expected HH:MM or HH:MM:SS)"
-    ))
+    Err(format!("invalid time '{s}' (expected HH:MM or HH:MM:SS)"))
 }
 
 /// Once-at datetime: RFC3339, or `YYYY-MM-DDTHH:MM[:SS]` interpreted in `tz`.
@@ -299,9 +291,7 @@ pub fn parse_enabled(s: &str) -> Result<bool, String> {
     match s.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" | "enabled" => Ok(true),
         "0" | "false" | "no" | "off" | "disabled" => Ok(false),
-        other => Err(format!(
-            "invalid --enabled '{other}' (expected true|false)"
-        )),
+        other => Err(format!("invalid --enabled '{other}' (expected true|false)")),
     }
 }
 
@@ -354,12 +344,7 @@ fn extract_zoneinfo_name(path: &std::path::Path) -> Option<String> {
 /// Format a NaiveTime as HH:MM:SS for human output.
 #[allow(dead_code)]
 pub fn fmt_time(t: NaiveTime) -> String {
-    format!(
-        "{:02}:{:02}:{:02}",
-        t.hour(),
-        t.minute(),
-        t.second()
-    )
+    format!("{:02}:{:02}:{:02}", t.hour(), t.minute(), t.second())
 }
 
 /// Format a NaiveDate for human output.

@@ -63,14 +63,25 @@ pub trait RunDb {
     /// capture results through the closure (dyn-compatible by design).
     fn in_tx(&self, f: &mut dyn FnMut(&dyn RunDb) -> ReplyResult<()>) -> ReplyResult<()>;
 
+    /// The timer definition, for the ownership and transport checks.
     fn get_timer(&self, id: TimerId) -> StoreResult<Option<Timer>>;
+    /// One claim row by run id.
     fn get_run(&self, run_id: Uuid) -> StoreResult<Option<RunClaim>>;
+    /// Every claim for a timer, oldest first — how "is this run still
+    /// current?" is answered.
     fn runs_for_timer(&self, timer_id: TimerId) -> StoreResult<Vec<RunClaim>>;
+    /// The app-lifecycle row for one run.
     fn get_run_state(&self, run_id: Uuid) -> StoreResult<Option<RunStateRow>>;
+    /// The lifecycle row of the timer's newest run.
     fn current_run_state(&self, timer_id: TimerId) -> StoreResult<Option<RunStateRow>>;
+    /// Persist an accumulated lifecycle row.
     fn update_run_state(&self, row: &RunStateRow) -> StoreResult<()>;
+    /// The slot feed's acknowledgement cursor for a timer.
     fn last_acked_sequence(&self, timer_id: TimerId) -> StoreResult<u64>;
+    /// Rows with a persisted deadline, for rebuilding countdowns after a
+    /// restart.
     fn armed_deadlines(&self) -> StoreResult<Vec<RunStateRow>>;
+    /// Append an event to the outbox, inside whatever transaction is open.
     fn enqueue_event(&self, rec: &EventRecord) -> StoreResult<()>;
 }
 
@@ -115,7 +126,8 @@ impl RunDb for Transaction<'_> {
     fn in_tx(&self, f: &mut dyn FnMut(&dyn RunDb) -> ReplyResult<()>) -> ReplyResult<()> {
         // Already inside the caller's transaction (the fire path).
         f(self)
-    }    fn get_timer(&self, id: TimerId) -> StoreResult<Option<Timer>> {
+    }
+    fn get_timer(&self, id: TimerId) -> StoreResult<Option<Timer>> {
         store::get_timer_conn(self, id)
     }
     fn get_run(&self, run_id: Uuid) -> StoreResult<Option<RunClaim>> {
@@ -184,7 +196,7 @@ impl RunDb for store::ImmediateTx<'_> {
 /// Monotonic fire-commit anchors for `duration_ms`, keyed by run id. Shared
 /// between the fire path (registers at commit) and the ingest path (consumes
 /// at the terminal transition). A process restart loses them — the wall-clock
-/// fallback in [`ReplyEngine::duration_ms`] covers that case explicitly.
+/// fallback in `ReplyEngine::duration_ms` covers that case explicitly.
 pub type SharedAnchors = Arc<Mutex<HashMap<Uuid, Instant>>>;
 
 /// Fresh empty anchor registry.
@@ -205,7 +217,9 @@ pub enum DeadlineKind {
 /// One live countdown: Bellman's monotonic clock, armed at receipt.
 #[derive(Debug, Clone, Copy)]
 pub struct MonoDeadline {
+    /// Which deadline this is — pickup grace, or the opt-in watchdog.
     pub kind: DeadlineKind,
+    /// When it expires, on the monotonic clock (immune to wall-clock steps).
     pub at: Instant,
 }
 
@@ -312,8 +326,11 @@ pub enum IngestOutcome {
 /// reply being *rejected*, which is a normal outcome.
 #[derive(Debug)]
 pub enum ReplyError {
+    /// A database operation failed.
     Store(StoreError),
+    /// A `timers/` projection failed.
     Tree(TreeError),
+    /// A filesystem operation failed.
     Io(std::io::Error),
 }
 
@@ -347,6 +364,7 @@ impl From<std::io::Error> for ReplyError {
     }
 }
 
+/// Result alias for reply-engine operations.
 pub type ReplyResult<T> = Result<T, ReplyError>;
 
 impl ReplyEngine {
@@ -527,11 +545,7 @@ impl ReplyEngine {
             // meaningful. Log `superseded` once per distinct content; never
             // apply it; the transport deletes the stale file.
             let row = db.get_run_state(run_id)?;
-            if row
-                .as_ref()
-                .and_then(|r| r.reply_digest.as_deref())
-                == Some(digest)
-            {
+            if row.as_ref().and_then(|r| r.reply_digest.as_deref()) == Some(digest) {
                 return Ok(IngestOutcome::Superseded);
             }
             db.enqueue_event(
@@ -582,7 +596,9 @@ impl ReplyEngine {
         }
 
         // ── Accept: accumulate, transition, log ──────────────────────────
-        self.apply(db, timer, &claim, &mut row, doc, new_state, digest, now_wall, mono_now)?;
+        self.apply(
+            db, timer, &claim, &mut row, doc, new_state, digest, now_wall, mono_now,
+        )?;
         Ok(IngestOutcome::Applied)
     }
 
@@ -783,12 +799,7 @@ impl ReplyEngine {
     /// is Bellman's alone. Always a POST-COMMIT projection: callers run it
     /// after the mutating transaction, never inside it. Notifies the IK5
     /// status listener afterwards (an invalidation, not a state copy).
-    pub fn project_status(
-        &self,
-        store: &Store,
-        timer: &Timer,
-        run_id: &Uuid,
-    ) -> ReplyResult<()> {
+    pub fn project_status(&self, store: &Store, timer: &Timer, run_id: &Uuid) -> ReplyResult<()> {
         let (Some(claim), Some(row)) = (store.get_run(*run_id)?, store.get_run_state(*run_id)?)
         else {
             return Ok(());

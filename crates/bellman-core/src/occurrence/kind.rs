@@ -11,10 +11,12 @@ use serde::{Deserialize, Serialize};
 pub struct Weekdays(u8);
 
 impl Weekdays {
+    /// No days set.
     pub const fn new() -> Self {
         Self(0)
     }
 
+    /// Build a set from a slice; duplicates are harmless.
     pub fn from_slice(days: &[Weekday]) -> Self {
         let mut w = Self::new();
         for d in days {
@@ -27,14 +29,17 @@ impl Weekdays {
         1u8 << day.num_days_from_monday()
     }
 
+    /// Add one day to the set.
     pub fn insert(&mut self, day: Weekday) {
         self.0 |= Self::bit(day);
     }
 
+    /// Whether the set includes `day`.
     pub fn contains(self, day: Weekday) -> bool {
         self.0 & Self::bit(day) != 0
     }
 
+    /// Whether no day is set — a weekly schedule that can never fire.
     pub fn is_empty(self) -> bool {
         self.0 == 0
     }
@@ -51,6 +56,8 @@ impl Weekdays {
         Self(bits & 0b0111_1111)
     }
 
+    /// The days in the set, always Monday-first regardless of insertion
+    /// order, so rendering is stable.
     pub fn iter(self) -> impl Iterator<Item = Weekday> {
         const ORDER: [Weekday; 7] = [
             Weekday::Mon,
@@ -77,29 +84,61 @@ impl Weekdays {
 #[serde(tag = "occ", rename_all = "snake_case")]
 pub enum OccurrenceKind {
     /// Fire once at the given naive local datetime (interpreted in schedule tz).
-    Once { at: NaiveDateTime },
+    Once {
+        /// Local wall-clock instant, read in the schedule's timezone.
+        at: NaiveDateTime,
+    },
     /// Fire every `every_secs` seconds from a UTC anchor. Never uses wall-clock
     /// math — DST must not stretch or shrink the period.
     Interval {
+        /// Period in seconds; minimum [`OccurrenceKind::MIN_INTERVAL_SECS`].
         every_secs: u64,
+        /// UTC instant the period counts from.
         anchor: DateTime<Utc>,
     },
     /// Every calendar day at `at` (local wall clock).
-    Daily { at: NaiveTime },
+    Daily {
+        /// Local wall-clock time of day.
+        at: NaiveTime,
+    },
     /// On the listed weekdays at `at` (local wall clock).
-    Weekly { days: Weekdays, at: NaiveTime },
+    Weekly {
+        /// Which weekdays it fires on.
+        days: Weekdays,
+        /// Local wall-clock time of day.
+        at: NaiveTime,
+    },
     /// On day-of-month `day` (1–31) at `at`. Invalid days clamp per policy.
-    Monthly { day: u8, at: NaiveTime },
+    Monthly {
+        /// Day of month, 1–31.
+        day: u8,
+        /// Local wall-clock time of day.
+        at: NaiveTime,
+    },
     /// On `month`/`day` each year at `at`. Feb 29 clamps in non-leap years.
-    Yearly { month: u8, day: u8, at: NaiveTime },
+    Yearly {
+        /// Month, 1–12.
+        month: u8,
+        /// Day of that month, 1–31.
+        day: u8,
+        /// Local wall-clock time of day.
+        at: NaiveTime,
+    },
     /// Power-user cron expression (seconds optional) evaluated via `croner`.
-    Cron { expr: String },
+    Cron {
+        /// The expression, seconds field optional.
+        expr: String,
+    },
 }
 
 impl OccurrenceKind {
     /// Minimum interval period allowed by the product spec (1 second).
     pub const MIN_INTERVAL_SECS: u64 = 1;
 
+    /// Reject a rule that could never fire sensibly — a sub-second
+    /// interval, an impossible month or day, an unparseable cron. Called
+    /// before anything is stored, so a bad schedule fails at the API rather
+    /// than at 3 a.m.
     pub fn validate(&self) -> Result<(), String> {
         match self {
             Self::Interval { every_secs, .. } => {

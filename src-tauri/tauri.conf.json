@@ -65,6 +65,16 @@
           "/usr/share/bellman/testing_apps": "../testing_apps",
           "/usr/share/bellman/docs/INTEGRATION.md": "../docs/INTEGRATION.md"
         }
+      },
+      "rpm": {
+        "depends": [],
+        "epoch": 0,
+        "release": "1",
+        "desktopTemplate": "linux/bellman.desktop",
+        "files": {
+          "/usr/share/bellman/testing_apps": "../testing_apps",
+          "/usr/share/bellman/docs/INTEGRATION.md": "../docs/INTEGRATION.md"
+        }
       }
     },
     "windows": {

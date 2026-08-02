@@ -18,15 +18,23 @@ pub enum CrontabMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SpecialSchedule {
+    /// `@reboot` — at start-up, so it has no clock time at all.
     Reboot,
+    /// `@yearly` / `@annually`.
     Yearly,
+    /// `@monthly`.
     Monthly,
+    /// `@weekly`.
     Weekly,
+    /// `@daily` / `@midnight`.
     Daily,
+    /// `@hourly`.
     Hourly,
 }
 
 impl SpecialSchedule {
+    /// Recognise a nickname, including the aliases (`@annually`,
+    /// `@midnight`); `None` if the token is not one.
     pub fn parse(token: &str) -> Option<Self> {
         match token.to_ascii_lowercase().as_str() {
             "@reboot" => Some(Self::Reboot),
@@ -51,6 +59,7 @@ impl SpecialSchedule {
         }
     }
 
+    /// The canonical nickname, for display and round-tripping.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Reboot => "@reboot",
@@ -67,17 +76,27 @@ impl SpecialSchedule {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CronSchedule {
+    /// An `@` nickname.
     Special(SpecialSchedule),
+    /// The ordinary five fields, kept as written rather than normalised so
+    /// a rewrite can put the line back byte-for-byte.
     Fields {
+        /// Minute field.
         minute: String,
+        /// Hour field.
         hour: String,
+        /// Day-of-month field.
         dom: String,
+        /// Month field.
         month: String,
+        /// Day-of-week field.
         dow: String,
     },
 }
 
 impl CronSchedule {
+    /// The schedule as it appears in the file — a nickname or the five
+    /// fields joined by single spaces.
     pub fn expression(&self) -> String {
         match self {
             Self::Special(s) => s.as_str().to_string(),
@@ -111,20 +130,37 @@ impl CronSchedule {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CrontabLine {
     /// Blank or whitespace-only — preserve as-is.
-    Blank { raw: String, line_no: u32 },
+    Blank {
+        /// The line exactly as read.
+        raw: String,
+        /// 1-based position in the file.
+        line_no: u32,
+    },
     /// Comment (including disabled jobs we didn't create).
-    Comment { raw: String, line_no: u32 },
+    Comment {
+        /// The line exactly as read.
+        raw: String,
+        /// 1-based position in the file.
+        line_no: u32,
+    },
     /// SHELL=/ PATH=/ MAILTO=/ CRON_TZ=/ etc.
     Env {
+        /// The line exactly as read.
         raw: String,
+        /// 1-based position in the file.
         line_no: u32,
+        /// The variable name.
         key: String,
+        /// Its value, unquoted.
         value: String,
     },
     /// Active job line.
     Job {
+        /// The line exactly as read — what a byte-identical restore uses.
         raw: String,
+        /// 1-based position in the file.
         line_no: u32,
+        /// The schedule part.
         schedule: CronSchedule,
         /// Present in system mode.
         user: Option<String>,
@@ -138,10 +174,18 @@ pub enum CrontabLine {
         original_line: Option<String>,
     },
     /// Unparseable non-empty line — keep byte-for-byte, never rewrite.
-    Unknown { raw: String, line_no: u32 },
+    Unknown {
+        /// The line exactly as read.
+        raw: String,
+        /// 1-based position in the file.
+        line_no: u32,
+    },
 }
 
 impl CrontabLine {
+    /// The original text of this line, whatever kind it is. Rewriting a
+    /// crontab preserves every line we did not deliberately change, so this
+    /// is what non-managed lines are written back from.
     pub fn raw(&self) -> &str {
         match self {
             Self::Blank { raw, .. }
@@ -152,6 +196,7 @@ impl CrontabLine {
         }
     }
 
+    /// This line's 1-based position in the file.
     pub fn line_no(&self) -> u32 {
         match self {
             Self::Blank { line_no, .. }
@@ -165,10 +210,12 @@ impl CrontabLine {
 
 /// Marker prefixes Bellman uses when disabling a line.
 pub const DISABLE_PREFIX: &str = "# bellman-disabled: ";
+/// Carries the exact original line so `enable` restores it byte-for-byte.
 pub const DISABLE_ORIG_PREFIX: &str = "# bellman-disabled-orig: ";
 
 /// Fence sentinels for Bellman-managed blocks.
 pub const FENCE_BEGIN: &str = "# BEGIN bellman-managed";
+/// Closes a Bellman-managed block.
 pub const FENCE_END: &str = "# END bellman-managed";
 
 /// Split a crontab body into lines **without** stripping trailing content.
@@ -204,6 +251,8 @@ pub fn join_lines(lines: &[String], had_trailing_nl: bool) -> String {
     s
 }
 
+/// Whether the body ended with a newline. Preserved across a rewrite,
+/// because adding or dropping one is a spurious diff in someone's crontab.
 pub fn had_trailing_newline(text: &str) -> bool {
     text.ends_with('\n')
 }
@@ -316,7 +365,10 @@ fn parse_env_assignment(trimmed: &str) -> Option<(String, String)> {
         return None;
     }
     // Heuristic: if key looks like a schedule field, not env.
-    if key.chars().any(|c| c == '*' || c == '/' || c == ',' || c == '-') {
+    if key
+        .chars()
+        .any(|c| c == '*' || c == '/' || c == ',' || c == '-')
+    {
         return None;
     }
     Some((key.to_string(), trimmed[eq + 1..].to_string()))
@@ -532,9 +584,7 @@ mod tests {
         let text = "17 * * * * root cd / && run-parts --report /etc/cron.hourly\n";
         let lines = parse_crontab(text, CrontabMode::System);
         match &lines[0] {
-            CrontabLine::Job {
-                user, command, ..
-            } => {
+            CrontabLine::Job { user, command, .. } => {
                 assert_eq!(user.as_deref(), Some("root"));
                 assert!(command.contains("run-parts"));
             }
@@ -594,7 +644,10 @@ mod tests {
         assert!(matches!(lines[1], CrontabLine::Blank { .. }));
         assert!(matches!(lines[2], CrontabLine::Env { .. }));
         let rebuilt = join_lines(
-            &lines.iter().map(|l| l.raw().to_string()).collect::<Vec<_>>(),
+            &lines
+                .iter()
+                .map(|l| l.raw().to_string())
+                .collect::<Vec<_>>(),
             true,
         );
         assert_eq!(rebuilt, text);
@@ -605,7 +658,10 @@ mod tests {
         let text = "# hand comment\n\n0 1 * * * /bin/true\n# trailing\n";
         let lines = parse_crontab(text, CrontabMode::User);
         let rebuilt = join_lines(
-            &lines.iter().map(|l| l.raw().to_string()).collect::<Vec<_>>(),
+            &lines
+                .iter()
+                .map(|l| l.raw().to_string())
+                .collect::<Vec<_>>(),
             had_trailing_newline(text),
         );
         assert_eq!(rebuilt, text);

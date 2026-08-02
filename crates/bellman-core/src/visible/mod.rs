@@ -28,9 +28,7 @@ pub use cron::write::{
 pub use providers::systemd::timer_logs;
 pub use run_now::{outcome_to_last_result, run_task};
 pub use scan::{find_task, platform_name, scan};
-pub use snapshot::{
-    default_snapshot_path, diff_scans, load_snapshot, save_snapshot,
-};
+pub use snapshot::{default_snapshot_path, diff_scans, load_snapshot, save_snapshot};
 pub use types::{
     DiscoveredTask, LastResult, RunOutcome, ScanDiff, ScanResult, SourceFilter, SourceKind,
     TaskChange, TaskId, WritePlan,

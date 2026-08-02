@@ -50,17 +50,29 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebTimerDto {
+    /// Timer id, as a string for the webview.
     pub id: String,
+    /// Display name.
     pub name: String,
+    /// `false` when paused.
     pub enabled: bool,
+    /// IANA zone the wall-clock fields are read in.
     pub tz: String,
+    /// Next scheduled instant; `null` when exhausted.
     pub next_fire_utc: Option<DateTime<Utc>>,
+    /// Last delivered instant.
     pub last_fired: Option<DateTime<Utc>>,
+    /// Recurrence kind discriminant, for grouping and icons.
     pub kind: String,
+    /// The schedule in English, ready to render.
     pub summary: String,
+    /// The action in English, ready to render.
     pub action: String,
+    /// Optimistic token; sent back on save to catch a lost update.
     pub revision: i64,
+    /// The full occurrence, flattened for the edit dialog.
     pub occurrence: WebOccurrenceDto,
+    /// The full action, tagged for the edit dialog.
     pub action_kind: WebActionDto,
     /// Participate in RTC single-next-wake election (default false).
     #[serde(default)]
@@ -72,7 +84,9 @@ pub struct WebTimerDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebOccurrenceDto {
+    /// Which occurrence kind this is.
     pub occ: String,
+    /// IANA zone the wall-clock fields are read in.
     pub tz: String,
     /// `{mon: true, tue: true, ...}` — booleans for the 7 ISO weekdays.
     /// Populated only when `occ == "weekly"`; null otherwise.
@@ -103,18 +117,30 @@ pub struct WebOccurrenceDto {
 
 /// Web-side action DTO. Tagged by `type` so the dialog radio switch works.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "type", rename_all_fields = "snake_case")]
+#[serde(
+    rename_all = "camelCase",
+    tag = "type",
+    rename_all_fields = "snake_case"
+)]
 pub enum WebActionDto {
+    /// Fire and record the run, but do nothing else.
     None,
+    /// Run a program.
     Launch {
+        /// The executable. No shell, so this is not a command line.
         command: String,
+        /// Arguments, one per element.
         #[serde(default)]
         args: Vec<String>,
+        /// Working directory, when the user set one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workdir: Option<String>,
     },
+    /// Post a desktop notification.
     Notify {
+        /// Notification title.
         title: String,
+        /// Notification body; may be empty.
         #[serde(default)]
         body: String,
     },
@@ -125,10 +151,15 @@ pub enum WebActionDto {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebTimerPatchDto {
+    /// Rename.
     pub name: Option<String>,
+    /// Pause or resume.
     pub enabled: Option<bool>,
+    /// Replace the schedule.
     pub occurrence: Option<WebOccurrenceDto>,
+    /// Replace the action.
     pub action_kind: Option<WebActionDto>,
+    /// Include or exclude from the wake election.
     pub wake_machine: Option<bool>,
 }
 
@@ -153,10 +184,15 @@ impl WebTimerPatchDto {
 }
 
 impl WebActionDto {
+    /// Convert the webview's tagged action into the core `Action`.
     pub fn into_core_action(self) -> Action {
         match self {
             Self::None => Action::None,
-            Self::Launch { command, args, workdir } => Action::Launch {
+            Self::Launch {
+                command,
+                args,
+                workdir,
+            } => Action::Launch {
                 command,
                 args,
                 workdir,
@@ -269,10 +305,7 @@ impl WebOccurrenceDto {
     /// Convert to a `NewTimer`-style flat input that `occurrence_input`
     /// can consume. Kept for the rare case where the GUI wants to send
     /// a partial "create" alongside the patch.
-    pub fn into_core_new_timer(
-        self,
-        name: String,
-    ) -> Result<NewTimer, String> {
+    pub fn into_core_new_timer(self, name: String) -> Result<NewTimer, String> {
         let occurrence = self.into_core_occurrence()?;
         let mut new = NewTimer::new(name, occurrence);
         new.tags = Vec::new();
@@ -287,9 +320,7 @@ impl WebOccurrenceDto {
 
 /// Decode `{mon: true, ...}` into a `Weekdays` bitmask. Public so the
 /// patch round-trip can validate and apply.
-pub fn decode_days(
-    days: Option<&BTreeMap<String, bool>>,
-) -> Result<Weekdays, String> {
+pub fn decode_days(days: Option<&BTreeMap<String, bool>>) -> Result<Weekdays, String> {
     let mut bits: u8 = 0;
     let mut any = false;
     if let Some(map) = days {
@@ -367,10 +398,7 @@ impl From<Timer> for WebTimerDto {
                 month: None,
                 expr: None,
             },
-            OccurrenceKind::Interval {
-                every_secs,
-                anchor,
-            } => WebOccurrenceDto {
+            OccurrenceKind::Interval { every_secs, anchor } => WebOccurrenceDto {
                 occ: "interval".into(),
                 tz: t.occurrence.tz_name().to_string(),
                 days: None,
@@ -493,8 +521,7 @@ impl TimerSummaryExt for Timer {
             Daily { at } => format!("daily {} {tz}", at.format("%H:%M:%S")),
             Weekly { days, at } => format!(
                 "weekly {} {} {tz}",
-                days
-                    .iter()
+                days.iter()
                     .map(|d| match d {
                         chrono::Weekday::Mon => "mon",
                         chrono::Weekday::Tue => "tue",
@@ -541,7 +568,10 @@ mod tests {
         wd.insert(chrono::Weekday::Wed);
         wd.insert(chrono::Weekday::Fri);
         let occ = bellman_core::Occurrence::new(
-            OccurrenceKind::Weekly { days: wd, at: NaiveTime::from_hms_opt(8, 0, 0).unwrap() },
+            OccurrenceKind::Weekly {
+                days: wd,
+                at: NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            },
             "Europe/Helsinki",
         )
         .unwrap();
@@ -581,12 +611,15 @@ mod tests {
             .join("src")
             .join("web_testdata")
             .join("weekly_dto.json");
-        let fixture = std::fs::read_to_string(&fixture_path)
-            .expect("weekly_dto.json fixture must exist");
+        let fixture =
+            std::fs::read_to_string(&fixture_path).expect("weekly_dto.json fixture must exist");
         let expected: serde_json::Value =
             serde_json::from_str(&fixture).expect("fixture must be valid JSON");
         let actual: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(actual, expected, "WebTimerDto JSON drifted; update fixture or revert the diff");
+        assert_eq!(
+            actual, expected,
+            "WebTimerDto JSON drifted; update fixture or revert the diff"
+        );
     }
 
     #[test]

@@ -69,6 +69,48 @@ pub fn atomic_write_bytes(dir: &Path, final_path: &Path, bytes: &[u8]) -> SlotRe
     Ok(())
 }
 
+/// Publish `value` as JSON at `dir/file_name` **only if that name is free**.
+///
+/// Returns `Ok(true)` when the file was created, `Ok(false)` when the name was
+/// already taken and nothing was written.
+///
+/// This exists because [`atomic_write_json`] deliberately *replaces* the
+/// target, which is right for a producer publishing onto the slot id it has
+/// claimed and catastrophic for the replenisher: a stub written over a
+/// concurrently published request destroys that request silently — no error
+/// to the producer, nothing in `bad/`. Creation is made exclusive with a
+/// same-directory hard link, which fails with `AlreadyExists` rather than
+/// clobbering; the temp file is never visible to a lister (dot-prefixed, no
+/// `.json` suffix), so a reader can never see a half-written stub either.
+pub fn create_new_json(dir: &Path, file_name: &str, value: &impl Serialize) -> SlotResult<bool> {
+    fs::create_dir_all(dir)
+        .map_err(|e| SlotError::Io(format!("create_dir_all {}: {e}", dir.display())))?;
+    let final_path = safe_child_path(dir, file_name)?;
+    let bytes = serde_json::to_vec_pretty(value)?;
+    let mut tmp = NamedTempFile::new_in(dir)
+        .map_err(|e| SlotError::Io(format!("NamedTempFile::new_in {}: {e}", dir.display())))?;
+    tmp.write_all(&bytes)
+        .map_err(|e| SlotError::Io(format!("write temp: {e}")))?;
+    tmp.as_file()
+        .sync_all()
+        .map_err(|e| SlotError::Io(format!("sync temp: {e}")))?;
+    let created = match fs::hard_link(tmp.path(), &final_path) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => false,
+        Err(e) => {
+            return Err(SlotError::Io(format!(
+                "link {} → {}: {e}",
+                tmp.path().display(),
+                final_path.display()
+            )))
+        }
+    };
+    // The temp is dropped (and unlinked) either way; the link keeps the
+    // content alive under the final name.
+    drop(tmp);
+    Ok(created)
+}
+
 /// Resolve `dir/file_name` only when `file_name` is a single safe component.
 pub fn safe_child_path(dir: &Path, file_name: &str) -> SlotResult<PathBuf> {
     if file_name.is_empty()
@@ -165,8 +207,7 @@ pub fn refuse_symlink(path: &Path) -> SlotResult<()> {
 
 /// True when `path` is a regular file (not a symlink).
 pub fn is_regular_file(path: &Path) -> bool {
-    fs::symlink_metadata(path)
-        .is_ok_and(|m| m.file_type().is_file())
+    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file())
 }
 
 /// Open options used when creating free stubs (exclusive create when possible).

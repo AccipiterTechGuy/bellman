@@ -66,6 +66,8 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Build the shared state: one store, one config, one notification sink.
+    /// The scheduler is not started here — see [`AppState::start_scheduler`].
     pub fn new(
         store: Store,
         data_dir: PathBuf,
@@ -98,14 +100,17 @@ impl AppState {
         *self.status_listener.lock() = Some(listener);
     }
 
+    /// Apply the wake master toggle (`config.json`'s `wake.enabled`).
     pub fn set_wake_master(&self, enabled: bool) {
         self.wake.set_master_enabled(enabled);
     }
 
+    /// The one wake sentence shown in Settings and written to the log.
     pub fn wake_status_line(&self) -> String {
         self.wake.status_line()
     }
 
+    /// Re-run the platform probe and return the fresh capability.
     pub fn wake_reprobe(&self) -> WakeCapability {
         self.wake.re_probe()
     }
@@ -119,6 +124,8 @@ impl AppState {
         }
     }
 
+    /// Every timer as a wake-election candidate. The election picks the
+    /// single earliest wake-enabled fire; this is its input.
     pub fn wake_candidates(&self) -> Vec<WakeCandidate> {
         let store = self.store.lock();
         match store.list_timers() {
@@ -141,6 +148,8 @@ impl AppState {
         }
     }
 
+    /// Write the `wake_capability` event once at startup, so the log always
+    /// records what this machine could do at the time.
     pub fn emit_wake_capability_startup(&self) {
         let line = self.wake.status_line();
         self.emit_wake_capability_line(&line);
@@ -150,10 +159,8 @@ impl AppState {
     fn emit_wake_capability_line(&self, line: &str) {
         let store = self.store.lock();
         if let Err(e) = store.enqueue_event(
-            &bellman_core::events::EventRecord::new(
-                bellman_core::events::RunState::WakeCapability,
-            )
-            .with_message(line),
+            &bellman_core::events::EventRecord::new(bellman_core::events::RunState::WakeCapability)
+                .with_message(line),
         ) {
             log::warn!("bellman: wake_capability enqueue failed: {e}");
         }
@@ -161,6 +168,8 @@ impl AppState {
         log::info!("bellman: {line}");
     }
 
+    /// The wake snapshot the Settings page renders, including which fix-it
+    /// button (if any) applies on this platform.
     pub fn wake_status_dto(&self) -> crate::commands::WakeStatusDto {
         let cap = self.wake.capability();
         let master = self.wake.master_enabled();
@@ -180,9 +189,8 @@ impl AppState {
         };
 
         #[cfg(target_os = "linux")]
-        let udev_snippet = Some(
-            bellman_core::platform::wake::linux::udev_rule_snippet().to_string(),
-        );
+        let udev_snippet =
+            Some(bellman_core::platform::wake::linux::udev_rule_snippet().to_string());
         #[cfg(not(target_os = "linux"))]
         let udev_snippet = None;
 
@@ -245,15 +253,12 @@ impl AppState {
         let anchors = self.reply_anchors.clone();
         let deadlines = self.reply_deadlines.clone();
         let status_listener = self.status_listener.lock().clone();
-        let cfg = SchedulerConfig::from_app_config(&app_cfg)
-            .with_data_dir(self.data_dir.clone())
-            .with_anchors(anchors.clone())
-            .with_deadlines(deadlines.clone())
-            .with_status_listener(status_listener.clone());
         // IK6: the one IPC socket for all of Bellman. The handle is shared
         // by the fire path (per-firing transport selection), the dispatcher
         // (publication pump) and the reply engine (ingest context); the
         // server below drives the accept side on the same registry.
+        // It is built BEFORE the scheduler config because the scheduler's
+        // own fire path is one of those three consumers.
         let ipc_handle = if app_cfg.ipc_enabled {
             Some(bellman_core::ipc::IpcHandle::new(
                 bellman_core::ipc::default_socket_path(),
@@ -261,6 +266,12 @@ impl AppState {
         } else {
             None
         };
+        let cfg = SchedulerConfig::from_app_config(&app_cfg)
+            .with_data_dir(self.data_dir.clone())
+            .with_anchors(anchors.clone())
+            .with_deadlines(deadlines.clone())
+            .with_status_listener(status_listener.clone())
+            .with_ipc(ipc_handle.clone());
         // SCH1: the bounded dispatcher — worker lanes execute actions off the
         // scheduler loop, under the shared ActionLimiter. Scheduled fires and
         // `run_now` are producers of the same durable claims; the workers
@@ -280,8 +291,8 @@ impl AppState {
         // (SQLite is happy with multiple readers + one writer; WAL mode is
         // enabled by `Store::open_with`.)
         let scheduler_store_path = self.data_dir.join("timers.db");
-        let sched_store = bellman_core::open_store(&scheduler_store_path)
-            .expect("scheduler store open");
+        let sched_store =
+            bellman_core::open_store(&scheduler_store_path).expect("scheduler store open");
         let pause_all = *self.pause_all.lock();
         let mut sched = if pause_all {
             Scheduler::new_paused(sched_store, SystemClock::new(), dispatcher, cfg)
@@ -364,6 +375,7 @@ impl AppState {
         let _ = crate::config::write_pause_all_flag(&self.data_dir, paused);
     }
 
+    /// Whether vacation mode is on.
     pub fn pause_all(&self) -> bool {
         *self.pause_all.lock()
     }
@@ -378,8 +390,13 @@ impl AppState {
             dispatcher: self.dispatcher.lock().clone(),
             ..Default::default()
         };
-        let outcome = bellman_core::run_now(&mut store, &self.data_dir.join("timers.db"), timer.id, &opts)
-            .map_err(|e| e.to_string())?;
+        let outcome = bellman_core::run_now(
+            &mut store,
+            &self.data_dir.join("timers.db"),
+            timer.id,
+            &opts,
+        )
+        .map_err(|e| e.to_string())?;
         // Wake the scheduler so any UI-driven run-now is also visible to it.
         if let Some(h) = self.control_handle.lock().as_ref() {
             h.refill();
@@ -415,12 +432,20 @@ pub fn resolve_timer(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunNowResponse {
+    /// The timer that was run.
     pub timer_id: Uuid,
+    /// Its display name.
     pub name: String,
+    /// Identity of the run that was minted.
     pub run_id: Uuid,
+    /// The instant recorded as the intended one.
     pub scheduled_for: DateTime<Utc>,
+    /// Human summary of the outcome, shown in the row.
     pub message: String,
+    /// The timer's enabled state afterwards.
     pub enabled: bool,
+    /// Its next scheduled fire afterwards — a manual run does not consume
+    /// the next scheduled one.
     pub next_fire_utc: Option<DateTime<Utc>>,
 }
 

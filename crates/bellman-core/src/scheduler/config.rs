@@ -59,6 +59,12 @@ pub struct SchedulerConfig {
     /// IK5: invalidation sink wired into the reply engine this configuration
     /// builds (fire projections and scheduler-heap deadline expiries).
     pub status_listener: Option<crate::reply::StatusListener>,
+    /// IK6: the live local-socket handle, shared with the dispatcher's
+    /// publication pump. The scheduler's fire path needs it because the
+    /// per-firing transport choice (`select_transport`) tests it: without a
+    /// handle here every scheduled fire resolves to files, whatever the
+    /// timer's `transport.mode` says. `None` in headless unit tests.
+    pub ipc: Option<crate::ipc::IpcHandle>,
 }
 
 impl Default for SchedulerConfig {
@@ -68,6 +74,7 @@ impl Default for SchedulerConfig {
 }
 
 impl SchedulerConfig {
+    /// Product defaults.
     pub fn new() -> Self {
         Self::default()
     }
@@ -94,14 +101,18 @@ impl SchedulerConfig {
             deadlines: crate::reply::new_deadlines(),
             fire_slot_file: None,
             status_listener: None,
+            ipc: None,
         }
     }
 
+    /// How far ahead of now the heap holds timers.
     pub fn with_horizon(mut self, horizon: Duration) -> Self {
         self.horizon = horizon;
         self
     }
 
+    /// Longest the loop sleeps before re-reading the wall clock. Chunked
+    /// sleeps are what make an oversleep across suspend detectable.
     pub fn with_max_sleep(mut self, max_sleep: Duration) -> Self {
         self.max_sleep = max_sleep;
         self
@@ -113,21 +124,26 @@ impl SchedulerConfig {
         self
     }
 
+    /// Wall-versus-monotonic divergence that counts as a clock jump.
     pub fn with_jump_threshold(mut self, jump_threshold: Duration) -> Self {
         self.jump_threshold = jump_threshold;
         self
     }
 
+    /// Global cap on wake actions running at once.
     pub fn with_max_concurrent_actions(mut self, n: usize) -> Self {
         self.max_concurrent_actions = n.max(1);
         self
     }
 
+    /// Default late-coalesce tolerance for high-frequency timers.
     pub fn with_accuracy_slack(mut self, slack: Duration) -> Self {
         self.accuracy_slack = slack;
         self
     }
 
+    /// The data directory. Without one the scheduler runs pure, with no
+    /// tree projections, no event log and no pruner — the unit-test shape.
     pub fn with_data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.data_dir = Some(dir.into());
         self
@@ -159,6 +175,14 @@ impl SchedulerConfig {
         self
     }
 
+    /// IK6: share the live IPC handle with the fire path so a timer whose
+    /// `transport.mode` is `ipc` / `auto` can actually be delivered over the
+    /// socket when a client holds it.
+    pub fn with_ipc(mut self, ipc: Option<crate::ipc::IpcHandle>) -> Self {
+        self.ipc = ipc;
+        self
+    }
+
     /// Build the IK3 reply engine for this configuration (None when no data
     /// dir is set — unit tests keep a pure store).
     pub fn reply_engine(&self) -> Option<crate::reply::ReplyEngine> {
@@ -172,9 +196,7 @@ impl SchedulerConfig {
             deadlines: self.deadlines.clone(),
             fire_slot_file: self.fire_slot_file.clone(),
             status_listener: self.status_listener.clone(),
-            ipc: None,
+            ipc: self.ipc.clone(),
         })
     }
 }
-
-

@@ -23,8 +23,12 @@ pub enum ControlMsg {
     /// scheduler thread. Disarming needs no message: the expiry check is
     /// lazy (a disarmed entry is a no-op on wake).
     ArmDeadline {
+        /// The run whose deadline this is.
         run_id: uuid::Uuid,
+        /// Pickup grace, or the opt-in watchdog.
         kind: crate::reply::DeadlineKind,
+        /// When it expires, so the loop can wake exactly then instead of
+        /// discovering it on the next poll.
         wall_at: DateTime<Utc>,
     },
 }
@@ -36,10 +40,13 @@ pub struct ControlHandle {
 }
 
 impl ControlHandle {
+    /// Ask the loop to rebuild its horizon heap now — what an external
+    /// writer sends so a newly created timer does not wait for a tick.
     pub fn refill(&self) {
         let _ = self.tx.send(ControlMsg::Refill);
     }
 
+    /// Ask the loop to stop after its current iteration.
     pub fn shutdown(&self) {
         let _ = self.tx.send(ControlMsg::Shutdown);
     }
@@ -66,6 +73,7 @@ impl ControlHandle {
         });
     }
 
+    /// A clonable sender for the control channel.
     pub fn sender(&self) -> Sender<ControlMsg> {
         self.tx.clone()
     }
@@ -87,17 +95,24 @@ pub struct TickResult {
 /// One successfully claimed + actioned fire.
 #[derive(Debug, Clone)]
 pub struct DeliveredFire {
+    /// The timer that fired.
     pub timer_id: TimerId,
+    /// The instant it was meant to fire.
     pub scheduled_for: DateTime<Utc>,
+    /// Identity of the firing.
     pub run_id: uuid::Uuid,
+    /// On time, late, coalesced or catch-up.
     pub kind: FireKind,
 }
 
 /// Scheduler errors (wrap store + action failures).
 #[derive(Debug)]
 pub enum SchedulerError {
+    /// A database operation failed.
     Store(StoreError),
+    /// A fire action returned an error.
     Action(String),
+    /// A scheduler invariant failed.
     Internal(String),
 }
 
@@ -119,6 +134,7 @@ impl From<StoreError> for SchedulerError {
     }
 }
 
+/// Result alias for scheduler operations.
 pub type SchedulerResult<T> = Result<T, SchedulerError>;
 
 /// What a heap slot wakes for.

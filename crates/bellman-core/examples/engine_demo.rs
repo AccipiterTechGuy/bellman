@@ -8,9 +8,7 @@
 //! ```
 
 use bellman_core::occurrence::{Occurrence, OccurrenceKind};
-use bellman_core::scheduler::{
-    FireAction, FireContext, Scheduler, SchedulerConfig, SystemClock,
-};
+use bellman_core::scheduler::{FireAction, FireContext, Scheduler, SchedulerConfig, SystemClock};
 use bellman_core::store::{MisfirePolicy, NewTimer, Store};
 use chrono::{Duration as ChronoDuration, NaiveTime, Utc};
 use std::path::PathBuf;

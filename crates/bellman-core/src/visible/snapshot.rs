@@ -19,8 +19,7 @@ pub fn load_snapshot(path: &Path) -> Result<Option<ScanResult>, String> {
         return Ok(None);
     }
     let text = fs::read_to_string(path).map_err(|e| format!("read snapshot: {e}"))?;
-    let r: ScanResult =
-        serde_json::from_str(&text).map_err(|e| format!("parse snapshot: {e}"))?;
+    let r: ScanResult = serde_json::from_str(&text).map_err(|e| format!("parse snapshot: {e}"))?;
     Ok(Some(r))
 }
 
@@ -172,6 +171,9 @@ mod tests {
         assert_eq!(d.added.len(), 1);
         assert_eq!(d.added[0].id, "c");
         assert!(d.removed.is_empty());
-        assert!(d.changed.iter().any(|c| c.id == "a" && c.field == "command"));
+        assert!(d
+            .changed
+            .iter()
+            .any(|c| c.id == "a" && c.field == "command"));
     }
 }

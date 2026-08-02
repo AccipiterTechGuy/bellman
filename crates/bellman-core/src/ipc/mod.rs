@@ -106,7 +106,9 @@ fn temp_fallback(uid: u32) -> PathBuf {
 pub fn default_socket_dir() -> PathBuf {
     resolve_socket_dir(
         std::env::consts::OS,
-        std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).as_deref(),
+        std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .as_deref(),
         std::env::var_os("TMPDIR").map(PathBuf::from).as_deref(),
         current_uid(),
     )
@@ -161,12 +163,7 @@ mod tests {
     #[test]
     fn macos_uses_tmpdir_without_xdg_runtime_dir() {
         // macOS normally has no XDG_RUNTIME_DIR; TMPDIR is already per-user.
-        let dir = resolve_socket_dir(
-            "macos",
-            None,
-            Some(Path::new("/var/folders/xx/yyy/T")),
-            501,
-        );
+        let dir = resolve_socket_dir("macos", None, Some(Path::new("/var/folders/xx/yyy/T")), 501);
         assert_eq!(dir, PathBuf::from("/var/folders/xx/yyy/T/bellman"));
     }
 

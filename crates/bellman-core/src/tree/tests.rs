@@ -39,9 +39,10 @@ fn test_engine(dir: &std::path::Path) -> crate::reply::ReplyEngine {
 
 /// Drain the outbox through an elected publisher and read the appended events.
 fn drain_events(dir: &std::path::Path, store: &Store) -> Vec<crate::events::EventRecord> {
-    let mut publisher =
-        crate::events::EventPublisher::with_config(crate::events::EventLogConfig::new(dir.join("logs")))
-            .unwrap();
+    let mut publisher = crate::events::EventPublisher::with_config(
+        crate::events::EventLogConfig::new(dir.join("logs")),
+    )
+    .unwrap();
     publisher.publish_cycle(store);
     let (recs, _) = crate::events::read_events(publisher.current_path()).unwrap();
     recs
@@ -51,7 +52,9 @@ fn drain_events(dir: &std::path::Path, store: &Store) -> Vec<crate::events::Even
 
 #[test]
 fn reserved_device_names_are_escaped() {
-    for name in ["CON", "con", "COM1", "COM¹", "LPT3", "COM0", "LPT0", "PRN", "AUX", "NUL"] {
+    for name in [
+        "CON", "con", "COM1", "COM¹", "LPT3", "COM0", "LPT0", "PRN", "AUX", "NUL",
+    ] {
         let slug = slugify(name);
         assert!(
             slug.starts_with('_'),
@@ -142,7 +145,12 @@ fn create_writes_readme_and_timer_json() {
     let folder = tree.create_for_timer(&timer, None).unwrap();
 
     assert!(dir.path().join("timers").join(README_FILE_NAME).is_file());
-    assert_eq!(folder, dir.path().join("timers").join(folder_name("bulb-test", timer.id)));
+    assert_eq!(
+        folder,
+        dir.path()
+            .join("timers")
+            .join(folder_name("bulb-test", timer.id))
+    );
     let raw = std::fs::read_to_string(folder.join(TIMER_FILE_NAME)).unwrap();
     let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(v["schema"], TIMER_SCHEMA_V1);
@@ -151,7 +159,10 @@ fn create_writes_readme_and_timer_json() {
     assert_eq!(v["occurrence"]["kind"], "daily");
     assert_eq!(v["occurrence"]["time"], "08:00:00");
     assert_eq!(v["action"]["type"], "none");
-    assert!(v["note"].as_str().unwrap().contains("editing this file has no effect"));
+    assert!(v["note"]
+        .as_str()
+        .unwrap()
+        .contains("editing this file has no effect"));
 }
 
 #[test]
@@ -174,10 +185,9 @@ fn rename_keeps_folder_but_updates_timer_json() {
     let folder_after = tree.sync_timer_json(&updated, None).unwrap();
 
     assert_eq!(folder, folder_after, "rename must not rename the folder");
-    let v: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(folder.join(TIMER_FILE_NAME)).unwrap(),
-    )
-    .unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(folder.join(TIMER_FILE_NAME)).unwrap())
+            .unwrap();
     assert_eq!(v["name"], "new-name");
 }
 
@@ -227,7 +237,10 @@ fn reply_stub_is_create_only_and_stale_replies_are_removed() {
     // O_EXCL: an app-written reply at the path is never clobbered.
     std::fs::write(&stub_a, b"{\"state\":\"completed\"}").unwrap();
     let again = tree.create_reply_stub(&folder, run_a, "lightbulb").unwrap();
-    assert_eq!(std::fs::read_to_string(&again).unwrap(), "{\"state\":\"completed\"}");
+    assert_eq!(
+        std::fs::read_to_string(&again).unwrap(),
+        "{\"state\":\"completed\"}"
+    );
 
     // Next run: a fresh per-run file; the previous run's path is removed,
     // never overwritten.
@@ -246,12 +259,19 @@ fn fire_projection_writes_firing_snapshot_only() {
     tree.create_for_timer(&timer, None).unwrap();
     let engine = test_engine(dir.path());
 
-    let claim = project_fire(&tree, &mut store, &timer, Utc::now(), &FireKind::OnTime, &engine, Utc::now()).unwrap();
-
-    let raw = std::fs::read_to_string(
-        tree.folder_for(timer.id).unwrap().join(STATUS_FILE_NAME),
+    let claim = project_fire(
+        &tree,
+        &mut store,
+        &timer,
+        Utc::now(),
+        &FireKind::OnTime,
+        &engine,
+        Utc::now(),
     )
     .unwrap();
+
+    let raw =
+        std::fs::read_to_string(tree.folder_for(timer.id).unwrap().join(STATUS_FILE_NAME)).unwrap();
     let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(v["schema"], RUN_SCHEMA_V1);
     assert_eq!(v["state"], "fired");
@@ -259,7 +279,10 @@ fn fire_projection_writes_firing_snapshot_only() {
     assert_eq!(v["timer_id"], timer.id.to_string());
     assert_eq!(v["occurrence_kind"], "daily");
     assert!(v.get("completed_at").is_none(), "absent, never empty");
-    assert!(v.get("duration_ms").is_none(), "duration_ms lives on the log event only");
+    assert!(
+        v.get("duration_ms").is_none(),
+        "duration_ms lives on the log event only"
+    );
     assert!(v.get("app_name").is_none());
 
     // The claim closing (wake delivered) does NOT fold app states into
@@ -286,7 +309,16 @@ fn owned_timer_refire_supersedes_even_when_claim_completed() {
 
     // First fire, and its wake action WAS delivered (claim completed) — but
     // the app never replied, so the run is still unresolved in R5 terms.
-    let claim1 = project_fire(&tree, &mut store, &timer, Utc::now(), &FireKind::OnTime, &engine, Utc::now()).unwrap();
+    let claim1 = project_fire(
+        &tree,
+        &mut store,
+        &timer,
+        Utc::now(),
+        &FireKind::OnTime,
+        &engine,
+        Utc::now(),
+    )
+    .unwrap();
     store.complete_run(claim1.run_id).unwrap();
 
     project_fire(
@@ -301,7 +333,10 @@ fn owned_timer_refire_supersedes_even_when_claim_completed() {
     .unwrap();
 
     let recs = drain_events(dir.path(), &store);
-    let sup: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Superseded).collect();
+    let sup: Vec<_> = recs
+        .iter()
+        .filter(|r| r.kind == RunState::Superseded)
+        .collect();
     assert_eq!(
         sup.len(),
         1,
@@ -319,7 +354,16 @@ fn unowned_timer_refire_supersedes_only_an_unfinished_claim() {
     let engine = test_engine(dir.path());
 
     // First fire completed its action claim → resolved → no superseded.
-    let claim1 = project_fire(&tree, &mut store, &timer, Utc::now(), &FireKind::OnTime, &engine, Utc::now()).unwrap();
+    let claim1 = project_fire(
+        &tree,
+        &mut store,
+        &timer,
+        Utc::now(),
+        &FireKind::OnTime,
+        &engine,
+        Utc::now(),
+    )
+    .unwrap();
     store.complete_run(claim1.run_id).unwrap();
     let claim2 = project_fire(
         &tree,
@@ -349,7 +393,10 @@ fn unowned_timer_refire_supersedes_only_an_unfinished_claim() {
     )
     .unwrap();
     let recs = drain_events(dir.path(), &store);
-    let sup: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Superseded).collect();
+    let sup: Vec<_> = recs
+        .iter()
+        .filter(|r| r.kind == RunState::Superseded)
+        .collect();
     assert_eq!(sup.len(), 1);
     assert_eq!(sup[0].run_id, Some(claim2.run_id));
 }
@@ -364,8 +411,20 @@ fn second_fire_supersedes_unresolved_first_run() {
     let engine = test_engine(dir.path());
 
     // First fire left unresolved (claimed, never completed).
-    let claim1 = project_fire(&tree, &mut store, &timer, Utc::now(), &FireKind::OnTime, &engine, Utc::now()).unwrap();
-    let reply1 = tree.folder_for(timer.id).unwrap().join(reply_file_name(claim1.run_id));
+    let claim1 = project_fire(
+        &tree,
+        &mut store,
+        &timer,
+        Utc::now(),
+        &FireKind::OnTime,
+        &engine,
+        Utc::now(),
+    )
+    .unwrap();
+    let reply1 = tree
+        .folder_for(timer.id)
+        .unwrap()
+        .join(reply_file_name(claim1.run_id));
     assert!(reply1.exists(), "owned timer gets a per-run reply stub");
 
     // Second fire: superseded is logged, status rewritten, new stub created,
@@ -382,17 +441,19 @@ fn second_fire_supersedes_unresolved_first_run() {
     .unwrap();
 
     let recs = drain_events(dir.path(), &store);
-    let sup: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Superseded).collect();
+    let sup: Vec<_> = recs
+        .iter()
+        .filter(|r| r.kind == RunState::Superseded)
+        .collect();
     assert_eq!(sup.len(), 1);
     assert_eq!(sup[0].run_id, Some(claim1.run_id));
 
     let folder = tree.folder_for(timer.id).unwrap();
     assert!(!reply1.exists());
     assert!(folder.join(reply_file_name(claim2.run_id)).exists());
-    let v: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(folder.join(STATUS_FILE_NAME)).unwrap(),
-    )
-    .unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(folder.join(STATUS_FILE_NAME)).unwrap())
+            .unwrap();
     assert_eq!(v["run_id"], claim2.run_id.to_string());
     assert_eq!(v["app_name"], "lightbulb");
 }
@@ -411,7 +472,10 @@ fn delete_logs_cancelled_for_open_run_before_folder_removal() {
     assert!(tree.remove_for(timer.id).unwrap());
 
     let recs = drain_events(dir.path(), &store);
-    let cancel: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Cancelled).collect();
+    let cancel: Vec<_> = recs
+        .iter()
+        .filter(|r| r.kind == RunState::Cancelled)
+        .collect();
     assert_eq!(cancel.len(), 1);
     assert_eq!(cancel[0].run_id, Some(claim.run_id));
     assert!(tree.folder_for(timer.id).is_none());
@@ -429,7 +493,10 @@ fn delete_cancels_owned_run_even_with_finished_claim() {
     let n = log_cancelled_for_open_runs(&store, &timer).unwrap();
     assert_eq!(n, 1);
     let recs = drain_events(dir.path(), &store);
-    let cancel: Vec<_> = recs.iter().filter(|r| r.kind == RunState::Cancelled).collect();
+    let cancel: Vec<_> = recs
+        .iter()
+        .filter(|r| r.kind == RunState::Cancelled)
+        .collect();
     assert_eq!(cancel.len(), 1);
     assert_eq!(cancel[0].run_id, Some(claim.run_id));
 }
@@ -463,14 +530,12 @@ fn colliding_four_hex_ids_get_distinct_folders() {
     assert_ne!(folder_a, folder_b, "collision must not share a folder");
     assert!(folder_a.is_dir() && folder_b.is_dir());
     // Each folder's timer.json names its own timer.
-    let va: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(folder_a.join(TIMER_FILE_NAME)).unwrap(),
-    )
-    .unwrap();
-    let vb: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(folder_b.join(TIMER_FILE_NAME)).unwrap(),
-    )
-    .unwrap();
+    let va: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(folder_a.join(TIMER_FILE_NAME)).unwrap())
+            .unwrap();
+    let vb: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(folder_b.join(TIMER_FILE_NAME)).unwrap())
+            .unwrap();
     assert_eq!(va["timer_id"], id_a.to_string());
     assert_eq!(vb["timer_id"], id_b.to_string());
     // Resolution finds each timer's own folder.

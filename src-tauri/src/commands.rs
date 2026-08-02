@@ -62,39 +62,54 @@ pub fn get_timer(state: State<'_, AppState>, id: String) -> Result<TimerDto, Str
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunStateDto {
+    /// The timer this run belongs to.
     pub timer_id: String,
+    /// Its display name, so the row needs no second lookup.
     pub timer_name: String,
+    /// Identity of the firing.
     pub run_id: String,
     /// R5 wire state (`fired` / `acknowledged` / `running` / `completed` /
     /// `failed` / `no_ack` / `cancelled`).
     pub state: String,
+    /// The integration owner snapshotted at fire.
     pub app_name: String,
     /// The overdue label's anchor: `overdue` ⇔ `now − fired_at >
     /// expected_secs`, computed by the GUI at render time.
     pub fired_at: DateTime<Utc>,
+    /// When the app picked the run up.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub acknowledged_at: Option<DateTime<Utc>>,
+    /// The app's estimate; the overdue label compares against it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_secs: Option<u64>,
+    /// Whether the app opted into the silence watchdog.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_detection: Option<bool>,
+    /// Last liveness ping — visible here and nowhere else.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub heartbeat_at: Option<DateTime<Utc>>,
+    /// The app's own progress text, rendered verbatim in the row.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub progress: Option<String>,
+    /// When the app reported success.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
+    /// When the run was recorded as failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failed_at: Option<DateTime<Utc>>,
     /// `reported` (the app said it) vs `timed_out` (the opt-in watchdog).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_kind: Option<String>,
+    /// The app's failure text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// When the pickup grace lapsed unanswered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub no_ack_at: Option<DateTime<Utc>>,
+    /// The app's result payload.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
+    /// Set when `result` was trimmed to fit the cap.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_truncated: Option<bool>,
 }
@@ -156,7 +171,10 @@ fn collect_run_states(
     };
     let mut out = Vec::new();
     for timer in &timers {
-        if let Some(row) = store.current_run_state(timer.id).map_err(|e| e.to_string())? {
+        if let Some(row) = store
+            .current_run_state(timer.id)
+            .map_err(|e| e.to_string())?
+        {
             out.push(RunStateDto::from_row(timer, &row));
         }
     }
@@ -240,18 +258,25 @@ pub fn run_now(
 /// to a single timer.
 #[derive(Debug, Deserialize)]
 pub struct ListLogTailArgs {
+    /// Restrict to one timer; `None` returns every timer's events.
     pub timer_id: Option<String>,
+    /// How many of the most recent events to return.
     pub limit: Option<usize>,
 }
 /// Recent events from the JSONL log. camelCase at the IPC boundary.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogTailDto {
+    /// The events, oldest first.
     pub events: Vec<EventRecord>,
+    /// How many lines the reader saw in total.
     pub total_records: usize,
+    /// How many were unparseable and skipped. Surfaced rather than hidden:
+    /// a tolerant reader that silently drops lines is a liar.
     pub skipped: usize,
 }
 
+/// Read the tail of the event log, optionally for one timer.
 #[tauri::command]
 pub fn list_log_tail(
     state: State<'_, AppState>,
@@ -315,8 +340,7 @@ fn do_list_calendar_truth(
     // Current + retained archives (rotation must not erase Week/Month truth).
     let logs_dir = state.data_dir.join("logs");
     let events = {
-        let (evs, _) =
-            bellman_core::read_log_history(&logs_dir).map_err(|e| e.to_string())?;
+        let (evs, _) = bellman_core::read_log_history(&logs_dir).map_err(|e| e.to_string())?;
         evs
     };
 
@@ -358,6 +382,7 @@ pub fn get_pause_all(state: State<'_, AppState>) -> bool {
     state.pause_all()
 }
 
+/// Set the global pause-all flag (vacation mode) and mirror it into the tray.
 #[tauri::command]
 pub fn set_pause_all(
     app: AppHandle,
@@ -389,6 +414,8 @@ pub fn wizard_status(state: State<'_, AppState>) -> WizardStatus {
     }
 }
 
+/// Record the first-run wizard's answers, apply the autostart and wake bits
+/// immediately, and return the resulting status.
 #[tauri::command]
 pub fn wizard_set_choice(
     app: AppHandle,
@@ -413,6 +440,7 @@ pub fn wizard_set_choice(
     })
 }
 
+/// Re-open the wizard from Settings, pre-filled with the current settings.
 #[tauri::command]
 pub fn wizard_re_run(state: State<'_, AppState>) -> WizardStatus {
     let mut cfg = state.config.lock().clone();
@@ -472,20 +500,34 @@ pub fn set_demo_opt_in(state: State<'_, AppState>, enabled: bool) -> Result<bool
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppInfo {
+    /// This app's live data directory — what Settings → Data shows, and the
+    /// answer to "which store am I looking at?".
     pub data_dir: String,
+    /// The SQLite database inside it.
     pub db_path: String,
+    /// Where the event log and its archives live.
     pub logs_dir: String,
+    /// The slot channel root an integrating app is given.
     pub slots_dir: String,
+    /// Whether the first-run wizard has been dismissed.
     pub wizard_completed: bool,
+    /// Whether launch-on-login is on.
     pub autostart_enabled: bool,
+    /// Whether vacation mode is on.
     pub pause_all: bool,
+    /// The wake-from-sleep master toggle.
     pub wake_enabled: bool,
+    /// The wake status sentence, identical to the JSONL event's.
     pub wake_status_line: String,
+    /// The global wake-action concurrency cap.
     pub max_concurrent_actions: usize,
+    /// Default misfire policy for new calendar timers.
     pub default_misfire_policy: String,
+    /// Default grace for that policy, in seconds.
     pub default_misfire_grace_secs: u64,
 }
 
+/// Paths and settings the UI shows in its header and Settings page.
 #[tauri::command]
 pub fn app_info(state: State<'_, AppState>) -> AppInfo {
     let cfg = state.config.lock().clone();
@@ -511,6 +553,7 @@ pub fn app_info(state: State<'_, AppState>) -> AppInfo {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WakeStatusDto {
+    /// The one sentence shown in Settings and written to the log.
     pub status_line: String,
     /// Effective capability (platform AND master toggle).
     pub enabled: bool,
@@ -518,21 +561,30 @@ pub struct WakeStatusDto {
     pub master_enabled: bool,
     /// Platform probe only (ignores master) — drives greying of the master toggle.
     pub platform_enabled: bool,
+    /// Which platform answered, so the UI can pick the right fix-it.
     pub platform: String,
+    /// What would make wake work here, in one sentence.
     pub fix_hint: Option<String>,
     /// `linux_udev` | `windows_powercfg` | `macos_enroll` | `macos_login_items`
     pub fix_action: Option<String>,
+    /// The udev rule to copy on older Linux; the admin applies it by hand.
     pub udev_snippet: Option<String>,
+    /// The elevated `powercfg` line behind the Windows fix-it button.
     pub powercfg_command: Option<String>,
+    /// Deep link to macOS Login Items for helper approval.
     pub login_items_url: Option<String>,
+    /// The raw probe result, for anyone who wants the detail.
     pub capability: serde_json::Value,
 }
 
+/// The current wake capability, without re-probing.
 #[tauri::command]
 pub fn wake_status(state: State<'_, AppState>) -> WakeStatusDto {
     state.wake_status_dto()
 }
 
+/// Re-run the platform probe — the Settings "Re-probe" button, and what the
+/// resume and power-source hooks call.
 #[tauri::command]
 pub fn wake_reprobe(state: State<'_, AppState>) -> WakeStatusDto {
     let _ = state.wake_reprobe();
@@ -540,6 +592,7 @@ pub fn wake_reprobe(state: State<'_, AppState>) -> WakeStatusDto {
     state.wake_status_dto()
 }
 
+/// Flip the wake-from-sleep master toggle and re-arm the next wake.
 #[tauri::command]
 pub fn set_wake_enabled(
     state: State<'_, AppState>,
@@ -555,6 +608,7 @@ pub fn set_wake_enabled(
     Ok(state.wake_status_dto())
 }
 
+/// Turn launch-on-login on or off, applying it to the OS immediately.
 #[tauri::command]
 pub fn set_autostart_enabled(
     app: AppHandle,
@@ -569,6 +623,7 @@ pub fn set_autostart_enabled(
     Ok(enabled)
 }
 
+/// Change the global wake-action concurrency cap (clamped to 1..=256).
 #[tauri::command]
 pub fn set_max_concurrent_actions(
     state: State<'_, AppState>,
@@ -586,14 +641,20 @@ pub fn set_max_concurrent_actions(
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DependencyCheckDto {
+    /// One row per optional dependency. Nothing here blocks anything: a
+    /// missing item is a hint, not a failure.
     pub items: Vec<DepItemDto>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// One optional dependency the wizard reports on.
 pub struct DepItemDto {
+    /// What was checked, in the user's words.
     pub name: String,
+    /// Whether it was found.
     pub ok: bool,
+    /// How to get it, when it was not.
     pub hint: Option<String>,
 }
 
@@ -634,11 +695,15 @@ pub fn wake_open_login_items(state: State<'_, AppState>) -> Result<WakeStatusDto
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// The misfire defaults new calendar timers inherit.
 pub struct MisfireDefaultsDto {
+    /// `skip` | `coalesce` | `catch_up`.
     pub policy: String,
+    /// The grace window for that policy, in seconds.
     pub grace_secs: u64,
 }
 
+/// The misfire defaults new calendar timers will be created with.
 #[tauri::command]
 pub fn get_misfire_defaults(state: State<'_, AppState>) -> MisfireDefaultsDto {
     let cfg = state.config.lock().clone();
@@ -648,6 +713,8 @@ pub fn get_misfire_defaults(state: State<'_, AppState>) -> MisfireDefaultsDto {
     }
 }
 
+/// Change those defaults. Existing timers keep the policy they were made
+/// with; this only affects the next one.
 #[tauri::command]
 pub fn set_misfire_defaults(
     state: State<'_, AppState>,
@@ -667,6 +734,7 @@ pub fn set_misfire_defaults(
     Ok(out)
 }
 
+/// Probe the optional per-OS dependencies the wizard reports on.
 #[tauri::command]
 pub fn dependency_check() -> DependencyCheckDto {
     #[cfg(target_os = "linux")]
@@ -679,9 +747,10 @@ pub fn dependency_check() -> DependencyCheckDto {
             hint: None,
         });
         // AppIndicator: best-effort via presence of the shared lib.
-        let indicator = std::path::Path::new("/usr/lib/x86_64-linux-gnu/libayatana-appindicator3.so.1")
-            .exists()
-            || std::path::Path::new("/usr/lib/libayatana-appindicator3.so.1").exists();
+        let indicator =
+            std::path::Path::new("/usr/lib/x86_64-linux-gnu/libayatana-appindicator3.so.1")
+                .exists()
+                || std::path::Path::new("/usr/lib/libayatana-appindicator3.so.1").exists();
         items.push(DepItemDto {
             name: "tray AppIndicator".into(),
             ok: indicator,
@@ -732,11 +801,16 @@ pub fn dependency_check() -> DependencyCheckDto {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateTimerInput {
+    /// Display name.
     pub name: String,
+    /// The recurrence, in the webview's flattened shape.
     pub occurrence: crate::web::WebOccurrenceDto,
+    /// What to do when it fires.
     pub action: crate::web::WebActionDto,
+    /// Create it scheduled, or create it paused.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    /// Include it in the wake-from-sleep election.
     #[serde(default)]
     pub wake_machine: bool,
 }
@@ -746,6 +820,8 @@ fn default_enabled() -> bool {
 }
 
 impl CreateTimerInput {
+    /// Convert the webview shape into the core `NewTimer` the store takes,
+    /// so the store layer never sees a UI type.
     pub fn into_new_timer(self) -> Result<NewTimer, String> {
         let occurrence = self.occurrence.into_core_occurrence()?;
         let action = self.action.into_core_action();
@@ -777,7 +853,10 @@ pub fn create_timer(
     do_create_timer(&state, input)
 }
 
-pub(crate) fn do_create_timer(state: &AppState, input: CreateTimerInput) -> Result<TimerDto, String> {
+pub(crate) fn do_create_timer(
+    state: &AppState,
+    input: CreateTimerInput,
+) -> Result<TimerDto, String> {
     let cfg = state.config.lock().clone();
     let new = input.into_new_timer_with_config(&cfg)?;
     let timer = {
@@ -800,12 +879,7 @@ pub(crate) fn do_create_timer(state: &AppState, input: CreateTimerInput) -> Resu
     // IK2: project the per-timer folder (README + timer.json). View-only.
     {
         let tree = bellman_core::TimersTree::new(&state.data_dir);
-        let owner = state
-            .store
-            .lock()
-            .get_timer_owner(timer.id)
-            .ok()
-            .flatten();
+        let owner = state.store.lock().get_timer_owner(timer.id).ok().flatten();
         if let Err(e) = tree.create_for_timer(&timer, owner.as_deref()) {
             log::warn!("bellman: timer folder projection failed: {e}");
         }
@@ -896,7 +970,9 @@ pub fn delete_timer(state: State<'_, AppState>, id: String) -> Result<bool, Stri
 /// to know about `chrono::Weekdays` or the core tagged enum.
 #[derive(Debug, Deserialize)]
 pub struct PreviewArgs {
+    /// The occurrence being edited, in the webview's flattened shape.
     pub input: crate::web::WebOccurrenceDto,
+    /// How many upcoming fires to return (default 5).
     #[serde(default = "default_preview_n")]
     pub n: usize,
 }
@@ -907,7 +983,9 @@ fn default_preview_n() -> usize {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// The next-fires preview shown live in the edit dialog.
 pub struct PreviewResponseDto {
+    /// The next N fires of the schedule as currently edited.
     pub fires: Vec<PreviewFireDto>,
     /// DST / month-day-clamp warnings keyed off the user's current input.
     pub warnings: Vec<String>,
@@ -915,11 +993,17 @@ pub struct PreviewResponseDto {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// One previewed fire, in UTC and in local time with its offset.
 pub struct PreviewFireDto {
+    /// The instant, in UTC.
     pub utc: DateTime<Utc>,
+    /// Its local date, `YYYY-MM-DD`.
     pub local_date: String,
+    /// Its local time of day.
     pub local_time: String,
+    /// The UTC offset in force then — how a DST step shows up in the list.
     pub offset: String,
+    /// The zone abbreviation in force then.
     pub tz_name: String,
 }
 
@@ -935,6 +1019,8 @@ impl From<PreviewFire> for PreviewFireDto {
     }
 }
 
+/// The next N fires of a schedule being edited, with DST and month-day
+/// warnings, so the dialog can show consequences before saving.
 #[tauri::command]
 pub fn preview_fires(
     input: crate::web::WebOccurrenceDto,
@@ -982,7 +1068,11 @@ fn preview_fires_from_occurrence(
         .with_timezone(&occ.timezone())
         .naive_utc()
         .and_local_timezone(occ.timezone())
-        .single().map_or_else(|| Utc::now().with_timezone(&occ.timezone()), |d| d.with_timezone(&occ.timezone()));
+        .single()
+        .map_or_else(
+            || Utc::now().with_timezone(&occ.timezone()),
+            |d| d.with_timezone(&occ.timezone()),
+        );
     occ.preview(after, n)
         .into_iter()
         .map(|local_dt| {
@@ -1047,12 +1137,12 @@ fn apply_autostart(app: &AppHandle, enabled: bool) -> tauri::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bellman_core::NotifySink;
     use crate::config::Config;
-    use tempfile::tempdir;
+    use bellman_core::NotifySink;
     use std::fs;
-    use std::sync::Arc;
     use std::io::Read;
+    use std::sync::Arc;
+    use tempfile::tempdir;
 
     struct DummySink;
     impl NotifySink for DummySink {
@@ -1126,8 +1216,14 @@ mod tests {
         let mut content = String::new();
         file.read_to_string(&mut content).unwrap();
 
-        assert!(content.contains("\"registered\""), "should contain registered event");
-        assert!(content.contains("\"gui create\""), "should contain gui create message");
+        assert!(
+            content.contains("\"registered\""),
+            "should contain registered event"
+        );
+        assert!(
+            content.contains("\"gui create\""),
+            "should contain gui create message"
+        );
         assert!(content.contains(&dto.id), "should contain timer id");
         assert!(content.contains(&dto.name), "should contain timer name");
     }
@@ -1240,7 +1336,7 @@ mod tests {
     /// Production path: archive JSONL + claim ledger through list_calendar_truth.
     #[test]
     fn list_calendar_truth_merges_archive_and_ledger() {
-        use bellman_core::events::{RunState, EventRecord};
+        use bellman_core::events::{EventRecord, RunState};
         use bellman_core::store::NewTimer;
         use bellman_core::{Occurrence, OccurrenceKind, OutcomeLabel, TruthSource};
         use chrono::{NaiveTime, TimeZone, Utc};
@@ -1354,7 +1450,13 @@ mod run_states_tests {
 
     fn make_state(data_dir: std::path::PathBuf) -> AppState {
         let store = bellman_core::open_store(&data_dir.join("timers.db")).unwrap();
-        AppState::new(store, data_dir, Config::default(), false, Arc::new(DummySink))
+        AppState::new(
+            store,
+            data_dir,
+            Config::default(),
+            false,
+            Arc::new(DummySink),
+        )
     }
 
     fn add_timer(state: &AppState, name: &str, owner: Option<&str>) -> bellman_core::Timer {
@@ -1373,7 +1475,11 @@ mod run_states_tests {
         timer
     }
 
-    fn fire_run(state: &AppState, timer: &bellman_core::Timer, app: &str) -> bellman_core::RunStateRow {
+    fn fire_run(
+        state: &AppState,
+        timer: &bellman_core::Timer,
+        app: &str,
+    ) -> bellman_core::RunStateRow {
         let mut store = state.store.lock();
         let claim = store.claim_run(timer.id, Utc::now()).unwrap();
         let row = bellman_core::RunStateRow::fired(

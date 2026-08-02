@@ -1,6 +1,6 @@
 //! Real desktop-notification sink wrapping `tauri-plugin-notification`.
 //!
-//! Bellman-core's [`ActionRunner`] calls `show(title, body)` whenever a
+//! Bellman-core's `ActionRunner` calls `show(title, body)` whenever a
 //! `Action::Notify` timer fires. The Tauri shell installs this sink so the
 //! user sees a real toast (the C6 CLI keeps the stub instead).
 
@@ -17,6 +17,7 @@ pub struct TauriNotifySink<R: Runtime> {
 }
 
 impl<R: Runtime> TauriNotifySink<R> {
+    /// Wrap a Tauri app handle as the engine's desktop-notification sink.
     pub fn new(handle: AppHandle<R>) -> Arc<Self> {
         Arc::new(Self { handle })
     }

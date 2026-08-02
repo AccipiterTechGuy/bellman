@@ -86,7 +86,10 @@ pub enum OverlapPolicy {
     /// Keep at most one queued follow-up.
     QueueOne,
     /// Allow concurrent runs up to `cap`.
-    Parallel { cap: u32 },
+    Parallel {
+        /// Maximum runs in flight at once.
+        cap: u32,
+    },
     /// Cancel the in-flight run and start the new one.
     Replace,
 }
@@ -115,15 +118,20 @@ impl Default for RetryPolicy {
 pub enum Action {
     /// Launch a process (arg array, no shell).
     Launch {
+        /// Program to run. No shell, so this is an executable, not a line.
         command: String,
+        /// Arguments, one per element — never split from a string.
         #[serde(default)]
         args: Vec<String>,
+        /// Working directory; the launcher's own when absent.
         #[serde(default)]
         workdir: Option<String>,
     },
     /// Desktop notification.
     Notify {
+        /// Notification title; required, and the only part some desktops show.
         title: String,
+        /// Notification body; empty is legal and renders as title-only.
         #[serde(default)]
         body: String,
     },
@@ -154,6 +162,7 @@ pub enum TransportMode {
 }
 
 impl TransportMode {
+    /// The wire spelling stored on timers and runs.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Json => "json",
@@ -162,6 +171,8 @@ impl TransportMode {
         }
     }
 
+    /// Parse a stored/wire spelling; `None` for anything unrecognised so a
+    /// future mode read by an old build degrades rather than panics.
     pub fn from_wire(s: &str) -> Option<Self> {
         match s {
             "json" => Some(Self::Json),
@@ -176,28 +187,45 @@ impl TransportMode {
 /// chosen at fire (immutable mid-firing); `transport` is the effective
 /// delivery, which only ever diverges as `ipc_fallback` (an `auto` run whose
 /// unconfirmed IPC delivery failed over to files with the same `run_id`).
+/// Delivered over the file adapter.
 pub const TRANSPORT_JSON: &str = "json";
+/// Delivered over the local socket.
 pub const TRANSPORT_IPC: &str = "ipc";
+/// Selected IPC, delivered over files after an unconfirmed socket failure.
 pub const TRANSPORT_IPC_FALLBACK: &str = "ipc_fallback";
 
 /// Fully loaded timer row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Timer {
+    /// Stable primary key; survives renames.
     pub id: TimerId,
+    /// Display name. Not unique — resolve by id when it matters.
     pub name: String,
+    /// `false` means paused: kept, listed, never scheduled.
     pub enabled: bool,
+    /// The recurrence rule and its timezone.
     pub occurrence: Occurrence,
     /// Denormalized IANA tz name (mirrors `occurrence.tz`).
     pub tz: String,
+    /// Next scheduled instant, recomputed lazily; `None` when exhausted.
     pub next_fire_utc: Option<DateTime<Utc>>,
+    /// Last instant actually delivered — the ledger that stops re-firing.
     pub last_fired: Option<DateTime<Utc>>,
+    /// What to do about fires missed while nothing was running.
     pub misfire: MisfirePolicy,
+    /// What to do when a previous run is still in flight.
     pub overlap: OverlapPolicy,
+    /// Retry schedule for a failed wake action.
     pub retry: RetryPolicy,
+    /// Do not fire before this instant, if set.
     pub valid_from: Option<DateTime<Utc>>,
+    /// Do not fire after this instant, if set.
     pub valid_until: Option<DateTime<Utc>>,
+    /// Stop after this many delivered runs, if set.
     pub max_runs: Option<u64>,
+    /// Free-form labels; Bellman never interprets them.
     pub tags: Vec<String>,
+    /// What happens when this timer fires.
     pub action: Action,
     /// Optimistic concurrency token; starts at 1 on insert.
     pub revision: i64,
@@ -223,13 +251,21 @@ pub struct Timer {
 pub struct NewTimer {
     /// Optional fixed id (tests); random UUID when `None`.
     pub id: Option<TimerId>,
+    /// Display name.
     pub name: String,
+    /// Start scheduled, or start paused.
     pub enabled: bool,
+    /// The recurrence rule and its timezone.
     pub occurrence: Occurrence,
+    /// Missed-fire policy; [`NewTimer::new`] picks the product default.
     pub misfire: MisfirePolicy,
+    /// Behaviour when a previous run is still in flight.
     pub overlap: OverlapPolicy,
+    /// Retry schedule for a failed wake action.
     pub retry: RetryPolicy,
+    /// Free-form labels.
     pub tags: Vec<String>,
+    /// What happens when it fires.
     pub action: Action,
     /// Seed last_fired (usually `None` for new timers).
     pub last_fired: Option<DateTime<Utc>>,
@@ -266,6 +302,8 @@ impl NewTimer {
         }
     }
 
+    /// Set the execution-jitter amplitude, in seconds either way. Spreads a
+    /// fleet of identical timers so they do not all fire on the same second.
     pub fn with_jitter(mut self, jitter_secs: u32) -> Self {
         self.jitter_secs = jitter_secs;
         self
@@ -275,26 +313,45 @@ impl NewTimer {
 /// Partial update applied under optimistic revision check.
 #[derive(Debug, Clone, Default)]
 pub struct TimerPatch {
+    /// Rename.
     pub name: Option<String>,
+    /// Pause or resume.
     pub enabled: Option<bool>,
+    /// Replace the recurrence rule.
     pub occurrence: Option<Occurrence>,
+    /// Replace the missed-fire policy.
     pub misfire: Option<MisfirePolicy>,
+    /// Replace the overlap policy.
     pub overlap: Option<OverlapPolicy>,
+    /// Replace the retry schedule.
     pub retry: Option<RetryPolicy>,
+    /// Replace the whole tag list.
     pub tags: Option<Vec<String>>,
+    /// Replace the action outright — `Action::None` clears it.
     pub action: Option<Action>,
+    /// Rewrite the fire ledger. Doubly wrapped on purpose: the outer
+    /// `Some` means "change it", the inner `None` means "clear it".
     pub last_fired: Option<Option<DateTime<Utc>>>,
+    /// Replace the jitter amplitude.
     pub jitter_secs: Option<u32>,
+    /// Replace the per-timer accuracy slack; inner `None` restores the
+    /// global default.
     pub accuracy_slack_secs: Option<Option<u32>>,
+    /// Include or exclude this timer from the wake-from-sleep election.
     pub wake_machine: Option<bool>,
+    /// Change the delivery transport; applies from the next firing.
     pub transport: Option<TransportMode>,
 }
 
 /// Optimistic update envelope.
 #[derive(Debug, Clone)]
 pub struct TimerUpdate {
+    /// Timer to patch.
     pub id: TimerId,
+    /// The revision the caller last read; a mismatch is `StaleRevision`
+    /// rather than a lost update.
     pub expected_revision: i64,
+    /// The fields to change.
     pub patch: TimerPatch,
 }
 
@@ -311,7 +368,7 @@ pub struct TimerUpdate {
 /// The pre-SCH1 ledger used `claimed` / `completed` / `wake_failed`; the
 /// schema-v8 migration rewrites those rows (`claimed → pending`,
 /// `completed → finished + wake_delivered`, `wake_failed → finished +
-/// wake_failed`). [`FromStr`] still accepts the legacy strings so a
+/// wake_failed`). `from_wire` still accepts the legacy strings so a
 /// not-yet-migrated row can never crash a reader.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -326,6 +383,7 @@ pub enum ClaimStatus {
 }
 
 impl ClaimStatus {
+    /// The stored spelling of this phase.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Pending => "pending",
@@ -367,6 +425,7 @@ pub enum RunOutcome {
 }
 
 impl RunOutcome {
+    /// The stored spelling, shared with the R5 event-log vocabulary.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::WakeDelivered => "wake_delivered",
@@ -375,6 +434,8 @@ impl RunOutcome {
         }
     }
 
+    /// Parse a stored spelling; `None` rather than a panic for a value a
+    /// newer build wrote.
     pub fn from_wire(s: &str) -> Option<Self> {
         match s {
             "wake_delivered" => Some(Self::WakeDelivered),
@@ -388,26 +449,39 @@ impl RunOutcome {
 /// Durable record of a processed slot request (`request_id` is the idempotency key).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlotRequestRecord {
+    /// The producer's idempotency key. A retry with the same value returns
+    /// this record instead of creating a second timer.
     pub request_id: String,
+    /// The reserved slot the request was published under.
     pub slot_id: String,
+    /// `add` | `modify` | `delete`.
     pub operation: String,
+    /// The requesting app, when it named itself.
     pub app_name: Option<String>,
+    /// The timer created or addressed, when there was one.
     pub timer_id: Option<TimerId>,
     /// `"ok"` or `"error"` (mirrors the output-slot status).
     pub status: String,
     /// Full serialized slot response JSON (`SlotResponse`).
     pub response_json: String,
+    /// When the request was applied.
     pub created_at: DateTime<Utc>,
 }
 
 /// One row of the runs claim ledger.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunClaim {
+    /// Identity of this firing; the key everything else joins on.
     pub run_id: Uuid,
+    /// The timer that fired.
     pub timer_id: TimerId,
+    /// The instant it was *meant* to fire — an intent, not an occurrence.
     pub scheduled_for: DateTime<Utc>,
+    /// Where the claim sits in the dispatcher.
     pub status: ClaimStatus,
+    /// When the claim row was committed, which is the fire instant.
     pub claimed_at: DateTime<Utc>,
+    /// When it reached a terminal status.
     pub completed_at: Option<DateTime<Utc>>,
     /// Durable monotonic sequence for this timer's run events (slot output feed).
     pub event_sequence: u64,
@@ -438,7 +512,9 @@ impl RunClaim {
 /// monotonic `publication_order`; pruned with the run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransportProjection {
+    /// The run whose notification this publishes.
     pub run_id: Uuid,
+    /// Its timer — the routing key for the IPC adapter.
     pub timer_id: TimerId,
     /// Delivery adapter for this projection (IK6): `file` (the JSON folder
     /// adapter) or `ipc` (the socket adapter). The payload is the deterministic
@@ -459,18 +535,26 @@ pub struct TransportProjection {
     pub state: String,
     /// Bounded-retry bookkeeping for the publication pump.
     pub attempts: u32,
+    /// Earliest instant the pump may try again.
     pub next_attempt_at: DateTime<Utc>,
+    /// When the fire transaction wrote this row.
     pub created_at: DateTime<Utc>,
+    /// When delivery succeeded.
     pub published_at: Option<DateTime<Utc>>,
 }
 
 impl TransportProjection {
+    /// Not delivered yet; the pump owns it.
     pub const PENDING: &'static str = "pending";
+    /// Handed to the adapter successfully.
     pub const PUBLISHED: &'static str = "published";
+    /// A newer firing superseded it; never publish.
     pub const OBSOLETE: &'static str = "obsolete";
+    /// The app confirmed — the transport is settled, retries stop.
     pub const PICKED_UP: &'static str = "picked_up";
     /// Adapter kinds (IK6).
     pub const KIND_FILE: &'static str = "file";
+    /// The socket adapter.
     pub const KIND_IPC: &'static str = "ipc";
 
     fn default_kind() -> String {
@@ -490,6 +574,8 @@ pub enum FailureKind {
 }
 
 impl FailureKind {
+    /// The stored spelling, shown in the GUI as `failed · reported` or
+    /// `failed · timed out`.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Reported => "reported",
@@ -497,6 +583,7 @@ impl FailureKind {
         }
     }
 
+    /// Parse a stored spelling; `None` for anything unrecognised.
     pub fn from_wire(s: &str) -> Option<Self> {
         match s {
             "reported" => Some(Self::Reported),
@@ -515,7 +602,9 @@ impl FailureKind {
 /// `status.json` be re-projected from the database alone after a crash.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunStateRow {
+    /// The firing this row describes.
     pub run_id: Uuid,
+    /// Its timer.
     pub timer_id: TimerId,
     /// Integration owner snapshotted at fire time.
     pub app_name: String,
@@ -527,27 +616,41 @@ pub struct RunStateRow {
     /// Persisted wall-clock pickup deadline (restart recovery only); `None`
     /// once pickup is satisfied or consumed by `no_ack`.
     pub pickup_deadline: Option<DateTime<Utc>>,
+    /// When the app said it had picked the run up.
     pub acknowledged_at: Option<DateTime<Utc>>,
+    /// The app's own estimate of how long it will take. Drives the GUI's
+    /// overdue label and, with `error_detection`, the watchdog deadline.
     pub expected_secs: Option<u64>,
     /// Accumulated `error_detection` (`None` = never mentioned).
     pub error_detection: Option<bool>,
+    /// Last liveness ping. Never logged — the live view is the only place
+    /// heartbeats exist.
     pub heartbeat_at: Option<DateTime<Utc>>,
+    /// Free-text progress the app is showing; also never logged.
     pub progress: Option<String>,
+    /// When the app reported success.
     pub completed_at: Option<DateTime<Utc>>,
+    /// When the run was recorded as failed.
     pub failed_at: Option<DateTime<Utc>>,
+    /// The app's failure text, capped at 1 KB.
     pub reason: Option<String>,
+    /// Who decided it failed — the app, or the watchdog.
     pub failure_kind: Option<FailureKind>,
     /// App result, capped at 32 KB as stored (`result_truncated` flags it).
     pub result_json: Option<serde_json::Value>,
+    /// Set when `result_json` was trimmed to fit the cap.
     pub result_truncated: bool,
     /// Persisted wall-clock watchdog deadline (restart recovery only).
     pub watchdog_deadline: Option<DateTime<Utc>>,
+    /// When the pickup grace lapsed with nothing heard. Retained even after
+    /// a late reply revises the state, so the whole story stays readable.
     pub no_ack_at: Option<DateTime<Utc>>,
     /// Digest of the last accepted reply — an exact duplicate is a no-op.
     pub reply_digest: Option<String>,
     /// Transition lines already in the event log (log records transitions
     /// only; repeated writes inside a state append nothing).
     pub acknowledged_logged: bool,
+    /// Whether the `running` transition has already been logged.
     pub running_logged: bool,
     /// The transport mode selected at fire (IK6: `json` | `ipc`) — fixed for
     /// the firing, never changes mid-firing. `None` on rows predating IK6.
@@ -634,9 +737,14 @@ impl RunStateRow {
 /// Meta bookkeeping row (single-row table).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Meta {
+    /// Store schema version; drives migrations.
     pub schema_version: i32,
+    /// When the pruner last ran — the startup catch-up test.
     pub last_prune: Option<DateTime<Utc>>,
+    /// When the Jan-1 consistency pass last ran.
     pub last_recalibration: Option<DateTime<Utc>>,
+    /// The tzdata version in force when the store was last written, so a
+    /// zone-rule update is detectable rather than silent.
     pub tzdata_version: Option<String>,
 }
 
@@ -652,6 +760,7 @@ pub enum RotationPhase {
 }
 
 impl RotationPhase {
+    /// The spelling stored in the journal row.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Renamed => "renamed",
@@ -660,6 +769,7 @@ impl RotationPhase {
         }
     }
 
+    /// Parse a stored phase; `None` for anything unrecognised.
     pub fn from_wire(s: &str) -> Option<Self> {
         match s {
             "renamed" => Some(Self::Renamed),
@@ -684,6 +794,8 @@ pub struct RotationJournal {
     pub gz_tmp: std::path::PathBuf,
     /// The final compressed archive.
     pub final_path: std::path::PathBuf,
+    /// How far the interrupted rotation got.
     pub phase: RotationPhase,
+    /// When the rotation began.
     pub started_at: DateTime<Utc>,
 }

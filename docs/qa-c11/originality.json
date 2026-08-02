@@ -1,0 +1,462 @@
+{
+  "bellman-app (src-tauri)": {
+    "files": 14,
+    "lines": 4905,
+    "shingle": [],
+    "identifier": [
+      "AppState (also in ['pomodorolm'])",
+      "as_str (also in ['croner-rust'])"
+    ],
+    "literal": [
+      "src-tauri/src/lib.rs: ')\\n        .map_err(|e| format!(' also in pomodorolm",
+      "src-tauri/src/wake_fixit.rs: ',\\n                ' also in croner-rust",
+      "src-tauri/src/wake_fixit.rs: '))?;\\n        Ok(' also in notify",
+      "src-tauri/src/demo.rs: '\\n        } else {\\n            ' also in croner-rust",
+      "src-tauri/src/web.rs: ')\\n            .join(' also in notify",
+      "src-tauri/src/web.rs: ')\\n            .join(' also in notify",
+      "src-tauri/src/tray.rs: '))\\n                .expect(' also in notify",
+      "src-tauri/src/dto_serde_tests.rs: ',\\n    )\\n    .expect(' also in notify",
+      "src-tauri/src/dto_serde_tests.rs: ',\\n                ' also in croner-rust",
+      "src-tauri/src/dto_serde_tests.rs: '),\\n                ' also in croner-rust",
+      "src-tauri/src/dto_serde_tests.rs: ': true,\\n        ' also in croner-rust",
+      "src-tauri/src/dto_serde_tests.rs: ': {\\n            ' also in kalarm",
+      "src-tauri/src/dto_serde_tests.rs: ': false,\\n        ' also in croner-rust",
+      "src-tauri/src/dto_serde_tests.rs: ': {\\n            ' also in kalarm",
+      "src-tauri/src/commands.rs: ')\\n        .map_err(|e| format!(' also in pomodorolm",
+      "src-tauri/src/commands.rs: ')\\n        .map_err(|e| format!(' also in pomodorolm"
+    ],
+    "comment": [
+      "src-tauri/src/main.rs: '![cfg_attr(not(debug_assertions), windows_subsystem = \"windows\")]' also in pomodorolm",
+      "src-tauri/src/dto_serde_tests.rs: '-----------------------------------------------------------' also in croner-rust",
+      "src-tauri/src/dto_serde_tests.rs: '-----------------------------------------------------------' also in croner-rust"
+    ]
+  },
+  "bellman-cli/calendar_cmd.rs": {
+    "files": 1,
+    "lines": 242,
+    "shingle": [],
+    "identifier": [],
+    "literal": [
+      "crates/bellman-cli/src/calendar_cmd.rs: ',\\n                ' also in croner-rust"
+    ],
+    "comment": []
+  },
+  "bellman-cli/commands.rs": {
+    "files": 1,
+    "lines": 741,
+    "shingle": [],
+    "identifier": [],
+    "literal": [
+      "crates/bellman-cli/src/commands.rs: ',\\n            _ => ' also in croner-rust",
+      "crates/bellman-cli/src/commands.rs: ',\\n            format!(' also in notify",
+      "crates/bellman-cli/src/commands.rs: ',\\n            format!(' also in notify",
+      "crates/bellman-cli/src/commands.rs: ',\\n                format!(' also in pomodorolm"
+    ],
+    "comment": []
+  },
+  "bellman-cli/main.rs": {
+    "files": 1,
+    "lines": 627,
+    "shingle": [],
+    "identifier": [
+      "Commands (also in ['pomodorolm'])"
+    ],
+    "literal": [
+      "crates/bellman-cli/src/main.rs: ',\\n                            ' also in croner-rust"
+    ],
+    "comment": []
+  },
+  "bellman-cli/output.rs": {
+    "files": 1,
+    "lines": 45,
+    "shingle": [],
+    "identifier": [],
+    "literal": [
+      "crates/bellman-cli/src/output.rs: ': false,\\n        ' also in croner-rust",
+      "crates/bellman-cli/src/output.rs: ': {\\n            ' also in kalarm"
+    ],
+    "comment": []
+  },
+  "bellman-cli/parse.rs": {
+    "files": 1,
+    "lines": 309,
+    "shingle": [],
+    "identifier": [],
+    "literal": [],
+    "comment": []
+  },
+  "bellman-cli/resolve.rs": {
+    "files": 1,
+    "lines": 63,
+    "shingle": [],
+    "identifier": [],
+    "literal": [],
+    "comment": []
+  },
+  "bellman-cli/visible_cmd.rs": {
+    "files": 1,
+    "lines": 514,
+    "shingle": [],
+    "identifier": [
+      "rescan (also in ['notify'])"
+    ],
+    "literal": [
+      "crates/bellman-cli/src/visible_cmd.rs: ',\\n                ' also in croner-rust",
+      "crates/bellman-cli/src/visible_cmd.rs: ',\\n                ' also in croner-rust",
+      "crates/bellman-cli/src/visible_cmd.rs: ',\\n                ' also in croner-rust",
+      "crates/bellman-cli/src/visible_cmd.rs: ',\\n                ' also in croner-rust",
+      "crates/bellman-cli/src/visible_cmd.rs: ',\\n                ' also in croner-rust",
+      "crates/bellman-cli/src/visible_cmd.rs: ',\\n                ' also in croner-rust",
+      "crates/bellman-cli/src/visible_cmd.rs: ',\\n            format!(' also in notify",
+      "crates/bellman-cli/src/visible_cmd.rs: ',\\n            format!(' also in notify"
+    ],
+    "comment": []
+  },
+  "bellman-core/actions": {
+    "files": 9,
+    "lines": 1423,
+    "shingle": [
+      "crates/bellman-core/src/actions/executor.rs:90 == notify:notify/src/kqueue.rs:316"
+    ],
+    "identifier": [
+      "DEFAULT_TIMEOUT (also in ['notify'])",
+      "shutdown (also in ['tokio-cron-scheduler'])"
+    ],
+    "literal": [
+      "crates/bellman-core/src/actions/executor.rs: '\\n                    } else {\\n                        ' also in croner-rust",
+      "crates/bellman-core/src/actions/tests.rs: '.into(),\\n                ' also in notify"
+    ],
+    "comment": []
+  },
+  "bellman-core/app_config.rs": {
+    "files": 1,
+    "lines": 325,
+    "shingle": [],
+    "identifier": [],
+    "literal": [],
+    "comment": []
+  },
+  "bellman-core/calendar": {
+    "files": 8,
+    "lines": 2586,
+    "shingle": [
+      "crates/bellman-core/src/calendar/types.rs:130 == croner-rust:src/describe/lang/english.rs:105",
+      "crates/bellman-core/src/calendar/types.rs:131 == croner-rust:src/describe/lang/english.rs:106",
+      "crates/bellman-core/src/calendar/types.rs:132 == croner-rust:src/describe/lang/english.rs:107",
+      "crates/bellman-core/src/calendar/types.rs:133 == croner-rust:src/describe/lang/english.rs:108",
+      "crates/bellman-core/src/calendar/types.rs:134 == croner-rust:src/describe/lang/english.rs:109",
+      "crates/bellman-core/src/calendar/types.rs:135 == croner-rust:src/describe/lang/english.rs:110",
+      "crates/bellman-core/src/calendar/types.rs:136 == croner-rust:src/describe/lang/english.rs:111"
+    ],
+    "identifier": [
+      "as_str (also in ['croner-rust'])"
+    ],
+    "literal": [
+      "crates/bellman-core/src/calendar/truth.rs: ')\\n    } else {\\n        format!(\\n            ' also in croner-rust",
+      "crates/bellman-core/src/calendar/svg.rs: ');\\n        format!(' also in croner-rust",
+      "crates/bellman-core/src/calendar/tests.rs: ')\\n        .expect(' also in croner-rust",
+      "crates/bellman-core/src/calendar/tests.rs: ')\\n        .expect(' also in croner-rust",
+      "crates/bellman-core/src/calendar/period.rs: ')\\n        .map_err(|e| format!(' also in pomodorolm"
+    ],
+    "comment": [
+      "crates/bellman-core/src/calendar/types.rs: '[derive(Debug, Clone, Copy, PartialEq, Eq)]' also in notify"
+    ]
+  },
+  "bellman-core/events": {
+    "files": 7,
+    "lines": 1689,
+    "shingle": [],
+    "identifier": [
+      "as_str (also in ['croner-rust'])"
+    ],
+    "literal": [
+      "crates/bellman-core/src/events/publisher/tests.rs: ').is_none(),\\n        ' also in notify"
+    ],
+    "comment": [
+      "crates/bellman-core/src/events/reader.rs: '[derive(Debug, Clone, Default, PartialEq, Eq)]' also in notify"
+    ]
+  },
+  "bellman-core/examples": {
+    "files": 3,
+    "lines": 366,
+    "shingle": [],
+    "identifier": [],
+    "literal": [
+      "crates/bellman-core/examples/wake_probe.rs: ');\\n            println!(' also in notify",
+      "crates/bellman-core/examples/engine_demo.rs: ');\\n    println!(' also in croner-rust",
+      "crates/bellman-core/examples/perf_idle.rs: '))?;\\n            }\\n            ' also in notify",
+      "crates/bellman-core/examples/perf_idle.rs: ');\\n    println!(' also in croner-rust",
+      "crates/bellman-core/examples/perf_idle.rs: ');\\n    println!(' also in croner-rust",
+      "crates/bellman-core/examples/perf_idle.rs: ');\\n    println!(' also in croner-rust",
+      "crates/bellman-core/examples/perf_idle.rs: ');\\n    println!(' also in croner-rust"
+    ],
+    "comment": []
+  },
+  "bellman-core/ipc": {
+    "files": 2,
+    "lines": 993,
+    "shingle": [],
+    "identifier": [
+      "shutdown (also in ['tokio-cron-scheduler'])"
+    ],
+    "literal": [
+      "crates/bellman-core/src/ipc/mod.rs: ').unwrap_or_else(|_| ' also in tokio-cron-scheduler",
+      "crates/bellman-core/src/ipc/server.rs: ': false,\\n            ' also in croner-rust",
+      "crates/bellman-core/src/ipc/server.rs: ': true,\\n            ' also in croner-rust"
+    ],
+    "comment": [
+      "crates/bellman-core/src/ipc/server.rs: '[derive(Debug, Clone, Copy, PartialEq, Eq)]' also in notify"
+    ]
+  },
+  "bellman-core/lib.rs": {
+    "files": 1,
+    "lines": 87,
+    "shingle": [],
+    "identifier": [],
+    "literal": [],
+    "comment": []
+  },
+  "bellman-core/occurrence": {
+    "files": 6,
+    "lines": 1052,
+    "shingle": [],
+    "identifier": [
+      "contains (also in ['kalarm', 'notify'])",
+      "iter_after (also in ['croner-rust'])",
+      "resolve (also in ['notify'])"
+    ],
+    "literal": [],
+    "comment": [
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust",
+      "crates/bellman-core/src/occurrence/golden_tests.rs: '---------------------------------------------------------------------------' also in croner-rust"
+    ]
+  },
+  "bellman-core/platform": {
+    "files": 8,
+    "lines": 1810,
+    "shingle": [],
+    "identifier": [
+      "as_str (also in ['croner-rust'])"
+    ],
+    "literal": [],
+    "comment": [
+      "crates/bellman-core/src/platform/wake/mod.rs: '[derive(Debug, Clone, Copy, PartialEq, Eq)]' also in notify",
+      "crates/bellman-core/src/platform/wake/macos_decision.rs: '[derive(Debug, Clone, Copy, PartialEq, Eq)]' also in notify"
+    ]
+  },
+  "bellman-core/pruner": {
+    "files": 3,
+    "lines": 950,
+    "shingle": [],
+    "identifier": [],
+    "literal": [],
+    "comment": []
+  },
+  "bellman-core/reply": {
+    "files": 10,
+    "lines": 4342,
+    "shingle": [],
+    "identifier": [
+      "as_str (also in ['croner-rust'])",
+      "notify (also in ['pomodorolm'])"
+    ],
+    "literal": [],
+    "comment": [
+      "crates/bellman-core/src/reply/document.rs: '[derive(Debug, Clone, Copy, PartialEq, Eq)]' also in notify",
+      "crates/bellman-core/src/reply/engine.rs: '[derive(Debug, Clone, Copy, PartialEq, Eq)]' also in notify",
+      "crates/bellman-core/src/reply/engine.rs: '[derive(Debug, Clone, Copy, PartialEq, Eq)]' also in notify",
+      "crates/bellman-core/src/reply/publication.rs: '[derive(Debug, Clone, Copy, PartialEq, Eq)]' also in notify",
+      "crates/bellman-core/src/reply/publication.rs: '[derive(Debug, Clone, Copy, PartialEq, Eq)]' also in notify"
+    ]
+  },
+  "bellman-core/scheduler": {
+    "files": 12,
+    "lines": 2838,
+    "shingle": [],
+    "identifier": [
+      "Scheduler (also in ['tokio-cron-scheduler'])",
+      "advance (also in ['notify'])",
+      "partial_cmp (also in ['croner-rust'])",
+      "shutdown (also in ['tokio-cron-scheduler'])"
+    ],
+    "literal": [
+      "crates/bellman-core/src/scheduler/tests.rs: ',\\n                ' also in croner-rust",
+      "crates/bellman-core/src/scheduler/tests.rs: ': 1,\\n                ' also in tokio-cron-scheduler"
+    ],
+    "comment": [
+      "crates/bellman-core/src/scheduler/engine/types.rs: '[derive(Debug, Clone, Copy, PartialEq, Eq)]' also in notify"
+    ]
+  },
+  "bellman-core/service": {
+    "files": 2,
+    "lines": 458,
+    "shingle": [],
+    "identifier": [],
+    "literal": [
+      "crates/bellman-core/src/service/run_now.rs: ')\\n            .field(' also in notify"
+    ],
+    "comment": []
+  },
+  "bellman-core/service.rs": {
+    "files": 1,
+    "lines": 2,
+    "shingle": [],
+    "identifier": [],
+    "literal": [],
+    "comment": []
+  },
+  "bellman-core/slots": {
+    "files": 9,
+    "lines": 2796,
+    "shingle": [
+      "crates/bellman-core/src/slots/service.rs:328 == notify:notify/src/kqueue.rs:316"
+    ],
+    "identifier": [
+      "as_str (also in ['croner-rust'])"
+    ],
+    "literal": [
+      "crates/bellman-core/src/slots/service.rs: ': {\\n            ' also in kalarm",
+      "crates/bellman-core/src/slots/payload.rs: '))\\n        .map_err(|e| format!(' also in pomodorolm",
+      "crates/bellman-core/src/slots/tests.rs: ' },\\n            ' also in notify",
+      "crates/bellman-core/src/slots/tests.rs: '),\\n                ' also in croner-rust",
+      "crates/bellman-core/src/slots/tests.rs: ': {\\n            ' also in kalarm",
+      "crates/bellman-core/src/slots/tests.rs: ': true,\\n            ' also in croner-rust",
+      "crates/bellman-core/src/slots/tests.rs: ',\\n                ' also in croner-rust",
+      "crates/bellman-core/src/slots/tests.rs: '),\\n                ' also in croner-rust",
+      "crates/bellman-core/src/slots/tests.rs: ')\\n        .join(' also in notify"
+    ],
+    "comment": [
+      "crates/bellman-core/src/slots/watcher.rs: '[derive(Debug, Clone, Copy, PartialEq, Eq)]' also in notify"
+    ]
+  },
+  "bellman-core/store": {
+    "files": 6,
+    "lines": 3419,
+    "shingle": [],
+    "identifier": [
+      "Action (also in ['notify'])",
+      "Target (also in ['notify'])",
+      "as_str (also in ['croner-rust'])",
+      "from_str (also in ['croner-rust'])"
+    ],
+    "literal": [
+      "crates/bellman-core/src/store/tests.rs: ',\\n        )\\n        .expect(' also in notify"
+    ],
+    "comment": [
+      "crates/bellman-core/src/store/models.rs: '[derive(Debug, Clone, Copy, PartialEq, Eq)]' also in notify"
+    ]
+  },
+  "bellman-core/tests": {
+    "files": 8,
+    "lines": 3201,
+    "shingle": [],
+    "identifier": [],
+    "literal": [
+      "crates/bellman-core/tests/ipc_transport.rs: ').is_none(),\\n        ' also in notify",
+      "crates/bellman-core/tests/ipc_transport.rs: ').is_none(),\\n        ' also in notify",
+      "crates/bellman-core/tests/ipc_transport.rs: '),\\n                    ' also in croner-rust",
+      "crates/bellman-core/tests/doc_fire_example.rs: ')\\n        .expect(' also in croner-rust",
+      "crates/bellman-core/tests/doc_fire_example.rs: ').unwrap(),\\n        ' also in croner-rust",
+      "crates/bellman-core/tests/doc_fire_example.rs: ')\\n        ),\\n        ' also in notify",
+      "crates/bellman-core/tests/doc_fire_example.rs: ')\\n        ),\\n        ' also in notify",
+      "crates/bellman-core/tests/json_shapes.rs: ')\\n        ),\\n        ' also in notify",
+      "crates/bellman-core/tests/json_shapes.rs: ',\\n                    ' also in croner-rust"
+    ],
+    "comment": []
+  },
+  "bellman-core/tree": {
+    "files": 2,
+    "lines": 1261,
+    "shingle": [],
+    "identifier": [],
+    "literal": [
+      "crates/bellman-core/src/tree/tests.rs: ').is_none(),\\n        ' also in notify"
+    ],
+    "comment": []
+  },
+  "bellman-core/visible": {
+    "files": 16,
+    "lines": 3285,
+    "shingle": [],
+    "identifier": [
+      "as_str (also in ['croner-rust'])",
+      "describe_month (also in ['croner-rust'])",
+      "describe_time (also in ['croner-rust'])"
+    ],
+    "literal": [
+      "crates/bellman-core/src/visible/explain.rs: ' {\\n        return ' also in croner-rust",
+      "crates/bellman-core/src/visible/explain.rs: ' {\\n        return ' also in croner-rust",
+      "crates/bellman-core/src/visible/explain.rs: ' {\\n        return ' also in croner-rust",
+      "crates/bellman-core/src/visible/explain.rs: '.into(),\\n        ' also in notify",
+      "crates/bellman-core/src/visible/explain.rs: '.into(),\\n        ' also in notify",
+      "crates/bellman-core/src/visible/explain.rs: '.into(),\\n        ' also in notify",
+      "crates/bellman-core/src/visible/explain.rs: '.into(),\\n        ' also in notify",
+      "crates/bellman-core/src/visible/explain.rs: '.into(),\\n        ' also in notify",
+      "crates/bellman-core/src/visible/scan.rs: '\\n    } else {\\n        ' also in croner-rust",
+      "crates/bellman-core/src/visible/run_now.rs: ' {\\n        return Err(' also in notify",
+      "crates/bellman-core/src/visible/snapshot.rs: '\\n    } else {\\n        ' also in croner-rust",
+      "crates/bellman-core/src/visible/providers/systemd.rs: ').unwrap_or_else(|_| ' also in tokio-cron-scheduler",
+      "crates/bellman-core/src/visible/providers/at.rs: '%Y-%m-%d %H:%M:%S' also in kalarm",
+      "crates/bellman-core/src/visible/providers/bellman.rs: ').unwrap_or_else(|_| ' also in tokio-cron-scheduler",
+      "crates/bellman-core/src/visible/cron/write.rs: ')\\n    } else {\\n        format!(' also in croner-rust"
+    ],
+    "comment": [
+      "crates/bellman-core/src/visible/cron/parse.rs: '[derive(Debug, Clone, Copy, PartialEq, Eq)]' also in notify"
+    ]
+  },
+  "helpers": {
+    "files": 1,
+    "lines": 427,
+    "shingle": [],
+    "identifier": [
+      "Request (also in ['notify'])"
+    ],
+    "literal": [],
+    "comment": []
+  },
+  "testing_apps/lightbulb": {
+    "files": 1,
+    "lines": 106,
+    "shingle": [],
+    "identifier": [],
+    "literal": [],
+    "comment": []
+  },
+  "testing_apps/lightbulb_gui": {
+    "files": 1,
+    "lines": 659,
+    "shingle": [],
+    "identifier": [],
+    "literal": [
+      "testing_apps/lightbulb_gui/lightbulb_gui.py: ',\\n                f' also in croner-rust"
+    ],
+    "comment": []
+  },
+  "ui (Svelte)": {
+    "files": 22,
+    "lines": 5454,
+    "shingle": [],
+    "identifier": [
+      "bucket (also in ['tokio-cron-scheduler'])",
+      "expected (also in ['notify'])"
+    ],
+    "literal": [],
+    "comment": []
+  }
+}

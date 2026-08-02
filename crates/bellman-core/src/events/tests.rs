@@ -66,7 +66,10 @@ fn rotate_is_atomic_rename_to_iso_week_archive() {
     // Fresh current file exists and is empty (or only new writes).
     assert!(log.current_path().exists());
     let after = fs::read_to_string(log.current_path()).unwrap();
-    assert!(after.is_empty(), "fresh current must be empty, got: {after:?}");
+    assert!(
+        after.is_empty(),
+        "fresh current must be empty, got: {after:?}"
+    );
 
     // New appends go to the fresh file, not the archive.
     log.emit(EventRecord::new(RunState::Pruned).with_message("new"))
@@ -101,19 +104,20 @@ fn rotate_empty_current_yields_none() {
 fn tolerant_reader_skips_torn_tail_and_garbage() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("events.current.jsonl");
-    let good1 = serde_json::to_string(
-        &EventRecord::new(RunState::Fired).with_message("ok1"),
-    )
-    .unwrap();
-    let good2 = serde_json::to_string(
-        &EventRecord::new(RunState::WakeDelivered).with_message("ok2"),
-    )
-    .unwrap();
+    let good1 =
+        serde_json::to_string(&EventRecord::new(RunState::Fired).with_message("ok1")).unwrap();
+    let good2 =
+        serde_json::to_string(&EventRecord::new(RunState::WakeDelivered).with_message("ok2"))
+            .unwrap();
     let mut f = fs::File::create(&path).unwrap();
     writeln!(f, "{good1}").unwrap();
     writeln!(f, "{{this is not json").unwrap(); // garbage line
     writeln!(f, "{good2}").unwrap();
-    write!(f, "{{\"logged_at\":\"2026-01-01T00:00:00Z\",\"kind\":\"fired\"").unwrap(); // torn tail
+    write!(
+        f,
+        "{{\"logged_at\":\"2026-01-01T00:00:00Z\",\"kind\":\"fired\""
+    )
+    .unwrap(); // torn tail
     f.flush().unwrap();
     drop(f);
 
@@ -206,7 +210,8 @@ fn size_threshold_rotates_and_compresses_before_next_line() {
     let mut appended = 0;
     for i in 0..20 {
         log.emit(
-            EventRecord::new(RunState::Fired).with_message(format!("line-{i:03}-{}", "x".repeat(40))),
+            EventRecord::new(RunState::Fired)
+                .with_message(format!("line-{i:03}-{}", "x".repeat(40))),
         )
         .unwrap();
         appended += 1;
@@ -225,7 +230,10 @@ fn size_threshold_rotates_and_compresses_before_next_line() {
         .map(|e| e.path())
         .filter(|p| p.to_string_lossy().ends_with(".jsonl.gz"))
         .collect();
-    assert!(!archives.is_empty(), "rotation must produce a .jsonl.gz archive");
+    assert!(
+        !archives.is_empty(),
+        "rotation must produce a .jsonl.gz archive"
+    );
     // All 20 fired events remain readable across archive(s) + current, and
     // every rotation was logged (never silent).
     let mut fired = 0;
@@ -260,9 +268,13 @@ fn budget_prunes_oldest_archives_but_never_current() {
     // Three gz archives with increasing mtime and high-entropy bodies so the
     // compressed sizes are meaningful.
     let mut paths = Vec::new();
-    for (i, week) in ["events-2026-W28.jsonl.gz", "events-2026-W29.jsonl.gz", "events-2026-W30.jsonl.gz"]
-        .iter()
-        .enumerate()
+    for (i, week) in [
+        "events-2026-W28.jsonl.gz",
+        "events-2026-W29.jsonl.gz",
+        "events-2026-W30.jsonl.gz",
+    ]
+    .iter()
+    .enumerate()
     {
         let p = archive.join(week);
         let body: String = (0..100)
@@ -277,7 +289,10 @@ fn budget_prunes_oldest_archives_but_never_current() {
         filetime_set_mtime(&p, t);
         paths.push(p);
     }
-    let sizes: Vec<u64> = paths.iter().map(|p| fs::metadata(p).unwrap().len()).collect();
+    let sizes: Vec<u64> = paths
+        .iter()
+        .map(|p| fs::metadata(p).unwrap().len())
+        .collect();
 
     // Budget fits current (empty) + the two newest archives, not all three.
     let budget = sizes[1] + sizes[2] + 8;
@@ -289,11 +304,18 @@ fn budget_prunes_oldest_archives_but_never_current() {
     .unwrap();
     let report = log.retain().unwrap();
 
-    assert_eq!(report.budget.len(), 1, "only the oldest archive is budget-pruned");
+    assert_eq!(
+        report.budget.len(),
+        1,
+        "only the oldest archive is budget-pruned"
+    );
     assert_eq!(report.budget[0], paths[0]);
     assert!(!paths[0].exists());
     assert!(paths[1].exists() && paths[2].exists());
-    assert!(log.current_path().exists(), "the live file is never deleted");
+    assert!(
+        log.current_path().exists(),
+        "the live file is never deleted"
+    );
 
     // A budget smaller than the archives alone prunes them all but still
     // never touches the live current file.
@@ -339,8 +361,10 @@ fn stale_handle_reanchors_and_never_loses_events() {
 
     // A fills current past the cap and rotates.
     for i in 0..4 {
-        a.emit(EventRecord::new(RunState::Fired).with_message(format!("a-{i}-{}", "x".repeat(120))))
-            .unwrap();
+        a.emit(
+            EventRecord::new(RunState::Fired).with_message(format!("a-{i}-{}", "x".repeat(120))),
+        )
+        .unwrap();
     }
     let archived = a.rotate().unwrap().expect("rotation produced an archive");
 
@@ -369,7 +393,10 @@ fn stale_handle_reanchors_and_never_loses_events() {
     b.emit(EventRecord::new(RunState::Fired).with_message("small"))
         .unwrap();
     let archives_after = fs::read_dir(a.archive_dir()).unwrap().count();
-    assert_eq!(archives_before, archives_after, "no bogus rotation from a stale size view");
+    assert_eq!(
+        archives_before, archives_after,
+        "no bogus rotation from a stale size view"
+    );
 }
 
 #[test]
@@ -377,7 +404,11 @@ fn reader_reads_plain_and_gz_archives() {
     let dir = tempfile::tempdir().unwrap();
     let plain = dir.path().join("events-2026-W30.jsonl");
     let rec = EventRecord::new(RunState::Fired).with_message("plain");
-    fs::write(&plain, format!("{}\n", serde_json::to_string(&rec).unwrap())).unwrap();
+    fs::write(
+        &plain,
+        format!("{}\n", serde_json::to_string(&rec).unwrap()),
+    )
+    .unwrap();
 
     let gz = dir.path().join("events-2026-W31.jsonl.gz");
     let rec2 = EventRecord::new(RunState::Completed).with_message("gz");

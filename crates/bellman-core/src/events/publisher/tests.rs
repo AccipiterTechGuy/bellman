@@ -20,8 +20,7 @@ impl Harness {
 
     fn with_max_current(max_current_bytes: u64) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let store =
-            Store::open_with(dir.path().join("timers.db"), OpenOptions::default()).unwrap();
+        let store = Store::open_with(dir.path().join("timers.db"), OpenOptions::default()).unwrap();
         let publisher = EventPublisher::with_config(
             EventLogConfig::new(dir.path().join("logs")).with_max_current_bytes(max_current_bytes),
         )
@@ -102,7 +101,10 @@ fn append_failure_leaves_rows_pending_and_health_reports_until_retry() {
         "a failed append never drops the row"
     );
     let health = h.health();
-    assert!(health["last_error"].is_string(), "health visibly reports the error");
+    assert!(
+        health["last_error"].is_string(),
+        "health visibly reports the error"
+    );
 
     // Repair; a later cycle drains without duplicates.
     fs::remove_dir(&current).unwrap();
@@ -111,7 +113,10 @@ fn append_failure_leaves_rows_pending_and_health_reports_until_retry() {
     assert_eq!(report.published, 1);
     assert_eq!(h.store.count_pending_events().unwrap(), 0);
     let health = h.health();
-    assert!(health.get("last_error").is_none(), "recovery clears the error");
+    assert!(
+        health.get("last_error").is_none(),
+        "recovery clears the error"
+    );
     assert_eq!(h.all_events().len(), 1);
 }
 
@@ -160,9 +165,15 @@ fn size_threshold_rotates_through_the_journal() {
     }
     let report = h.publisher.publish_cycle(&h.store);
     assert!(report.error.is_none());
-    assert!(report.rotated.is_some(), "rotation happened under the threshold");
+    assert!(
+        report.rotated.is_some(),
+        "rotation happened under the threshold"
+    );
     assert!(h.publisher.current_path().exists());
-    assert!(h.store.rotation_journal().unwrap().is_none(), "journal cleared");
+    assert!(
+        h.store.rotation_journal().unwrap().is_none(),
+        "journal cleared"
+    );
 
     let archive = report.rotated.unwrap();
     assert!(archive.exists());
@@ -175,7 +186,11 @@ fn size_threshold_rotates_through_the_journal() {
     let events = h.all_events();
     let filler = events
         .iter()
-        .filter(|e| e.message.as_deref().is_some_and(|m| m.starts_with("rotation filler")))
+        .filter(|e| {
+            e.message
+                .as_deref()
+                .is_some_and(|m| m.starts_with("rotation filler"))
+        })
         .count();
     assert_eq!(filler, 10);
 }
@@ -291,8 +306,8 @@ fn cross_process_outbox_liveness_via_the_safety_tick() {
     // A second process's publisher (the "CLI") cannot lead.
     let mut cli_publisher =
         EventPublisher::with_config(EventLogConfig::new(h.dir.path().join("logs"))).unwrap();
-    let cli_store = Store::open_with(h.dir.path().join("timers.db"), OpenOptions::default())
-        .unwrap();
+    let cli_store =
+        Store::open_with(h.dir.path().join("timers.db"), OpenOptions::default()).unwrap();
     cli_store
         .enqueue_event(&event(RunState::Registered, "from the CLI process"))
         .unwrap();

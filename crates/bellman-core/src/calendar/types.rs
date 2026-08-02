@@ -7,19 +7,20 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WeekStart {
+    /// Monday first — the product default.
     #[default]
     Mon,
+    /// Sunday first.
     Sun,
 }
 
 impl WeekStart {
+    /// Parse a `--week-start` value; the error names both accepted forms.
     pub fn parse(s: &str) -> Result<Self, String> {
         match s.trim().to_ascii_lowercase().as_str() {
             "mon" | "monday" => Ok(Self::Mon),
             "sun" | "sunday" => Ok(Self::Sun),
-            other => Err(format!(
-                "unknown week-start '{other}' (expected mon|sun)"
-            )),
+            other => Err(format!("unknown week-start '{other}' (expected mon|sun)")),
         }
     }
 
@@ -36,14 +37,21 @@ impl WeekStart {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CalendarStatus {
+    /// Scheduled, not yet due.
     Upcoming,
+    /// Ran, and a real success was observed.
     Ok,
+    /// Ran, and a real failure was observed.
     Failed,
+    /// The timer is paused.
     Disabled,
+    /// It ran, but the source records no exit status — the honest bucket
+    /// for cron, which never reports one.
     Unknown,
 }
 
 impl CalendarStatus {
+    /// The stable JSON spelling.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Upcoming => "upcoming",
@@ -69,7 +77,9 @@ impl CalendarStatus {
 /// One scheduled fire placed on a calendar day.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CalendarEntry {
+    /// The task this fire belongs to.
     pub task_id: String,
+    /// Its display name — what the cell shows unless commands are opted in.
     pub name: String,
     /// Local wall time in the snapshot timezone: `HH:MM` (24h, zero-padded).
     pub time: String,
@@ -78,11 +88,14 @@ pub struct CalendarEntry {
     pub time_secs: Option<u32>,
     /// ISO date `YYYY-MM-DD` of the local day this entry belongs to.
     pub date: String,
+    /// Whether the task recurs, so a one-shot can be drawn differently.
     pub repeats: bool,
+    /// Colour bucket for this entry.
     pub status: CalendarStatus,
     /// Present only when the caller opted in with `--show-commands`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub command: Option<String>,
+    /// Which scheduler it came from (`bellman`, `cron_user`, …).
     pub source_kind: String,
 }
 
@@ -91,6 +104,7 @@ pub struct CalendarEntry {
 pub struct CalendarDay {
     /// ISO date `YYYY-MM-DD`.
     pub date: String,
+    /// Day of the month, for the number drawn in the cell corner.
     pub day: u32,
     /// `false` for leading/trailing days of adjacent months (greyed in the image).
     pub in_month: bool,
@@ -112,10 +126,12 @@ pub struct CalendarSnapshot {
     /// Primary month when built from `--month` (1–12); `None` for arbitrary ranges.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub year: Option<i32>,
+    /// Primary month (1–12) when built from `--month`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub month: Option<u32>,
     /// IANA timezone all `time` fields are expressed in.
     pub timezone: String,
+    /// Which day the grid's first column is.
     pub week_start: WeekStart,
     /// Whether command lines were included.
     pub show_commands: bool,
@@ -158,38 +174,48 @@ impl Default for CalendarCaps {
 /// Options for building a snapshot.
 #[derive(Debug, Clone)]
 pub struct CalendarBuildOptions {
+    /// Inclusive first day of the range.
     pub from: NaiveDate,
+    /// Inclusive last day.
     pub to: NaiveDate,
     /// When set, the grid is a full month view for this year/month.
     pub month: Option<(i32, u32)>,
+    /// IANA timezone the range and every rendered time are in.
     pub timezone: String,
+    /// Which day the grid starts on.
     pub week_start: WeekStart,
+    /// Opt in to drawing command lines. Off by default: commands leak paths
+    /// and sometimes tokens.
     pub show_commands: bool,
     /// Instant used to classify upcoming vs past (injectable for tests).
     pub now_utc: chrono::DateTime<chrono::Utc>,
+    /// Bounds that keep a noisy schedule from hanging the renderer.
     pub caps: CalendarCaps,
 }
 
 /// Output shape requested by the CLI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalendarFormat {
+    /// Deterministic SVG — the canonical rendering.
     Svg,
+    /// PNG rasterised from that same SVG.
     Png,
+    /// The snapshot itself; the other two are views of it.
     Json,
 }
 
 impl CalendarFormat {
+    /// Parse a `--format` value; the error names every accepted value.
     pub fn parse(s: &str) -> Result<Self, String> {
         match s.trim().to_ascii_lowercase().as_str() {
             "svg" => Ok(Self::Svg),
             "png" => Ok(Self::Png),
             "json" => Ok(Self::Json),
-            other => Err(format!(
-                "unknown format '{other}' (expected svg|png|json)"
-            )),
+            other => Err(format!("unknown format '{other}' (expected svg|png|json)")),
         }
     }
 
+    /// The canonical spelling, echoed in JSON output.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Svg => "svg",
@@ -215,6 +241,9 @@ pub const MONTH_NAMES: [&str; 12] = [
     "December",
 ];
 
+/// Three-letter English month names, same determinism rule as
+/// [`MONTH_NAMES`]: fixed, never locale-dependent, so the same inputs always
+/// render byte-identical output.
 pub const MONTH_ABBREV: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];

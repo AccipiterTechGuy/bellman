@@ -78,14 +78,18 @@ impl SlotService {
         self
     }
 
+    /// The directory layout this service operates on.
     pub fn layout(&self) -> &SlotLayout {
         &self.layout
     }
 
+    /// The tunables in force.
     pub fn config(&self) -> &SlotConfig {
         &self.config
     }
 
+    /// How many free stubs are on disk right now — the invariant the
+    /// replenisher holds at or above `min_free`.
     pub fn free_count(&self) -> SlotResult<usize> {
         self.layout.free_count()
     }
@@ -142,12 +146,33 @@ impl SlotService {
             let claim_name = format!(".claim-{}-{}", Uuid::new_v4(), final_name);
             let claim_path = self.layout.free_dir().join(&claim_name);
             match std::fs::rename(&path, &claim_path) {
-                Ok(()) => {
-                    claimed = Some((claim_path, existing.slot_id, final_name));
-                    break;
-                }
+                Ok(()) => {}
                 Err(_) => continue, // lost race — try next stub
             }
+            // VERIFY, then keep. `rename` moves whatever is at that name; it
+            // does not check that the name still holds the stub we read a
+            // moment ago. Another producer can claim the same stub, publish
+            // its request back onto the same name, and finish — all between
+            // our read and our rename. We would then have renamed away
+            // SOMEONE ELSE'S REQUEST, written ours over the name, and
+            // deleted theirs with the claim temp: a silent loss, with both
+            // producers told they succeeded and nothing in `bad/`.
+            //
+            // So re-read what we actually claimed. If it is not still the
+            // free stub we read, put it straight back and move on.
+            let claimed_ok = read_capped(&claim_path, self.config.max_read_bytes)
+                .ok()
+                .and_then(|b| serde_json::from_slice::<SlotRequest>(&b).ok())
+                .is_some_and(|r| r.is_free_stub() && r.slot_id == existing.slot_id);
+            if !claimed_ok {
+                // Restore the other producer's file under its own name. It is
+                // briefly absent; a consumer that scans in that instant simply
+                // picks it up on the next pass, which is what a rescan is for.
+                let _ = std::fs::rename(&claim_path, &path);
+                continue;
+            }
+            claimed = Some((claim_path, existing.slot_id, final_name));
+            break;
         }
         let (claim_path, slot_id, final_name) = claimed.ok_or(SlotError::NoFreeSlot)?;
         request.slot_id = slot_id;
@@ -321,37 +346,35 @@ impl SlotService {
         } else {
             None
         };
-        let _delete_gate = if let (SlotOperation::Delete, Some(timer)) =
-            (operation, pre_delete_timer.as_ref())
-        {
-            let data_dir = store
-                .path()
-                .parent()
-                .map(|p| p.to_path_buf())
-                .ok_or_else(|| SlotError::Internal("store has no data dir".into()))?;
-            Some(
-                crate::reply::gate::acquire(&data_dir, timer.id)
-                    .map_err(|e| SlotError::Internal(format!("per-timer gate: {e}")))?,
-            )
-        } else {
-            None
-        };
+        let _delete_gate =
+            if let (SlotOperation::Delete, Some(timer)) = (operation, pre_delete_timer.as_ref()) {
+                let data_dir = store
+                    .path()
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .ok_or_else(|| SlotError::Internal("store has no data dir".into()))?;
+                Some(
+                    crate::reply::gate::acquire(&data_dir, timer.id)
+                        .map_err(|e| SlotError::Internal(format!("per-timer gate: {e}")))?,
+                )
+            } else {
+                None
+            };
 
         // Single Immediate transaction: check ledger / apply mutations / write
         // response. Concurrent consumers serialize; crash mid-apply rolls back
         // so a resubmit never double-mutates.
         let rec = store.slot_execute_once(&request_id, |tx| {
-            let response =
-                match apply_request_tx(tx, &req, operation, &request_id, max_events) {
-                    Ok(resp) => resp,
-                    Err(SlotError::Invalid(msg)) => {
-                        // Logical errors are durable results (idempotent too).
-                        SlotResponse::err(&reserved_id, &request_id, msg)
-                    }
-                    Err(e) => {
-                        return Err(crate::store::StoreError::Internal(e.to_string()));
-                    }
-                };
+            let response = match apply_request_tx(tx, &req, operation, &request_id, max_events) {
+                Ok(resp) => resp,
+                Err(SlotError::Invalid(msg)) => {
+                    // Logical errors are durable results (idempotent too).
+                    SlotResponse::err(&reserved_id, &request_id, msg)
+                }
+                Err(e) => {
+                    return Err(crate::store::StoreError::Internal(e.to_string()));
+                }
+            };
             let app_name = req
                 .payload
                 .as_ref()
@@ -409,9 +432,7 @@ impl SlotService {
                             match store.get_timer(tid) {
                                 Ok(Some(timer)) => {
                                     let owner = store.get_timer_owner(tid).ok().flatten();
-                                    if let Err(e) =
-                                        tree.sync_timer_json(&timer, owner.as_deref())
-                                    {
+                                    if let Err(e) = tree.sync_timer_json(&timer, owner.as_deref()) {
                                         eprintln!("bellman: timer folder sync failed: {e}");
                                     }
                                 }
@@ -481,7 +502,9 @@ fn reserved_slot_id_from_filename(file_name: &str) -> SlotResult<String> {
         .strip_suffix(".json")
         .ok_or_else(|| SlotError::Invalid(format!("not a .json slot file: {file_name}")))?;
     let id = stem.strip_prefix("slot-").ok_or_else(|| {
-        SlotError::Invalid(format!("slot file must be named slot-<id>.json: {file_name}"))
+        SlotError::Invalid(format!(
+            "slot file must be named slot-<id>.json: {file_name}"
+        ))
     })?;
     validate_slot_id_grammar(id)?;
     Ok(id.to_string())
@@ -673,8 +696,8 @@ fn events_for_tx(
     timer_id: TimerId,
     max_events: usize,
 ) -> SlotResult<Vec<SlotRunEvent>> {
-    let runs = Store::unacked_runs_for_timer_in_tx(tx, timer_id, max_events)
-        .map_err(SlotError::from)?;
+    let runs =
+        Store::unacked_runs_for_timer_in_tx(tx, timer_id, max_events).map_err(SlotError::from)?;
     Ok(runs.iter().map(SlotRunEvent::from_claim).collect())
 }
 

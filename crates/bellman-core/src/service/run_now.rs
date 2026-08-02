@@ -61,7 +61,10 @@ impl std::fmt::Debug for RunNowOptions {
                     .as_ref()
                     .map(|s| std::any::type_name_of_val(s.as_ref())),
             )
-            .field("dispatcher", &self.dispatcher.as_ref().map(|d| d.owns_lock()))
+            .field(
+                "dispatcher",
+                &self.dispatcher.as_ref().map(|d| d.owns_lock()),
+            )
             .finish()
     }
 }
@@ -81,15 +84,23 @@ impl Clone for RunNowOptions {
 /// Result of [`run_now`].
 #[derive(Debug, Clone)]
 pub struct RunNowOutcome {
+    /// The timer as it stood after the run.
     pub timer: Timer,
+    /// Identity of the run that was minted. A manual run is a real run: it
+    /// gets a claim, a reply channel and a log line like any other.
     pub run_id: Uuid,
+    /// The instant recorded as intended.
     pub scheduled_for: DateTime<Utc>,
+    /// Human summary of what happened.
     pub message: String,
 }
 
 /// Resolve a slot-id → file mapping for a given timer (if the timer was
 /// created via the slot layer). `None` when the timer has no owning slot.
-pub fn slot_record_for_timer(store: &Store, timer_id: Uuid) -> Result<Option<SlotRequestRecord>, StoreError> {
+pub fn slot_record_for_timer(
+    store: &Store,
+    timer_id: Uuid,
+) -> Result<Option<SlotRequestRecord>, StoreError> {
     store.latest_slot_request_for_timer(timer_id)
 }
 
@@ -239,8 +250,15 @@ fn dispatch_and_wait(
         skip_retry_sleep: opts.skip_retry_sleep,
         ..ExecutorConfig::default()
     };
-    let wait = exec_cfg.launch_timeout.mul_f64((timer.retry.max_retries + 1) as f64)
-        + Duration::from_secs(timer.retry.delay_secs.saturating_mul(u64::from(timer.retry.max_retries)))
+    let wait = exec_cfg
+        .launch_timeout
+        .mul_f64((timer.retry.max_retries + 1) as f64)
+        + Duration::from_secs(
+            timer
+                .retry
+                .delay_secs
+                .saturating_mul(u64::from(timer.retry.max_retries)),
+        )
         + Duration::from_secs(60);
 
     // Standalone CLI: spin up the bounded dispatcher when no process owns
@@ -348,7 +366,8 @@ pub fn resolve_logs_dir(db_path: &Path) -> PathBuf {
         }
     }
     db_path
-        .parent().map_or_else(|| PathBuf::from("logs"), |p| p.join("logs"))
+        .parent()
+        .map_or_else(|| PathBuf::from("logs"), |p| p.join("logs"))
 }
 
 /// Optional slots root for fire-trigger JSON writes.
@@ -369,9 +388,16 @@ pub fn resolve_slots_root_optional(db_path: &Path) -> Option<PathBuf> {
 /// Failure modes surfaced by [`run_now`].
 #[derive(Debug)]
 pub enum RunNowError {
-    NotFound { timer_id: Uuid },
+    /// No timer with that name or id.
+    NotFound {
+        /// The id that matched nothing.
+        timer_id: Uuid,
+    },
+    /// A database operation failed.
     Store(StoreError),
+    /// The wake action itself failed.
     Action(String),
+    /// Anything else.
     Other(String),
 }
 

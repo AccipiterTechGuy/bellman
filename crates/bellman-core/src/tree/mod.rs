@@ -42,6 +42,7 @@ pub const TIMER_SCHEMA_V1: &str = "bellman-timer/1";
 pub const RUN_SCHEMA_V1: &str = "bellman-run/1";
 /// File names inside a timer folder.
 pub const TIMER_FILE_NAME: &str = "timer.json";
+/// The mirror of the current run — the file to read for "did it work?".
 pub const STATUS_FILE_NAME: &str = "status.json";
 /// Root explainer for whoever opens the folder in a file manager.
 pub const README_FILE_NAME: &str = "README.txt";
@@ -86,8 +87,11 @@ tree never loses it. Deleting a timer deletes its folder.
 /// database state is already committed when these run.
 #[derive(Debug)]
 pub enum TreeError {
+    /// A filesystem operation failed.
     Io(String),
+    /// A document could not be serialised.
     Serialize(String),
+    /// The database read behind the projection failed.
     Store(crate::store::StoreError),
 }
 
@@ -115,6 +119,7 @@ impl From<crate::store::StoreError> for TreeError {
     }
 }
 
+/// Result alias for tree projections.
 pub type TreeResult<T> = Result<T, TreeError>;
 
 // ── Slug rules ──────────────────────────────────────────────────────────
@@ -196,7 +201,7 @@ pub fn short_id(id: TimerId) -> String {
 /// `<slug>-<short-id>` — the default (4-hex) folder name for a timer. When
 /// that name is already taken by a DIFFERENT timer (same slug + same first 4
 /// hex digits), allocation lengthens the suffix — see
-/// [`TimersTree::allocate_folder`].
+/// `TimersTree::allocate_folder`.
 pub fn folder_name(name: &str, id: TimerId) -> String {
     format!("{}-{}", slugify(name), short_id(id))
 }
@@ -250,6 +255,7 @@ impl TimersTree {
         Self { root }
     }
 
+    /// The `timers/` root this tree projects into.
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -449,9 +455,7 @@ impl TimersTree {
             // sharing between live timers must not keep a dead folder
             // alive); otherwise fall back to the suffix-prefix check.
             let alive = match folder_timer_id(&path) {
-                Some(tid) => live_ids
-                    .iter()
-                    .any(|id| id.to_string() == tid),
+                Some(tid) => live_ids.iter().any(|id| id.to_string() == tid),
                 None => live_ids
                     .iter()
                     .any(|id| id.simple().to_string().starts_with(suffix)),
@@ -537,38 +541,61 @@ fn occurrence_view(kind: &OccurrenceKind) -> serde_json::Value {
 /// empty or "never".
 #[derive(Debug, Clone, Serialize)]
 pub struct RunStatus {
+    /// Always [`RUN_SCHEMA_V1`].
     pub schema: String,
+    /// Current R5 state — Bellman's or the app's, whichever spoke last.
     pub state: String,
+    /// This firing; matches the reply filename and the log.
     pub run_id: Uuid,
+    /// Its timer.
     pub timer_id: Uuid,
+    /// The timer's display name.
     pub timer_name: String,
+    /// The timer's recurrence type — `interval`, `daily`, … Not a per-firing
+    /// marker: branch on the notification's `kind` for that.
     pub occurrence_kind: String,
+    /// When it was meant to fire.
     pub scheduled_for: DateTime<Utc>,
+    /// When it actually fired.
     pub fired_at: DateTime<Utc>,
+    /// The integration owner, snapshotted at fire; absent when unowned.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_name: Option<String>,
+    /// When the app said it had picked the run up.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub acknowledged_at: Option<DateTime<Utc>>,
+    /// The app's own estimate; powers the GUI label and the watchdog.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_secs: Option<u64>,
+    /// Whether the app opted into the silence watchdog.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_detection: Option<bool>,
+    /// Last liveness ping — visible only here, never in the log.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub heartbeat_at: Option<DateTime<Utc>>,
+    /// The app's own progress text — also live-view only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub progress: Option<String>,
+    /// When the app reported success.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
+    /// The app's result, any JSON, capped at 32 KB here.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
+    /// Set when `result` was trimmed to fit that cap.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_truncated: Option<bool>,
+    /// When the run was recorded as failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failed_at: Option<DateTime<Utc>>,
+    /// The app's failure text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Who decided it failed: `reported` (the app) or `timed_out` (watchdog).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_kind: Option<String>,
+    /// When the pickup grace lapsed unanswered. Kept even after a late reply
+    /// revises the state, so the whole story stays visible.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub no_ack_at: Option<DateTime<Utc>>,
     /// IK6: the effective delivery transport of this run (`json` | `ipc` |
@@ -699,10 +726,7 @@ fn current_unresolved_run(
 ) -> TreeResult<Option<RunClaim>> {
     let owner = store.get_timer_owner(timer.id)?;
     let runs = store.runs_for_timer(timer.id)?;
-    let latest = runs
-        .iter()
-        .rev()
-        .find(|r| Some(r.run_id) != exclude_run);
+    let latest = runs.iter().rev().find(|r| Some(r.run_id) != exclude_run);
     let Some(prev) = latest else {
         return Ok(None);
     };
@@ -785,10 +809,17 @@ pub fn project_fire(
     let claim = {
         let tx = store.transaction()?;
         // Barrier ingest: fold the previous run's final outcome in FIRST.
-        if let Some((prev, crate::reply::BarrierRead::Valid { doc, digest, bytes })) = &barrier
-        {
+        if let Some((prev, crate::reply::BarrierRead::Valid { doc, digest, bytes })) = &barrier {
             let outcome = engine
-                .ingest_as_current(&tx, timer, doc, digest, prev.run_id, now, std::time::Instant::now())
+                .ingest_as_current(
+                    &tx,
+                    timer,
+                    doc,
+                    digest,
+                    prev.run_id,
+                    now,
+                    std::time::Instant::now(),
+                )
                 .map_err(|e| TreeError::Io(e.to_string()))?;
             if let crate::reply::IngestOutcome::Rejected(reason) = outcome {
                 engine
@@ -963,20 +994,17 @@ fn apply_overlap_disposition(
     timer: &Timer,
     claim: RunClaim,
 ) -> crate::store::StoreResult<RunClaim> {
+    use crate::reply::RunDb;
     use crate::store::{
         finish_run_conn, get_run_conn, pending_claims_for_timer_conn, request_cancel_active_conn,
         unfinished_claims_count_conn, OverlapPolicy, RunOutcome,
     };
-    use crate::reply::RunDb;
 
     let skip_reason: Option<&'static str> = match &timer.overlap {
-        OverlapPolicy::Skip => {
-            (unfinished_claims_count_conn(tx, timer.id, claim.run_id)? >= 1).then_some("overlap_skip")
-        }
-        OverlapPolicy::QueueOne => {
-            (unfinished_claims_count_conn(tx, timer.id, claim.run_id)? >= 2)
-                .then_some("overlap_queue_full")
-        }
+        OverlapPolicy::Skip => (unfinished_claims_count_conn(tx, timer.id, claim.run_id)? >= 1)
+            .then_some("overlap_skip"),
+        OverlapPolicy::QueueOne => (unfinished_claims_count_conn(tx, timer.id, claim.run_id)? >= 2)
+            .then_some("overlap_queue_full"),
         OverlapPolicy::Parallel { cap } => {
             (unfinished_claims_count_conn(tx, timer.id, claim.run_id)? >= *cap as usize)
                 .then_some("overlap_parallel_cap")
@@ -985,7 +1013,12 @@ fn apply_overlap_disposition(
             for p in pending_claims_for_timer_conn(tx, timer.id, claim.run_id)? {
                 // Loses the race to a worker that already committed — the
                 // worker's truthful outcome stands, no replace event.
-                if finish_run_conn(tx, p.run_id, RunOutcome::WakeFailed, "overlap_replace_before_start")? {
+                if finish_run_conn(
+                    tx,
+                    p.run_id,
+                    RunOutcome::WakeFailed,
+                    "overlap_replace_before_start",
+                )? {
                     tx.enqueue_event(
                         &EventRecord::new(RunState::WakeFailed)
                             .with_timer(timer.id, timer.name.clone())

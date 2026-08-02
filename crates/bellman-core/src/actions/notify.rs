@@ -3,7 +3,9 @@
 /// Result of a notify attempt (always "stubbed" in this phase).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotifyOutcome {
+    /// Notification title; the part every desktop shows.
     pub title: String,
+    /// Notification body; may be empty.
     pub body: String,
     /// Always true for the stub — records that the interface was invoked.
     pub stubbed: bool,

@@ -17,6 +17,7 @@ pub struct CancellationToken {
 }
 
 impl CancellationToken {
+    /// A fresh, un-cancelled token.
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
@@ -26,6 +27,8 @@ impl CancellationToken {
         self.cancelled.store(true, Ordering::SeqCst);
     }
 
+    /// Whether cancellation has been requested. Polled by long actions;
+    /// it asks them to stop, it does not kill them.
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
     }

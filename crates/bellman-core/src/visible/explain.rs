@@ -127,7 +127,10 @@ pub fn explain_systemd(expr: &str) -> String {
         }
         return format!("systemd OnCalendar={cal}");
     }
-    if expr.contains("OnActiveSec=") || expr.contains("OnBootSec=") || expr.contains("OnUnitActiveSec=") {
+    if expr.contains("OnActiveSec=")
+        || expr.contains("OnBootSec=")
+        || expr.contains("OnUnitActiveSec=")
+    {
         return format!("systemd monotonic: {expr}");
     }
     format!("systemd schedule: {expr}")

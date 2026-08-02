@@ -26,14 +26,7 @@ fn interval_timer(
     last_fired: Option<chrono::DateTime<Utc>>,
     misfire: MisfirePolicy,
 ) -> crate::store::Timer {
-    let occ = Occurrence::new(
-        OccurrenceKind::Interval {
-            every_secs,
-            anchor,
-        },
-        "UTC",
-    )
-    .unwrap();
+    let occ = Occurrence::new(OccurrenceKind::Interval { every_secs, anchor }, "UTC").unwrap();
     let mut new = NewTimer::new(name, occ);
     new.last_fired = last_fired;
     new.misfire = misfire;
@@ -61,14 +54,7 @@ fn suspend_resume_oversleep_recovered_interval_skip() {
     let clock = SimulatedClock::new(t0);
 
     // 10 s interval; last fired at t0 so next = t0+10.
-    let timer = interval_timer(
-        &mut store,
-        "hf",
-        10,
-        t0,
-        Some(t0),
-        MisfirePolicy::Skip,
-    );
+    let timer = interval_timer(&mut store, "hf", 10, t0, Some(t0), MisfirePolicy::Skip);
     assert_eq!(
         timer.next_fire_utc.unwrap(),
         t0 + ChronoDuration::seconds(10)
@@ -187,14 +173,7 @@ fn interval_skips_missed_beyond_grace() {
     let (_dir, mut store) = open_tmp();
     let t0 = epoch();
     let clock = SimulatedClock::new(t0);
-    let timer = interval_timer(
-        &mut store,
-        "iv",
-        60,
-        t0,
-        Some(t0),
-        MisfirePolicy::Skip,
-    );
+    let timer = interval_timer(&mut store, "iv", 60, t0, Some(t0), MisfirePolicy::Skip);
 
     let mut sched = Scheduler::new(
         store,
@@ -387,11 +366,7 @@ fn grace_boundary_coalesce_honored() {
         SchedulerConfig::default(),
     );
     sched2.boot().unwrap();
-    assert_eq!(
-        sched2.action().len(),
-        0,
-        "lateness > grace must skip"
-    );
+    assert_eq!(sched2.action().len(), 0, "lateness > grace must skip");
     let next = sched2
         .store()
         .get_timer(timer2.id)
@@ -446,14 +421,7 @@ fn claim_before_work_writes_run_row() {
     let (_dir, mut store) = open_tmp();
     let t0 = epoch();
     let clock = SimulatedClock::new(t0);
-    let timer = interval_timer(
-        &mut store,
-        "claim",
-        5,
-        t0,
-        Some(t0),
-        MisfirePolicy::Skip,
-    );
+    let timer = interval_timer(&mut store, "claim", 5, t0, Some(t0), MisfirePolicy::Skip);
 
     let mut sched = Scheduler::new(
         store,
@@ -482,14 +450,7 @@ fn high_frequency_stays_on_heap_outside_short_horizon() {
     let t0 = epoch();
     let clock = SimulatedClock::new(t0);
     // 2-minute interval (< 5 min HF threshold); next = t0+120.
-    let timer = interval_timer(
-        &mut store,
-        "hf",
-        120,
-        t0,
-        Some(t0),
-        MisfirePolicy::Skip,
-    );
+    let timer = interval_timer(&mut store, "hf", 120, t0, Some(t0), MisfirePolicy::Skip);
     // Horizon only 30 s — next at +120 is outside timers_due_by, but HF must load.
     let mut sched = Scheduler::new(
         store,
@@ -507,14 +468,7 @@ fn chunked_sleep_capped_at_max_sleep() {
     let (_dir, mut store) = open_tmp();
     let t0 = epoch();
     let clock = SimulatedClock::new(t0);
-    let _ = interval_timer(
-        &mut store,
-        "far",
-        600,
-        t0,
-        Some(t0),
-        MisfirePolicy::Skip,
-    );
+    let _ = interval_timer(&mut store, "far", 600, t0, Some(t0), MisfirePolicy::Skip);
     let mut sched = Scheduler::new(
         store,
         clock,
@@ -533,14 +487,7 @@ fn run_for_interval_fires_multiple_times() {
     let (_dir, mut store) = open_tmp();
     let t0 = epoch();
     let clock = SimulatedClock::new(t0);
-    let timer = interval_timer(
-        &mut store,
-        "iv",
-        2,
-        t0,
-        Some(t0),
-        MisfirePolicy::Skip,
-    );
+    let timer = interval_timer(&mut store, "iv", 2, t0, Some(t0), MisfirePolicy::Skip);
     let daily_at = NaiveTime::from_hms_opt(3, 0, 0).unwrap();
     let _daily = daily_timer(
         &mut store,
@@ -568,21 +515,16 @@ fn run_for_interval_fires_multiple_times() {
     assert!(r.fires.iter().all(|f| f.timer_id == timer.id));
 }
 
-
 #[test]
 fn mark_fired_advances_next_fire() {
     let (_dir, mut store) = open_tmp();
     let t0 = epoch();
     let clock = SimulatedClock::new(t0);
-    let timer = interval_timer(
-        &mut store,
-        "iv",
-        2,
-        t0,
-        Some(t0),
-        MisfirePolicy::Skip,
+    let timer = interval_timer(&mut store, "iv", 2, t0, Some(t0), MisfirePolicy::Skip);
+    assert_eq!(
+        timer.next_fire_utc.unwrap(),
+        t0 + ChronoDuration::seconds(2)
     );
-    assert_eq!(timer.next_fire_utc.unwrap(), t0 + ChronoDuration::seconds(2));
 
     let mut sched = Scheduler::new(
         store,
@@ -636,8 +578,18 @@ fn system_clock_interval_advances_and_refires() {
         r.fires.len() >= 2,
         "expected >=2 fires in 2.5s on 1s interval, got {} last={:?} next={:?}",
         r.fires.len(),
-        sched.store().get_timer(timer.id).unwrap().unwrap().last_fired,
-        sched.store().get_timer(timer.id).unwrap().unwrap().next_fire_utc,
+        sched
+            .store()
+            .get_timer(timer.id)
+            .unwrap()
+            .unwrap()
+            .last_fired,
+        sched
+            .store()
+            .get_timer(timer.id)
+            .unwrap()
+            .unwrap()
+            .next_fire_utc,
     );
     let t = sched.store().get_timer(timer.id).unwrap().unwrap();
     assert!(t.next_fire_utc.unwrap() > t.last_fired.unwrap());
@@ -693,14 +645,7 @@ fn crash_after_claim_recovers_pending_action() {
 
     let timer_id = {
         let mut store = Store::open(&path).unwrap();
-        let timer = interval_timer(
-            &mut store,
-            "crash",
-            10,
-            t0,
-            Some(t0),
-            MisfirePolicy::Skip,
-        );
+        let timer = interval_timer(&mut store, "crash", 10, t0, Some(t0), MisfirePolicy::Skip);
         assert_eq!(timer.next_fire_utc.unwrap(), scheduled);
         // Crash boundary: claim written, action never ran, process dies.
         let claim = store.claim_run(timer.id, scheduled).unwrap();
@@ -871,14 +816,7 @@ fn pause_all_keeps_heap_warm_but_blocks_fires() {
     let clock = SimulatedClock::new(t0);
     // 2 s interval, last_fired = t0 so next_fire = t0+2 (the simulated clock
     // returns t0, so the timer is due immediately at the first tick).
-    let timer = interval_timer(
-        &mut store,
-        "paused",
-        2,
-        t0,
-        Some(t0),
-        MisfirePolicy::Skip,
-    );
+    let timer = interval_timer(&mut store, "paused", 2, t0, Some(t0), MisfirePolicy::Skip);
     let mut sched = Scheduler::new_paused(
         store,
         clock,
@@ -925,9 +863,7 @@ fn unpause_via_control_msg_lets_due_timer_fire() {
         60,
         t0,
         Some(t0),
-        MisfirePolicy::Coalesce {
-            grace_secs: 3600,
-        },
+        MisfirePolicy::Coalesce { grace_secs: 3600 },
     );
     let mut sched = Scheduler::new_paused(
         store,
@@ -961,14 +897,7 @@ fn set_pause_all_now_observable_immediately() {
     let (_dir, mut store) = open_tmp();
     let t0 = epoch();
     let clock = SimulatedClock::new(t0);
-    let _timer = interval_timer(
-        &mut store,
-        "now",
-        2,
-        t0,
-        Some(t0),
-        MisfirePolicy::Skip,
-    );
+    let _timer = interval_timer(&mut store, "now", 2, t0, Some(t0), MisfirePolicy::Skip);
     let mut sched = Scheduler::new(
         store,
         clock,
@@ -984,7 +913,6 @@ fn set_pause_all_now_observable_immediately() {
     let r = sched.run_for(Duration::from_millis(20)).unwrap();
     assert_eq!(r.fires.len(), 0);
 }
-
 
 #[test]
 fn pickup_deadline_fires_from_the_scheduler_heap() {
@@ -1356,4 +1284,97 @@ fn periodic_floor_rebuilds_even_when_idle() {
         "floor rebuilds missing: q0={q0} now={}",
         sched.store().horizon_query_count()
     );
+}
+
+/// C11 regression: a misfire that policy decides **not** to fire must still
+/// be written to the log.
+///
+/// `docs/PLAN.md` promises "every miss/outcome is logged to JSONL
+/// (`fired_late`, `skipped_misfire`, `coalesced`)" and `INTEGRATION.md`
+/// lists `skipped_misfire` among the kinds Bellman writes — but the only
+/// producer of that kind was the *overlap* skip inside the fire
+/// transaction. Both misfire skip branches (`Skip` past grace, and
+/// `Coalesce` with the whole backlog out of grace) advanced the timer
+/// silently, so a user whose machine was off through a fire saw nothing at
+/// all in the log.
+#[test]
+fn misfire_skip_past_grace_is_logged_not_silent() {
+    use crate::events::RunState;
+
+    let (_dir, mut store) = open_tmp();
+    let t0 = epoch();
+
+    // Daily 09:00 with Skip: calendar kinds get zero skip grace, so a fire
+    // missed by hours is dropped.
+    let missed = Utc.with_ymd_and_hms(2030, 6, 1, 9, 0, 0).unwrap();
+    let skip = daily_timer(
+        &mut store,
+        "daily-skip",
+        NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+        Some(missed - ChronoDuration::days(1)),
+        MisfirePolicy::Skip,
+    );
+    // Coalesce with a 60 s grace: three hours late is far outside it.
+    let coalesce = daily_timer(
+        &mut store,
+        "daily-coalesce",
+        NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+        Some(missed - ChronoDuration::days(1)),
+        MisfirePolicy::Coalesce { grace_secs: 60 },
+    );
+    assert_eq!(skip.next_fire_utc.unwrap(), missed);
+    assert_eq!(coalesce.next_fire_utc.unwrap(), missed);
+
+    // Boot at 12:00 — three hours after the missed 09:00 slot.
+    let clock = SimulatedClock::new(t0);
+    let mut sched = Scheduler::new(
+        store,
+        clock,
+        RecordingAction::new(),
+        SchedulerConfig::default(),
+    );
+    sched.boot().unwrap();
+
+    assert!(
+        sched.action().events.is_empty(),
+        "neither policy should have fired: {:?}",
+        sched.action().events
+    );
+
+    let events: Vec<crate::events::EventRecord> = sched
+        .store()
+        .pending_events(1000)
+        .unwrap()
+        .into_iter()
+        .map(|(_, payload)| serde_json::from_str(&payload).unwrap())
+        .collect();
+    let skipped: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == RunState::SkippedMisfire)
+        .collect();
+    assert_eq!(
+        skipped.len(),
+        2,
+        "both skipped misfires must be logged, got {events:?}"
+    );
+    for e in &skipped {
+        assert_eq!(e.scheduled_for, Some(missed), "the dropped slot is named");
+        assert!(e.run_id.is_none(), "a skipped misfire never mints a run");
+        assert!(
+            e.count.unwrap_or(0) >= 1,
+            "how many instants went with it: {e:?}"
+        );
+    }
+    let names: Vec<_> = skipped
+        .iter()
+        .filter_map(|e| e.timer_name.as_deref())
+        .collect();
+    assert!(names.contains(&"daily-skip"), "{names:?}");
+    assert!(names.contains(&"daily-coalesce"), "{names:?}");
+
+    // And the timers did move on rather than sticking on the missed slot.
+    for id in [skip.id, coalesce.id] {
+        let t = sched.store().get_timer(id).unwrap().unwrap();
+        assert!(t.next_fire_utc.unwrap() > t0, "advanced past now");
+    }
 }

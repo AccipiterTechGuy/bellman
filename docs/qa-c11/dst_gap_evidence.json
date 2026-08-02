@@ -1,0 +1,146 @@
+{
+  "mode": "gap",
+  "tz": "Europe/Helsinki",
+  "fake_start_local": "2027-03-28 02:55:00",
+  "watch_secs": 1200,
+  "target_local_time": "03:30:00",
+  "created": {
+    "dst-target": {
+      "command": "slot-submit",
+      "error": null,
+      "next_fire_at": "2027-03-28T01:00:00+00:00",
+      "ok": true,
+      "processed": 1,
+      "request_id": "2efbf007-161e-4f7a-83b6-c01a5f21b95b",
+      "response": {
+        "events": [],
+        "next_fire_at": "2027-03-28T01:00:00Z",
+        "request_id": "2efbf007-161e-4f7a-83b6-c01a5f21b95b",
+        "schema": "bellman-slot/1",
+        "slot_id": "0001",
+        "status": "ok",
+        "timer_id": "c2dc5c15-7b5d-43b5-8c32-c769ef69fe27"
+      },
+      "slot_id": "0001",
+      "status": "ok",
+      "timer_id": "c2dc5c15-7b5d-43b5-8c32-c769ef69fe27"
+    },
+    "dst-control-daily": {
+      "command": "slot-submit",
+      "error": null,
+      "next_fire_at": "2027-03-28T00:58:00+00:00",
+      "ok": true,
+      "processed": 1,
+      "request_id": "ea2cd96f-a3b6-4e2f-8626-4dac28a37e37",
+      "response": {
+        "events": [],
+        "next_fire_at": "2027-03-28T00:58:00Z",
+        "request_id": "ea2cd96f-a3b6-4e2f-8626-4dac28a37e37",
+        "schema": "bellman-slot/1",
+        "slot_id": "0002",
+        "status": "ok",
+        "timer_id": "7ad96c71-8c5d-4dec-968c-cfd544a406fb"
+      },
+      "slot_id": "0002",
+      "status": "ok",
+      "timer_id": "7ad96c71-8c5d-4dec-968c-cfd544a406fb"
+    },
+    "dst-control-interval": {
+      "command": "slot-submit",
+      "error": null,
+      "next_fire_at": "2027-03-28T01:00:00.519329207+00:00",
+      "ok": true,
+      "processed": 1,
+      "request_id": "9718a5c2-8b21-4220-8f6b-62baf10eec6b",
+      "response": {
+        "events": [],
+        "next_fire_at": "2027-03-28T01:00:00.519329207Z",
+        "request_id": "9718a5c2-8b21-4220-8f6b-62baf10eec6b",
+        "schema": "bellman-slot/1",
+        "slot_id": "0003",
+        "status": "ok",
+        "timer_id": "e3e38f81-cd5c-40aa-8af4-9f8d5ca72ca9"
+      },
+      "slot_id": "0003",
+      "status": "ok",
+      "timer_id": "e3e38f81-cd5c-40aa-8af4-9f8d5ca72ca9"
+    }
+  },
+  "fires": [
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2027-03-28T00:58:00.002186264Z",
+      "kind": "fired",
+      "event_id": "bfdc7541-12cb-4d0e-87bf-0e989cbe0246",
+      "timer_id": "7ad96c71-8c5d-4dec-968c-cfd544a406fb",
+      "run_id": "38ade84b-e153-4279-aae6-ee3d82d01457",
+      "timer_name": "dst-control-daily",
+      "scheduled_for": "2027-03-28T00:58:00Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2027-03-28T01:00:00.001618088Z",
+      "kind": "fired",
+      "event_id": "59e5dc55-42c9-40a4-8861-d1f545ea19ba",
+      "timer_id": "c2dc5c15-7b5d-43b5-8c32-c769ef69fe27",
+      "run_id": "3cdbf1f8-45ab-47bf-8c7d-1dbe6cbfc87a",
+      "timer_name": "dst-target",
+      "scheduled_for": "2027-03-28T01:00:00Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2027-03-28T01:00:00.521127839Z",
+      "kind": "fired",
+      "event_id": "e16be10b-dfcf-4c4a-92db-4ad46316d1b3",
+      "timer_id": "e3e38f81-cd5c-40aa-8af4-9f8d5ca72ca9",
+      "run_id": "26673cbb-af98-4614-8551-b547ebbd1628",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2027-03-28T01:00:00.519329207Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2027-03-28T01:05:00.521471234Z",
+      "kind": "fired",
+      "event_id": "f02926b9-5989-4e79-a5c0-04ee7f69f92b",
+      "timer_id": "e3e38f81-cd5c-40aa-8af4-9f8d5ca72ca9",
+      "run_id": "927263c1-3e54-45fb-a24c-76507accef86",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2027-03-28T01:05:00.519329207Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2027-03-28T01:10:00.520773472Z",
+      "kind": "fired",
+      "event_id": "d8017292-d118-40df-97c5-f3b6e612200d",
+      "timer_id": "e3e38f81-cd5c-40aa-8af4-9f8d5ca72ca9",
+      "run_id": "03b57aec-7bc5-4987-be43-882a03490dab",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2027-03-28T01:10:00.519329207Z"
+    },
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2027-03-28T01:15:00.520959046Z",
+      "kind": "fired",
+      "event_id": "24810056-a1e6-41c9-a865-78e9d0479430",
+      "timer_id": "e3e38f81-cd5c-40aa-8af4-9f8d5ca72ca9",
+      "run_id": "6c78de13-8f30-4fc7-b49e-93749cc6515c",
+      "timer_name": "dst-control-interval",
+      "scheduled_for": "2027-03-28T01:15:00.519329207Z"
+    }
+  ],
+  "target_fire_count": 1,
+  "target_fires": [
+    {
+      "schema": "bellman-event/1",
+      "logged_at": "2027-03-28T01:00:00.001618088Z",
+      "kind": "fired",
+      "event_id": "59e5dc55-42c9-40a4-8861-d1f545ea19ba",
+      "timer_id": "c2dc5c15-7b5d-43b5-8c32-c769ef69fe27",
+      "run_id": "3cdbf1f8-45ab-47bf-8c7d-1dbe6cbfc87a",
+      "timer_name": "dst-target",
+      "scheduled_for": "2027-03-28T01:00:00Z"
+    }
+  ],
+  "interval_fire_count": 4,
+  "final_fake_clock": "2027-03-28 02:55:00 EET+0200"
+}

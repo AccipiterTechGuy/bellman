@@ -1,0 +1,80 @@
+{
+  "installed_paths": {
+    "bellman": "/usr/bin/bellman",
+    "bellman-app": "/usr/bin/bellman-app"
+  },
+  "demo_path": "/usr/share/bellman/testing_apps/lightbulb/lightbulb.py",
+  "demo_present": true,
+  "desktop_entry": [
+    "Bellman.desktop"
+  ],
+  "slot_response": {
+    "command": "slot-submit",
+    "error": null,
+    "next_fire_at": "2026-08-01T22:18:39+00:00",
+    "ok": true,
+    "processed": 1,
+    "request_id": "bd840cd6-deb9-44c0-a36b-40851c4b594a",
+    "response": {
+      "events": [],
+      "next_fire_at": "2026-08-01T22:18:39Z",
+      "request_id": "bd840cd6-deb9-44c0-a36b-40851c4b594a",
+      "schema": "bellman-slot/1",
+      "slot_id": "0001",
+      "status": "ok",
+      "timer_id": "4001457e-494b-45a6-afc9-1e2926a5a733"
+    },
+    "slot_id": "0001",
+    "status": "ok",
+    "timer_id": "4001457e-494b-45a6-afc9-1e2926a5a733"
+  },
+  "timer_folder": "/deb/xdg/io.bellman.desktop/timers/lightbulb-demo-4001",
+  "timer_folder_listing": [
+    "reply-ec86c15f-4a28-40c3-a845-a29f87f11444.json",
+    "status.json",
+    "timer.json"
+  ],
+  "reply_files": {
+    "reply-ec86c15f-4a28-40c3-a845-a29f87f11444.json": "{\n  \"app_name\": \"lightbulb\",\n  \"hint\": \"set state to acknowledged | running | completed | failed\",\n  \"run_id\": \"ec86c15f-4a28-40c3-a845-a29f87f11444\",\n  \"schema\": \"bellman-reply/1\",\n  \"state\": \"completed\",\n  \"acknowledged_at\": \"2026-08-01T22:18:39Z\",\n  \"expected_secs\": 4,\n  \"completed_at\": \"2026-08-01T22:18:43Z\",\n  \"result\": {\n    \"on_duration_secs\": 4.01\n  }\n}"
+  },
+  "fires_listing": [],
+  "fire_docs": {},
+  "events_raw": [
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-08-01T22:16:56.263803680Z\",\"kind\":\"year_recalibrate\",\"event_id\":\"77898af3-e220-4232-a1c2-c5050283987c\",\"count\":1,\"message\":\"year=2026\",\"detail\":{\"timers_checked\":1,\"timers_updated\":0,\"year\":2026,\"year_start\":\"2026-01-01T00:00:00+00:00\"}}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-08-01T22:16:56.282615134Z\",\"kind\":\"wake_capability\",\"event_id\":\"2c0a2907-d227-4ead-a639-a77a7a0d760f\",\"message\":\"Wake from sleep: OFF \u2014 wake from sleep is turned off in Settings\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-08-01T22:16:59.248896548Z\",\"kind\":\"registered\",\"event_id\":\"821e6e21-3211-4a64-8b4a-32617288b1f9\",\"timer_id\":\"4001457e-494b-45a6-afc9-1e2926a5a733\",\"timer_name\":\"lightbulb-demo\",\"message\":\"slot-submit bd840cd6-deb9-44c0-a36b-40851c4b594a\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-08-01T22:18:39.002023875Z\",\"kind\":\"fired\",\"event_id\":\"890f5acd-2dd0-4b0a-b92c-321b416a4389\",\"timer_id\":\"4001457e-494b-45a6-afc9-1e2926a5a733\",\"run_id\":\"ec86c15f-4a28-40c3-a845-a29f87f11444\",\"timer_name\":\"lightbulb-demo\",\"scheduled_for\":\"2026-08-01T22:18:39Z\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-08-01T22:18:39.007592865Z\",\"kind\":\"wake_delivered\",\"event_id\":\"728b2649-7c0c-4e1c-a911-4f128a5e816e\",\"timer_id\":\"4001457e-494b-45a6-afc9-1e2926a5a733\",\"run_id\":\"ec86c15f-4a28-40c3-a845-a29f87f11444\",\"timer_name\":\"lightbulb-demo\",\"scheduled_for\":\"2026-08-01T22:18:39Z\",\"count\":0,\"message\":\"action=none\"}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-08-01T22:18:39Z\",\"kind\":\"acknowledged\",\"event_id\":\"8273cf12-5272-408f-9504-8e9b964bb7e6\",\"timer_id\":\"4001457e-494b-45a6-afc9-1e2926a5a733\",\"run_id\":\"ec86c15f-4a28-40c3-a845-a29f87f11444\",\"timer_name\":\"lightbulb-demo\",\"scheduled_for\":\"2026-08-01T22:18:39Z\",\"detail\":{\"app_name\":\"lightbulb\",\"expected_secs\":4}}",
+    "{\"schema\":\"bellman-event/1\",\"logged_at\":\"2026-08-01T22:18:43Z\",\"kind\":\"completed\",\"event_id\":\"12d92fc4-5e44-47f0-b314-37c423119717\",\"timer_id\":\"4001457e-494b-45a6-afc9-1e2926a5a733\",\"run_id\":\"ec86c15f-4a28-40c3-a845-a29f87f11444\",\"timer_name\":\"lightbulb-demo\",\"scheduled_for\":\"2026-08-01T22:18:39Z\",\"duration_ms\":4356,\"detail\":{\"result\":{\"on_duration_secs\":4.01}}}"
+  ],
+  "publisher_health": "{\n  \"schema\": \"bellman-publisher-health/1\",\n  \"leader\": true,\n  \"pending_events\": 0,\n  \"last_ok_at\": \"2026-08-01T22:16:59.250343332Z\"\n}",
+  "app_log_tail": " (enforce)\")\n\n(xdg-desktop-portal-gtk:86): xdg-desktop-portal-gtk-WARNING **: 22:16:56.155: error: Could not connect: No such file or directory\n\ndbus-daemon[60]: Successfully activated service 'org.a11y.atspi.Registry'\nSpiRegistry daemon is running with well-known name - org.a11y.atspi.Registry\ndbus-daemon[50]: [session uid=0 pid=50] Successfully activated service 'org.freedesktop.impl.portal.desktop.gtk'\n\n(/usr/libexec/xdg-desktop-portal:65): xdg-desktop-portal-WARNING **: 22:16:56.173: Failed to create RealtimeKit proxy: Could not connect: No such file or directory\n\n(/usr/libexec/xdg-desktop-portal:65): xdg-desktop-portal-WARNING **: 22:16:56.173: No skeleton to export\n\n(/usr/libexec/xdg-desktop-portal:65): xdg-desktop-portal-WARNING **: 22:16:56.173: Choosing gtk.portal for org.freedesktop.impl.portal.FileChooser as a last-resort fallback\n\n(/usr/libexec/xdg-desktop-portal:65): xdg-desktop-portal-WARNING **: 22:16:56.174: Choosing gtk.portal for org.freedesktop.impl.portal.AppChooser as a last-resort fallback\n\n(/usr/libexec/xdg-desktop-portal:65): xdg-desktop-portal-WARNING **: 22:16:56.175: Choosing gtk.portal for org.freedesktop.impl.portal.Print as a last-resort fallback\n\n(/usr/libexec/xdg-desktop-portal:65): xdg-desktop-portal-WARNING **: 22:16:56.176: Choosing gtk.portal for org.freedesktop.impl.portal.Notification as a last-resort fallback\n\n(/usr/libexec/xdg-desktop-portal:65): xdg-desktop-portal-WARNING **: 22:16:56.176: Choosing gtk.portal for org.freedesktop.impl.portal.Inhibit as a last-resort fallback\n\n(/usr/libexec/xdg-desktop-portal:65): xdg-desktop-portal-WARNING **: 22:16:56.177: Choosing gtk.portal for org.freedesktop.impl.portal.Access as a last-resort fallback\n[W][85662.437265] pw.conf      | [          conf.c: 1031 try_load_conf()] can't load config client.conf: No such file or directory\n[E][85662.437274] pw.conf      | [          conf.c: 1060 pw_conf_load_conf_for_context()] can't load config client.conf: No such file or directory\n\n(/usr/libexec/xdg-desktop-portal:65): xdg-desktop-portal-WARNING **: 22:16:56.180: Failed connect to PipeWire: Couldn't create PipeWire context\n\n(/usr/libexec/xdg-desktop-portal:65): xdg-desktop-portal-WARNING **: 22:16:56.180: Choosing gtk.portal for org.freedesktop.impl.portal.Account as a last-resort fallback\n\n(/usr/libexec/xdg-desktop-portal:65): xdg-desktop-portal-WARNING **: 22:16:56.181: Choosing gtk.portal for org.freedesktop.impl.portal.Email as a last-resort fallback\n\n(/usr/libexec/xdg-desktop-portal:65): xdg-desktop-portal-WARNING **: 22:16:56.181: Choosing gtk.portal for org.freedesktop.impl.portal.DynamicLauncher as a last-resort fallback\ndbus-daemon[50]: [session uid=0 pid=50] Successfully activated service 'org.freedesktop.portal.Desktop'\nbellman: dispatcher lock acquired\nbellman: system.prune ready id=00000000-0000-4000-8000-000000000001 next=Some(2026-08-03T03:17:00Z)\nbellman: prune catch-up: timers=0 archives_removed=0 archived=None\nbellman: year_recalibrate: checked=1 updated=0\n",
+  "bad_dir": [],
+  "status": {
+    "schema": "bellman-run/1",
+    "state": "completed",
+    "run_id": "ec86c15f-4a28-40c3-a845-a29f87f11444",
+    "timer_id": "4001457e-494b-45a6-afc9-1e2926a5a733",
+    "timer_name": "lightbulb-demo",
+    "occurrence_kind": "once",
+    "scheduled_for": "2026-08-01T22:18:39Z",
+    "fired_at": "2026-08-01T22:18:39.001985553Z",
+    "app_name": "lightbulb",
+    "acknowledged_at": "2026-08-01T22:18:39Z",
+    "expected_secs": 4,
+    "completed_at": "2026-08-01T22:18:43Z",
+    "result": {
+      "on_duration_secs": 4.01
+    },
+    "transport": "json"
+  },
+  "event_kinds": [
+    "registered",
+    "fired",
+    "wake_delivered",
+    "acknowledged",
+    "completed"
+  ],
+  "demo_stdout_tail": "0m\n\u001b[93m       \u2588\u2588\u2588\u2588\u2588\u2588       \u001b[0m\n\u001b[93m       \u2588\u2588\u2588\u2588\u2588\u2588       \u001b[0m\n\u001b[93m        \u2588\u2588\u2588\u2588        \u001b[0m\n\n   bulb on \u2014  0.2s remaining   \n\u001b[H\u001b[J\n   \ud83d\udca1 lightbulb is ON \n\n\u001b[93m      \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588      \u001b[0m\n\u001b[93m    \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588    \u001b[0m\n\u001b[93m   \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588   \u001b[0m\n\u001b[93m   \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588   \u001b[0m\n\u001b[93m    \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588    \u001b[0m\n\u001b[93m      \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588      \u001b[0m\n\u001b[93m       \u2588\u2588\u2588\u2588\u2588\u2588       \u001b[0m\n\u001b[93m       \u2588\u2588\u2588\u2588\u2588\u2588       \u001b[0m\n\u001b[93m        \u2588\u2588\u2588\u2588        \u001b[0m\n\n   bulb on \u2014  0.1s remaining   \n\u001b[H\u001b[J\n   \ud83d\udca1 lightbulb is off\n\n\u001b[90m      \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588      \u001b[0m\n\u001b[90m    \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588    \u001b[0m\n\u001b[90m   \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588   \u001b[0m\n\u001b[90m   \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588   \u001b[0m\n\u001b[90m    \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588    \u001b[0m\n\u001b[90m      \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588      \u001b[0m\n\u001b[90m       \u2588\u2588\u2588\u2588\u2588\u2588       \u001b[0m\n\u001b[90m       \u2588\u2588\u2588\u2588\u2588\u2588       \u001b[0m\n\u001b[90m        \u2588\u2588\u2588\u2588        \u001b[0m\n\n   bulb off \u2014 run reported completed   \n"
+}

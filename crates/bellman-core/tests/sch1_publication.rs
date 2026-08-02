@@ -119,7 +119,12 @@ fn timer_folder(e: &Env, timer_id: Uuid) -> PathBuf {
 fn skipped_firing_still_publishes_its_notification() {
     let e = env();
     let mut st = store(&e);
-    let t = owned_timer(&mut st, "own", launch("sleep", &["30"]), OverlapPolicy::Skip);
+    let t = owned_timer(
+        &mut st,
+        "own",
+        launch("sleep", &["30"]),
+        OverlapPolicy::Skip,
+    );
 
     let c1 = fire(&e, &mut st, &t, None);
     assert!(fires_file(&e, c1.run_id).exists(), "first fire notifies");
@@ -139,7 +144,10 @@ fn skipped_firing_still_publishes_its_notification() {
     let n2 = read_notification(&fires_file(&e, c2.run_id));
     assert_eq!(n2.run_id, c2.run_id);
     assert!(
-        n2.reply_path.as_ref().expect("file transport carries reply_path").exists(),
+        n2.reply_path
+            .as_ref()
+            .expect("file transport carries reply_path")
+            .exists(),
         "notification carries a real reply stub"
     );
     assert!(n2.status_path.exists());
@@ -167,7 +175,12 @@ fn failing_action_still_published_at_fire_time() {
 fn fixed_target_newer_wins_and_cursor_blocks_resurface() {
     let e = env();
     let mut st = store(&e);
-    let t = owned_timer(&mut st, "fixed", launch("sleep", &["30"]), OverlapPolicy::Parallel { cap: 2 });
+    let t = owned_timer(
+        &mut st,
+        "fixed",
+        launch("sleep", &["30"]),
+        OverlapPolicy::Parallel { cap: 2 },
+    );
     let fixed = fires_dir(&e.data.join("slots")).join("wake.json");
 
     let c1 = fire(&e, &mut st, &t, Some("wake.json"));
@@ -208,7 +221,12 @@ fn fixed_target_newer_wins_and_cursor_blocks_resurface() {
 fn pickup_cleanup_never_removes_newer_fixed_hint() {
     let e = env();
     let mut st = store(&e);
-    let t = owned_timer(&mut st, "fixed2", launch("true", &[]), OverlapPolicy::Parallel { cap: 2 });
+    let t = owned_timer(
+        &mut st,
+        "fixed2",
+        launch("true", &[]),
+        OverlapPolicy::Parallel { cap: 2 },
+    );
     let fixed = fires_dir(&e.data.join("slots")).join("wake.json");
 
     let c1 = fire(&e, &mut st, &t, Some("wake.json"));
@@ -246,21 +264,32 @@ fn crash_windows_and_consumed_without_pickup_redelivery() {
     publication::pump(&e.data, &st, 8, None); // sweep: published + missing → pending
     publication::pump(&e.data, &st, 8, None); // attempt: rewrite
     assert!(file.exists(), "redelivery after silent consumption");
-    assert_eq!(read_notification(&file).run_id, c.run_id, "same run_id — one logical firing");
+    assert_eq!(
+        read_notification(&file).run_id,
+        c.run_id,
+        "same run_id — one logical firing"
+    );
 
     // Crash window 1: crash before the replace — pending projection, file
     // missing; the pump writes it.
     std::fs::remove_file(&file).unwrap();
     st.requeue_transport_projection(c.run_id).unwrap();
     publication::pump(&e.data, &st, 8, None);
-    assert!(file.exists(), "pending projection is (re)published by the pump");
+    assert!(
+        file.exists(),
+        "pending projection is (re)published by the pump"
+    );
 
     // Unchanged file suppresses the immediate recovery rewrite but the
     // projection stays eligible until pickup.
     let mtime1 = std::fs::metadata(&file).unwrap().modified().unwrap();
     let proj = st.transport_projection(c.run_id).unwrap().unwrap();
     let outcome = publication::attempt(&e.data, &st, &proj, None);
-    assert_eq!(outcome, publication::Attempt::Deferred, "same run_id suppresses rewrite");
+    assert_eq!(
+        outcome,
+        publication::Attempt::Deferred,
+        "same run_id suppresses rewrite"
+    );
     assert_eq!(
         std::fs::metadata(&file).unwrap().modified().unwrap(),
         mtime1,
@@ -315,14 +344,20 @@ fn run_files_precede_delivery() {
     let proj = st.transport_projection(c.run_id).unwrap().unwrap();
     let outcome = publication::attempt(&e.data, &st, &proj, None);
     assert_eq!(outcome, publication::Attempt::Deferred);
-    assert!(!file.exists(), "no notification while status.json is missing");
+    assert!(
+        !file.exists(),
+        "no notification while status.json is missing"
+    );
     std::fs::write(&status, &saved_status).unwrap();
 
     // Fail the stub: same.
     std::fs::remove_file(&reply).unwrap();
     let outcome = publication::attempt(&e.data, &st, &proj, None);
     assert_eq!(outcome, publication::Attempt::Deferred);
-    assert!(!file.exists(), "no notification while the reply stub is missing");
+    assert!(
+        !file.exists(),
+        "no notification while the reply stub is missing"
+    );
 
     // R10 reconciliation repairs the stub (create-only); the pump publishes.
     TimersTree::new(&e.data)
@@ -346,11 +381,20 @@ fn slot_namespaces_never_collide() {
     let done = e.data.join("slots").join("done");
     std::fs::create_dir_all(&done).unwrap();
     let done_file = done.join("slot-0001.json");
-    std::fs::write(&done_file, br#"{"schema":"bellman-slot/1","slot_id":"0001"}"#).unwrap();
+    std::fs::write(
+        &done_file,
+        br#"{"schema":"bellman-slot/1","slot_id":"0001"}"#,
+    )
+    .unwrap();
 
     // A full standalone run-now (which used to overlay done/).
-    let outcome = bellman_core::run_now(&mut st, &e.db, t.id, &bellman_core::RunNowOptions::default())
-        .unwrap();
+    let outcome = bellman_core::run_now(
+        &mut st,
+        &e.db,
+        t.id,
+        &bellman_core::RunNowOptions::default(),
+    )
+    .unwrap();
     assert_eq!(
         std::fs::read(&done_file).unwrap(),
         br#"{"schema":"bellman-slot/1","slot_id":"0001"}"#.to_vec(),
@@ -369,7 +413,12 @@ fn slot_namespaces_never_collide() {
 fn second_fire_publishes_immediately_while_first_action_runs() {
     let e = env();
     let mut st = store(&e);
-    let t = owned_timer(&mut st, "imm", launch("sleep", &["30"]), OverlapPolicy::Parallel { cap: 2 });
+    let t = owned_timer(
+        &mut st,
+        "imm",
+        launch("sleep", &["30"]),
+        OverlapPolicy::Parallel { cap: 2 },
+    );
 
     let c1 = fire(&e, &mut st, &t, None);
     st.activate_run(c1.run_id).unwrap(); // first action still executing
@@ -383,10 +432,9 @@ fn second_fire_publishes_immediately_while_first_action_runs() {
     );
 
     // status.json already shows the new run_id…
-    let status: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(timer_folder(&e, t.id).join("status.json")).unwrap(),
-    )
-    .unwrap();
+    let status: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(timer_folder(&e, t.id).join("status.json")).unwrap())
+            .unwrap();
     assert_eq!(status["run_id"].as_str().unwrap(), c2.run_id.to_string());
     // …the first run is already superseded in the durable lifecycle…
     assert_eq!(
@@ -396,7 +444,9 @@ fn second_fire_publishes_immediately_while_first_action_runs() {
     // …the superseded event is in the outbox…
     let events = st.pending_events(64).unwrap();
     assert!(
-        events.iter().any(|(_, p)| p.contains("superseded") && p.contains(&c1.run_id.to_string())),
+        events
+            .iter()
+            .any(|(_, p)| p.contains("superseded") && p.contains(&c1.run_id.to_string())),
         "superseded event logged at fire time"
     );
     // …the second notification is out…
@@ -515,7 +565,7 @@ fn boot_ingests_stopped_reply_before_second_firing_publishes() {
         notify_sink: std::sync::Arc::new(bellman_core::actions::StubNotifySink),
         executor: bellman_core::actions::ExecutorConfig::default(),
         tick: Duration::from_millis(50),
-            ipc: None,
+        ipc: None,
     })
     .unwrap();
     let cfg = bellman_core::scheduler::SchedulerConfig::default().with_data_dir(e.data.clone());
@@ -560,7 +610,8 @@ fn boot_ingests_stopped_reply_before_second_firing_publishes() {
     )
     .unwrap();
     publisher.publish_cycle(&st);
-    let content = std::fs::read_to_string(e.data.join("logs").join("events.current.jsonl")).unwrap();
+    let content =
+        std::fs::read_to_string(e.data.join("logs").join("events.current.jsonl")).unwrap();
     let pos_completed = content
         .lines()
         .position(|l| l.contains("\"completed\"") && l.contains(&c1.run_id.to_string()))
@@ -587,7 +638,12 @@ fn worker_result_does_not_regress_status_json() {
     let mut st = store(&e);
     let marker = e.data.join("w.log");
     let cmd = format!("echo ran >> '{}'", marker.display());
-    let t = owned_timer(&mut st, "nore", launch("sh", &["-c", &cmd]), OverlapPolicy::Skip);
+    let t = owned_timer(
+        &mut st,
+        "nore",
+        launch("sh", &["-c", &cmd]),
+        OverlapPolicy::Skip,
+    );
     let c = fire(&e, &mut st, &t, None);
 
     // The app reports completed (durable lifecycle + projected file).
@@ -606,7 +662,7 @@ fn worker_result_does_not_regress_status_json() {
         notify_sink: std::sync::Arc::new(bellman_core::actions::StubNotifySink),
         executor: bellman_core::actions::ExecutorConfig::default(),
         tick: Duration::from_millis(50),
-            ipc: None,
+        ipc: None,
     })
     .unwrap();
     disp.begin_startup();
@@ -623,10 +679,9 @@ fn worker_result_does_not_regress_status_json() {
     disp.shutdown_drain();
 
     // status.json is untouched by the worker: still the app's completed.
-    let after: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(timer_folder(&e, t.id).join("status.json")).unwrap(),
-    )
-    .unwrap();
+    let after: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(timer_folder(&e, t.id).join("status.json")).unwrap())
+            .unwrap();
     assert_eq!(after["state"].as_str().unwrap(), "completed");
     assert_eq!(after["run_id"].as_str().unwrap(), c.run_id.to_string());
 }

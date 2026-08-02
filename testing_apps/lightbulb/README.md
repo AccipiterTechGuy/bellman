@@ -17,6 +17,12 @@ CLI default `~/.bellman`; for the desktop app use its app-data dir instead
 (Linux: `~/.local/share/io.bellman.desktop`) — pass the matching `--db` /
 `--slots` paths everywhere.
 
+> **Use the directory your Bellman actually drives.** The two are separate
+> stores. If the desktop app is what is running, `~/.bellman` is not the live
+> one and a timer created there will never fire — substitute
+> `~/.local/share/io.bellman.desktop` in every command below. The GUI shows
+> its own path under Settings → Data.
+
 1. **Create the timer, owned by the app name `lightbulb`** (a one-shot
    `slot-submit`; the `app_name` on the add request becomes the integration
    owner — without an owner Bellman creates no reply channel):
@@ -26,10 +32,13 @@ CLI default `~/.bellman`; for the desktop app use its app-data dir instead
    {"schema":"bellman-slot/1","request_id":"$(cat /proc/sys/kernel/random/uuid)",
     "operation":"add",
     "payload":{"app_name":"lightbulb","timer_name":"lightbulb-demo","tz":"UTC",
-    "occurrence":{"kind":"interval","every_secs":3600}}}
+    "occurrence":{"kind":"interval","every_secs":120}}}
    EOF
    bellman slot-submit /tmp/lightbulb-req.json --slots ~/.bellman/slots
    ```
+
+   Two minutes is short enough that the **clock** shows you the loop; change
+   `every_secs` to whatever suits once you have seen it once.
 
 2. **Start the lightbulb** (leave it running in a terminal you can see):
 
@@ -37,11 +46,12 @@ CLI default `~/.bellman`; for the desktop app use its app-data dir instead
    ./lightbulb.py --slots ~/.bellman/slots
    ```
 
-3. **Fire the timer now** (or wait for the interval):
+3. **Wait for the interval.** Within two minutes the timer comes round and
+   Bellman wakes the app — that is the whole point, so let the clock do it.
 
-   ```bash
-   bellman run-now lightbulb-demo
-   ```
+   If you would rather not wait, `bellman run-now lightbulb-demo` fires the
+   same path by hand. It proves the app answers; it does **not** prove the
+   scheduler works.
 
 Watch the terminal: the bulb lights for 15 seconds and goes out. In the
 meantime, in another terminal, watch the truth change:

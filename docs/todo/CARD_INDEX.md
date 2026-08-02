@@ -52,6 +52,13 @@ watches. See `testing_apps/README.md`.
 |---|---|---|
 | **SHIP1** | 🔴 Fixes from the R9 ship-readiness swarm, all hand-verified: fire-notification docs describe a **deleted** schema (`bellman-fire/1`) and the wrong `occurrence_kind` vocabulary; the wizard **falsely** claims XDG autostart grants `CAP_WAKE_ALARM`; §Install lacks `apt update` and uses `curl` before installing it; dual data dirs half-documented; CLI cannot set a launch action; CI never runs tests on macOS/Windows; missing community files + 11 tracked `/home/sami` paths. **`patchelf`/`libgtk-3-dev` are refuted — do not add them** | — |
 
+
+## Follow-ups raised by C11
+
+| card | scope | depends on |
+|---|---|---|
+| **FLK1** | ✅ **Closed on C11.** The `EventPublisher` lease was lost to a *sibling thread's* `fork` — `fork(2)` copies the fd table and `O_CLOEXEC` only fires at `exec(2)`, so a child briefly owns a duplicate of the open file description the `flock` belongs to. Fixed in `reply::gate::try_acquire_file` (bounded 100 ms retry). The production question splits in two, both measured: the race **does** occur outside tests (bounded to one skipped, self-healing maintenance round — hence a product defect), but a child **cannot** retain the lease for its lifetime, because the window ends at `exec` (~6µs with a 5 s child alive). The audit also found and fixed a real `O_CLOEXEC` leak of reply-file descriptors into user-supplied commands. Kept as the write-up | C11 |
+
 ## Scheduler internals
 
 | card | scope | depends on |

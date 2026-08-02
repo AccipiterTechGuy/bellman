@@ -2,9 +2,7 @@
 
 use crate::visible::cron::parse::{parse_crontab, CrontabMode};
 use crate::visible::cron::tasks_from_crontab_text;
-use crate::visible::types::{
-    DiscoveredTask, LastResult, ScanResult, SourceKind,
-};
+use crate::visible::types::{DiscoveredTask, LastResult, ScanResult, SourceKind};
 use chrono::{TimeZone, Utc};
 use serde_json::Value;
 

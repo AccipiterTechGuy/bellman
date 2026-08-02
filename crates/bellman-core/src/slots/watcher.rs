@@ -9,9 +9,7 @@ use super::service::SlotService;
 use crate::store::Store;
 use chrono::Utc;
 use notify::{RecommendedWatcher, RecursiveMode};
-use notify_debouncer_full::{
-    new_debouncer, DebounceEventResult, Debouncer, RecommendedCache,
-};
+use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
@@ -37,6 +35,7 @@ pub struct SlotWatcherStop {
 }
 
 impl SlotWatcherStop {
+    /// Ask the watcher thread to finish.
     pub fn stop(&self) {
         let _ = self.tx.send(());
     }
@@ -252,6 +251,15 @@ fn run_watch_loop(cfg: WatchConfig, stop_rx: mpsc::Receiver<()>) -> SlotResult<(
         .watch(service.layout().work_dir(), RecursiveMode::NonRecursive)
         .map_err(|e| SlotError::Io(format!("watch work/: {e}")))?;
     if let Some(engine) = &cfg.reply_engine {
+        // The tree root is created lazily by the first timer folder, so on a
+        // fresh data directory it may not exist yet — and `watch()` on a
+        // missing path is a hard error that would end this thread, taking
+        // reply ingest, the slot channel and the publisher tick with it for
+        // the life of the process while the app still looks healthy. Create
+        // it first; it is our directory either way.
+        if let Err(e) = engine.tree.ensure_readme() {
+            eprintln!("bellman: watcher: create timers/: {e}");
+        }
         debouncer
             .watch(engine.tree.root(), RecursiveMode::Recursive)
             .map_err(|e| SlotError::Io(format!("watch timers/: {e}")))?;
@@ -263,15 +271,13 @@ fn run_watch_loop(cfg: WatchConfig, stop_rx: mpsc::Receiver<()>) -> SlotResult<(
         Err(e) => eprintln!("bellman: watcher: initial slot poll: {e}"),
     }
     if let Some(engine) = &cfg.reply_engine {
-        let stats = crate::reply::poll_once(
-            engine,
-            &store,
-            Utc::now(),
-            Instant::now(),
-            &mut tracker,
-        );
+        let stats =
+            crate::reply::poll_once(engine, &store, Utc::now(), Instant::now(), &mut tracker);
         if stats.errors > 0 {
-            eprintln!("bellman: watcher: initial reply pass: {} error(s)", stats.errors);
+            eprintln!(
+                "bellman: watcher: initial reply pass: {} error(s)",
+                stats.errors
+            );
         }
         crate::reply::reconcile(engine, &store);
     }
@@ -299,13 +305,8 @@ fn run_watch_loop(cfg: WatchConfig, stop_rx: mpsc::Receiver<()>) -> SlotResult<(
         }
         // Reply channel + monotonic deadlines.
         if let Some(engine) = &cfg.reply_engine {
-            let stats = crate::reply::poll_once(
-                engine,
-                &store,
-                Utc::now(),
-                Instant::now(),
-                &mut tracker,
-            );
+            let stats =
+                crate::reply::poll_once(engine, &store, Utc::now(), Instant::now(), &mut tracker);
             if stats.errors > 0 {
                 eprintln!("bellman: watcher: reply pass: {} error(s)", stats.errors);
             }

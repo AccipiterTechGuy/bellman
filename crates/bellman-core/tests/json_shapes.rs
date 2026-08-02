@@ -11,11 +11,9 @@
 //! 4. run states come from the one R5 vocabulary;
 //! 5. shapes round-trip and unknown fields are still ignored on read (R6).
 
+use bellman_core::events::{EventRecord, RunState, EVENT_SCHEMA_V1};
 use bellman_core::reply::{FireNotification, FIRE_SCHEMA_V1};
-use bellman_core::events::{RunState, EventRecord, EVENT_SCHEMA_V1};
-use bellman_core::slots::{
-    SlotErrSidecar, SlotRequest, SlotResponse, SlotRunEvent, SCHEMA_V1,
-};
+use bellman_core::slots::{SlotErrSidecar, SlotRequest, SlotResponse, SlotRunEvent, SCHEMA_V1};
 use bellman_core::store::{ClaimStatus, RunClaim, RunOutcome};
 use chrono::{DateTime, TimeZone, Utc};
 use serde_json::Value;
@@ -77,7 +75,22 @@ fn sample_slot_response() -> SlotResponse {
         "550e8400-e29b-41d4-a716-446655440000",
         Some(Uuid::nil()),
         Some(fixed()),
-        vec![SlotRunEvent::from_claim(&sample_run_claim(ClaimStatus::Pending, None))],
+        vec![SlotRunEvent::from_claim(&sample_run_claim(
+            ClaimStatus::Pending,
+            None,
+        ))],
+    )
+}
+
+/// A rejection: the branch where every `Option` on the envelope is `None`.
+/// `sample_slot_response` only ever built the accepted case, which is how a
+/// dropped `skip_serializing_if` on `timer_id` reached a frozen wire shape
+/// without a single test noticing.
+fn sample_slot_rejection() -> SlotResponse {
+    SlotResponse::err(
+        "0001",
+        "550e8400-e29b-41d4-a716-446655440000",
+        "occurrence: interval must be at least 1 second",
     )
 }
 
@@ -99,6 +112,10 @@ fn emitted_shapes() -> Vec<(&'static str, Value)> {
         (
             "SlotResponse (done/ output)",
             serde_json::to_value(sample_slot_response()).unwrap(),
+        ),
+        (
+            "SlotResponse (done/ rejection)",
+            serde_json::to_value(sample_slot_rejection()).unwrap(),
         ),
         (
             "SlotErrSidecar (quarantine)",
@@ -138,7 +155,10 @@ fn top_level_kind_is_always_the_event_kind() {
     // Fire notification: kind is the event kind, occurrence type moved out.
     let v = serde_json::to_value(sample_fire_payload()).unwrap();
     assert!(
-        matches!(v["kind"].as_str(), Some("fired" | "fired_late" | "coalesced")),
+        matches!(
+            v["kind"].as_str(),
+            Some("fired" | "fired_late" | "coalesced")
+        ),
         "fire-notification top-level kind must be an event kind: {v}"
     );
     assert_eq!(v["occurrence_kind"], "daily");
@@ -288,9 +308,16 @@ fn fire_notification_wire_keys() {
         "status_path",
         "reply_path",
     ] {
-        assert!(obj.contains_key(key), "fire notification missing `{key}`: {v}");
+        assert!(
+            obj.contains_key(key),
+            "fire notification missing `{key}`: {v}"
+        );
     }
-    assert_eq!(obj.len(), 11, "unexpected extra keys in fire notification: {v}");
+    assert_eq!(
+        obj.len(),
+        11,
+        "unexpected extra keys in fire notification: {v}"
+    );
 }
 
 #[test]
@@ -334,4 +361,47 @@ fn run_state_is_the_one_r5_vocabulary() {
         let back: RunState = serde_json::from_value(v).unwrap();
         assert_eq!(back, state);
     }
+}
+
+/// `bellman-slot/1` is frozen, and a rejection is the shape most likely to
+/// drift unnoticed: it is the only one where the optional fields are all
+/// `None`, and the accepted-case sample above cannot see it.
+///
+/// This asserts the emitted object **key for key**, so an absent key and a
+/// `null` one are not the same answer. Remove
+/// `skip_serializing_if = "Option::is_none"` from `SlotResponse::timer_id` —
+/// which a documentation sweep on this very card did, silently — and the
+/// rejection every producer reads out of `slots/done/` gains
+/// `"timer_id": null` where the key used to be absent, and this fails.
+#[test]
+fn a_rejection_omits_absent_fields_rather_than_emitting_null() {
+    let v = serde_json::to_value(sample_slot_rejection()).unwrap();
+
+    assert_eq!(
+        v,
+        serde_json::json!({
+            "schema": "bellman-slot/1",
+            "slot_id": "0001",
+            "request_id": "550e8400-e29b-41d4-a716-446655440000",
+            "status": "error",
+            "error": "occurrence: interval must be at least 1 second",
+            "events": [],
+        }),
+        "the bellman-slot/1 rejection shape changed"
+    );
+
+    // Named individually so a failure says which key came back, not just
+    // that two blobs differ.
+    for absent in ["timer_id", "next_fire_at"] {
+        assert!(
+            v.get(absent).is_none(),
+            "{absent} must be ABSENT on a rejection, not null; got {}",
+            serde_json::to_string(&v).unwrap()
+        );
+    }
+
+    // Absent must still parse back — readers are not required to send it.
+    let back: SlotResponse = serde_json::from_value(v).unwrap();
+    assert!(back.timer_id.is_none());
+    assert!(back.next_fire_at.is_none());
 }

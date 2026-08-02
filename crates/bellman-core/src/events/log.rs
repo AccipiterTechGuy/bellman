@@ -55,16 +55,20 @@ impl EventLogConfig {
         }
     }
 
+    /// How long archives are kept before age retention removes them.
     pub fn with_retention(mut self, retention: Duration) -> Self {
         self.retention = retention;
         self
     }
 
+    /// Rotate before an append would take the live file past this size.
     pub fn with_max_current_bytes(mut self, bytes: u64) -> Self {
         self.max_current_bytes = bytes;
         self
     }
 
+    /// Total bytes the live file plus its archives may occupy; the oldest
+    /// archives go first when it is exceeded.
     pub fn with_budget_bytes(mut self, bytes: u64) -> Self {
         self.budget_bytes = bytes;
         self
@@ -74,7 +78,9 @@ impl EventLogConfig {
 /// Errors from the event log.
 #[derive(Debug)]
 pub enum EventLogError {
+    /// A filesystem operation failed.
     Io(String),
+    /// A record could not be serialised.
     Serialize(String),
 }
 
@@ -106,6 +112,7 @@ impl From<crate::store::StoreError> for EventLogError {
     }
 }
 
+/// Result alias for event-log operations.
 pub type EventLogResult<T> = Result<T, EventLogError>;
 
 /// What retention removed in one pass (the caller logs this — never silent).
@@ -120,6 +127,7 @@ pub struct RetainReport {
 }
 
 impl RetainReport {
+    /// How many archives this retention pass deleted.
     pub fn removed_count(&self) -> usize {
         self.aged.len() + self.budget.len()
     }
@@ -173,10 +181,7 @@ impl EventLog {
     pub fn open(config: EventLogConfig) -> EventLogResult<Self> {
         fs::create_dir_all(&config.logs_dir)?;
         fs::create_dir_all(config.logs_dir.join("archive"))?;
-        let mut log = Self {
-            config,
-            file: None,
-        };
+        let mut log = Self { config, file: None };
         log.ensure_open()?;
         Ok(log)
     }
@@ -204,14 +209,17 @@ impl EventLog {
         )
     }
 
+    /// The thresholds this log is operating under.
     pub fn config(&self) -> &EventLogConfig {
         &self.config
     }
 
+    /// Path of the live `events.current.jsonl`.
     pub fn current_path(&self) -> PathBuf {
         self.config.logs_dir.join(CURRENT_FILE_NAME)
     }
 
+    /// Directory holding the rotated gzip archives.
     pub fn archive_dir(&self) -> PathBuf {
         self.config.logs_dir.join("archive")
     }
@@ -502,12 +510,9 @@ impl EventLog {
 /// live current file, never temps).
 fn is_archive_file(path: &Path) -> bool {
     path.is_file()
-        && path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| {
-                n.starts_with("events-") && (n.ends_with(".jsonl") || n.ends_with(".jsonl.gz"))
-            })
+        && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+            n.starts_with("events-") && (n.ends_with(".jsonl") || n.ends_with(".jsonl.gz"))
+        })
 }
 
 /// Archive files with (path, mtime, len).
@@ -540,7 +545,8 @@ pub(crate) fn gz_path_for(plain: &Path) -> PathBuf {
 pub(crate) fn gzip_file(src: &Path, dst: &Path) -> EventLogResult<()> {
     let input = File::open(src)?;
     let output = File::create(dst)?;
-    let mut encoder = flate2::write::GzEncoder::new(BufWriter::new(output), flate2::Compression::default());
+    let mut encoder =
+        flate2::write::GzEncoder::new(BufWriter::new(output), flate2::Compression::default());
     io::copy(&mut BufReader::new(input), &mut encoder)?;
     let writer = encoder.finish()?;
     let file = writer
@@ -551,7 +557,10 @@ pub(crate) fn gzip_file(src: &Path, dst: &Path) -> EventLogResult<()> {
 }
 
 /// Build `archive_dir/events-YYYY-Www.jsonl`, adding `.N` before `.jsonl` on clash.
-pub(crate) fn unique_archive_path(archive_dir: &Path, now: chrono::DateTime<Utc>) -> EventLogResult<PathBuf> {
+pub(crate) fn unique_archive_path(
+    archive_dir: &Path,
+    now: chrono::DateTime<Utc>,
+) -> EventLogResult<PathBuf> {
     let iso = now.iso_week();
     let base = format!("events-{}-W{:02}", iso.year(), iso.week());
     let candidate = archive_dir.join(format!("{base}.jsonl"));
