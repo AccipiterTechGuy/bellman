@@ -278,6 +278,10 @@ pub struct SlotResponse {
     pub status: SlotStatus,
     /// The timer created or addressed. This is the id to keep for later
     /// `modify` / `delete`.
+    ///
+    /// Absent — not `null` — on a rejection. `bellman-slot/1` is frozen, and
+    /// the golden test below is what keeps this attribute attached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timer_id: Option<Uuid>,
     /// When that timer next fires, so a producer need not compute it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
