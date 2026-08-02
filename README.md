@@ -43,6 +43,12 @@ All product shots live in [`docs/screenshots/`](docs/screenshots/). QA before/af
 Linux is the only platform validated on real hardware today; see
 [Status](#status--what-actually-exists-today).
 
+**Before you start:** building needs roughly **3 GB of free disk space** for
+`target/` (2.6 GB measured on Ubuntu 26.04), plus about 1 GB for the toolchains
+in `$HOME`. If your working directory is a tmpfs or a small container volume,
+the Rust link step dies part-way through with `Disk quota exceeded (os error
+122)` from `ar` — an error that names neither disk space nor a remedy.
+
 **1. System prerequisites** (one time). Refresh the package list first — on a
 fresh machine the list is empty and nothing below installs without it.
 
@@ -59,7 +65,7 @@ them.** rustup and nvm install into the invoking user's `$HOME`, so
 off your `PATH`. Run them as whoever you are — being root is fine, the
 toolchain simply lands in root's home instead.
 
-Both cases are exercised: the transcripts in
+Both cases are exercised: the harness scripts in
 `docs/qa-c11/harness/install/` run the whole page as root in a bare
 container, and once more as an ordinary user with `sudo`.
 
@@ -69,6 +75,18 @@ Debian / Ubuntu:
 sudo apt update
 sudo apt install -y git libwebkit2gtk-4.1-dev libgtk-3-dev build-essential \
   curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+```
+
+**Pasting this into a terminal.** The `\` line continuations are safe in a
+script but fragile in a terminal that re-wraps a pasted block: if the paste
+breaks at a continuation, `sudo apt update` still succeeds while **the install
+never runs**, and the only clue is a stray `libgtk-3-dev: command not found`
+scrolling past. The failure is silent — you are left with a package list
+refreshed and nothing installed. If you are pasting rather than scripting, use
+this single unbroken line instead:
+
+```sh
+sudo apt update && sudo apt install -y git libwebkit2gtk-4.1-dev libgtk-3-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 ```
 
 Fedora:
@@ -93,6 +111,19 @@ its confirmation prompt: read what it plans to do. Running unattended (a
 container, a Dockerfile, CI) add **`--noconfirm`** — without it pacman waits
 for an answer no one is there to give. The apt and dnf lines already carry
 `-y` for the same reason.
+
+**Confirming step 1 finished.** `apt`, `dnf` and `pacman` print no completion
+banner — the last thing you see is another `Setting up …`, after a hundred-odd
+packages of scrollback, and the prompt returning is the only signal. To check
+the result rather than the scrollback:
+
+```sh
+pkg-config --modversion webkit2gtk-4.1 gtk+-3.0 ayatana-appindicator3-0.1 && echo "step 1 OK"
+```
+
+Three version numbers and `step 1 OK` means the libraries are installed and
+linkable. (`libxdo-dev` ships no `.pc` file; it is verified by the presence of
+`/usr/include/xdo.h`.)
 
 **2. Rust toolchain** (uses `curl` from step 1). `-y` accepts the standard
 install — without it rustup stops for a prompt, which a non-interactive
@@ -119,7 +150,8 @@ cargo install tauri-cli --locked
 
 Any Node **24.x** works — `nvm install 24` resolves to the newest 24 release,
 so your version will not match anyone else's exactly. Verified on Ubuntu 24.04
-with rustc 1.97.1, tauri-cli 2.11.4, and Node 24.13.0 and 24.18.1.
+and Ubuntu 26.04 with rustc 1.97.1, tauri-cli 2.11.4, and Node 24.13.0 and
+24.18.1.
 
 **Each list is sufficient on its own.** All three were checked by running the
 steps on this page verbatim in clean `ubuntu:24.04`, `fedora:latest` and
@@ -143,6 +175,22 @@ cd ui && npm ci && cd ..
 `npm ci` is the only manual front-end step: `cargo tauri build` runs the UI
 build and stages the `bellman` CLI sidecar itself (`beforeBuildCommand` in
 `src-tauri/tauri.conf.json`), but it never installs dependencies for you.
+
+`npm ci` finishes by reporting several vulnerabilities, some of them critical
+(`happy-dom`, `esbuild`). Every one is a **devDependency** — the test
+environment and the dev server — and none of them ship inside the packaged app,
+so they do not affect what you install. `npm ci` as written above is the
+supported path: it installs exactly the committed lockfile, which is what CI
+builds and what the versions on this page were validated against.
+
+`npm audit fix --force` is not needed. It does resolve the advisories (a test
+run cleared all of them and the UI still built), but only by taking major
+upgrades — Vite 5 → 8, `@sveltejs/vite-plugin-svelte` → 7 — that leave the
+committed lockfile behind and put you on an untested combination. Prefer
+`npm ci` unless you are deliberately upgrading the front-end stack.
+
+The npm 11 warning that `esbuild`'s postinstall script was not run is harmless —
+the platform binary resolves through `optionalDependencies` and the UI builds.
 
 Debian / Ubuntu:
 
