@@ -43,6 +43,12 @@ have been", which then surfaces as a misleading downstream assertion
 - The owning `EventPublisher` had already released: the same run printed
   `watcher_is_leader=false` immediately before.
 
+## How long it holds
+
+Long enough to matter. After C11's fixes the seeding retry waits ~2 s
+(100 attempts, 20 ms apart) and still loses roughly 1 run in 20. Whatever
+holds the lease is not a microsecond window.
+
 ## Where to look next
 
 `flock` locks belong to the open file description, so a lock outliving every

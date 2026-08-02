@@ -104,16 +104,26 @@ instead of blaming rotation; the retention window matches the policy under
 test, so age retention is exercised by the 90-day-old file it plants rather
 than by a stopwatch.
 
-> **This gate is not fully closed, and saying so is the point.** After the
-> fixes below, `cargo test --workspace --all-targets` is *much* more stable
-> but still not repeatably green: the remaining failures are confined to the
-> handful of tests that drive `EventPublisher` leadership, and they need
-> parallel in-process execution — `--test-threads=1` passed 366/366 three
-> times running. It is written up as
+> **This gate is not fully closed, and saying so is the point.** Measured,
+> not asserted:
+>
+> | `cargo test --workspace --all-targets` | failures |
+> |---|---|
+> | before this card's fixes | 3 in 20 runs, three different tests |
+> | after them | **1 in 20 runs**, always the same one |
+> | `-- --test-threads=1` | 0 in 3 runs (366/366 each) |
+>
+> The remaining failure is confined to tests that drive `EventPublisher`
+> leadership and needs parallel in-process execution. It now fails on a
+> **setup assertion that names the cause** — the seeded publish could not
+> win the lease within ~2 s of retrying — instead of a downstream assertion
+> that blamed the pruner. It is written up as
 > [`FLK1`](todo/cards/FLK1_publisher_lease_test_parallelism.md) with the
 > evidence gathered, including the question that has to be answered first:
-> **whether the same thing can happen in the product.** A claim of "green"
-> here would be the exact failure mode this card exists to catch.
+> **whether the same thing can happen in the product.** A lease that stays
+> unavailable for two seconds is long enough to matter if it can happen
+> outside a test. A claim of "green" here would be the exact failure mode
+> this card exists to catch.
 
 **The publisher-lease flake, and what is still unexplained.** The last one
 took instrumenting to understand, and the honest answer is partial. The test
