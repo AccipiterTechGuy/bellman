@@ -1,3 +1,5 @@
+> ARCHIVED 2026-08-02 — shipped; card bellman-c11-validation-full-system-originality, run 2026-08-01_0005, merge 9916dc1.
+
 # C11 — Full-system validation + originality sweep
 
 Repo: `~/bellman`. **The last gate before Bellman is offered to strangers.**
