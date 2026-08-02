@@ -61,14 +61,19 @@ enum ReplyRead {
 /// - open **no-follow** and non-blocking (a FIFO can never park us),
 /// - verify a regular file on the OPENED HANDLE (never a second path lookup),
 /// - size-check from that handle; over 64 KB the body is never read,
-/// - read at most the cap from the same handle.
+/// - read at most the cap from the same handle,
+/// - open **close-on-exec**: `std::fs::File::open` sets `O_CLOEXEC` for you,
+///   but `rustix::fs::open` passes the flags through verbatim, so it has to
+///   be asked for here. Without it this descriptor is inherited by every
+///   process Bellman launches — and those are user-supplied commands.
 fn read_reply_file(path: &Path) -> std::io::Result<ReplyRead> {
     #[cfg(unix)]
     let file = {
         use std::os::unix::io::FromRawFd;
         let flags = rustix::fs::OFlags::RDONLY
             | rustix::fs::OFlags::NOFOLLOW
-            | rustix::fs::OFlags::NONBLOCK;
+            | rustix::fs::OFlags::NONBLOCK
+            | rustix::fs::OFlags::CLOEXEC;
         match rustix::fs::open(path, flags, rustix::fs::Mode::empty()) {
             Ok(fd) => unsafe {
                 std::fs::File::from_raw_fd(std::os::unix::io::IntoRawFd::into_raw_fd(fd))
