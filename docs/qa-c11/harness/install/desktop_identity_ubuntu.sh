@@ -30,9 +30,10 @@ cat > /tmp/readme_steps.sh <<'INNER'
 # 2-4, exactly as §Install says, because rustup and nvm install into the
 # invoking user's $HOME.
 #
-# The one substitution: step 4's `git clone` reads /srcrepo, a read-only bind
-# mount of the checkout, instead of the public URL — the branch under test is
-# not on public main yet.
+# The one substitution: step 4's `git clone` reads /srcbundle instead of the
+# public URL — the branch under test is not on public main yet. The bundle is
+# a single self-contained file (`git bundle create`), so nothing outside it is
+# needed.
 set -eux
 id -un
 id -u                      # non-zero: this is not a root shell
@@ -55,7 +56,7 @@ cargo install tauri-cli --locked
 
 echo "=== README step 4: get the source, build the bundles ==="
 git config --global --add safe.directory '*'
-git clone --branch train/2026-08-01_0005 /srcrepo bellman
+git clone --branch train/2026-08-01_0005 /srcbundle bellman
 cd bellman
 git log --oneline -1
 cd ui

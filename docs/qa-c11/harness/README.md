@@ -121,31 +121,50 @@ BELLMAN_REFERENCE_REPOS=/path/to/clones python3 ../originality_sweep.py \
 ## The README §Install runs
 
 `install/` holds the transcripts behind §4. They are the README's own
-commands, in order, with nothing added — each run as the *only* thing in a
-clean container:
+commands, in order, with nothing added.
+
+**Make the source bundle first.** The container gets one self-contained file
+rather than a bind-mounted checkout, so nothing it needs lives outside the
+mount:
 
 ```sh
-docker run --rm -v $PWD/docs/qa-c11/harness/install/readme_install_ubuntu.sh:/v.sh:ro \
-  -v <repo>:/srcrepo:ro ubuntu:24.04 bash /v.sh
-#   readme_install_fedora.sh  fedora:latest
-#   readme_install_arch.sh    archlinux:latest
+cd <this worktree>
+git bundle create /tmp/bellman.bundle train/2026-08-01_0005
+```
+
+A `git bundle` is a complete repository in a single file — `git clone` treats
+it as a remote. Bind-mounting the checkout instead does **not** work from a
+git *worktree*: its `.git` is a pointer to a gitdir that lives outside the
+worktree, so the clone fails inside the container with `fatal: not a git
+repository`. The bundle has no such dependency, and it is also what makes the
+recipe runnable from this worktree alone.
+
+Then, one run per line:
+
+```sh
+B=/tmp/bellman.bundle
+I=$PWD/docs/qa-c11/harness/install
+docker run --rm -v $I/readme_install_ubuntu.sh:/v.sh:ro -v $B:/srcbundle:ro ubuntu:24.04     bash /v.sh
+docker run --rm -v $I/readme_install_fedora.sh:/v.sh:ro -v $B:/srcbundle:ro fedora:latest    bash /v.sh
+docker run --rm -v $I/readme_install_arch.sh:/v.sh:ro   -v $B:/srcbundle:ro archlinux:latest bash /v.sh
+docker run --rm -v $I/desktop_identity_ubuntu.sh:/v.sh:ro -v $B:/srcbundle:ro ubuntu:24.04   bash /v.sh
 ```
 
 §Install names two identities, and both are covered:
 
 | script | who runs it | what it exercises |
 |---|---|---|
-| `readme_install_ubuntu.sh` | root, no `sudo` in the image | step 1 without the `sudo` prefix, steps 2+ with no prefix |
+| `readme_install_ubuntu.sh` | root, no `sudo` in the image | steps 1 and 5 without the `sudo` prefix, steps 2–4 with no prefix |
 | `readme_install_fedora.sh` | root, but the image **has** `sudo` | step 1 keeps the prefix exactly as written |
 | `readme_install_arch.sh` | root, no `sudo` | step 1 without the prefix, plus `--noconfirm` because the README says to add it when running unattended |
 | `desktop_identity_ubuntu.sh` | an ordinary user with `sudo` | the desktop case: `sudo` on steps 1 and 5, **no** `sudo` on 2–4, and an assertion that the toolchain landed in the user's `$HOME` and not in root's |
 
 The last one needs the container to be made to resemble a desktop first —
 install `sudo`, create a user, put them in the sudoers file. That scaffolding
-is above a marked line in the script and is **not** part of §Install: a real
-desktop arrives with all three already true. It is written out rather than
-hidden so it cannot be mistaken for a step the README asks of anyone.
+is the outer half of a two-part script, with the README's own commands in the
+inner half, and it is **not** part of §Install: a real desktop arrives with
+all three already true. It is written out rather than hidden so it cannot be
+mistaken for a step the README asks of anyone.
 
-The one substitution in all four: step 4's `git clone` reads `/srcrepo`, a
-read-only bind mount of the checkout, instead of the public URL — the branch
-under test is not on public `main` yet. Each script says so at the top.
+The one substitution in all four is the bundle in place of the public URL,
+stated at the top of each script and in VALIDATION.md.

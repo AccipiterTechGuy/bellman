@@ -53,6 +53,12 @@ watches. See `testing_apps/README.md`.
 | **SHIP1** | 🔴 Fixes from the R9 ship-readiness swarm, all hand-verified: fire-notification docs describe a **deleted** schema (`bellman-fire/1`) and the wrong `occurrence_kind` vocabulary; the wizard **falsely** claims XDG autostart grants `CAP_WAKE_ALARM`; §Install lacks `apt update` and uses `curl` before installing it; dual data dirs half-documented; CLI cannot set a launch action; CI never runs tests on macOS/Windows; missing community files + 11 tracked `/home/sami` paths. **`patchelf`/`libgtk-3-dev` are refuted — do not add them** | — |
 
 
+## Follow-ups raised by C11
+
+| card | scope | depends on |
+|---|---|---|
+| **FLK1** | 🔴 `cargo test --workspace --all-targets` is intermittently red under parallel in-process execution — the `EventPublisher` lease `flock` is unavailable while no live fd of the process holds it. Serial runs are 100% green. **First question to answer: can this happen in the product**, i.e. can a Bellman that spawns a wake action while holding the publisher lease starve every other publisher? If yes that is the real bug | C11 |
+
 ## Scheduler internals
 
 | card | scope | depends on |

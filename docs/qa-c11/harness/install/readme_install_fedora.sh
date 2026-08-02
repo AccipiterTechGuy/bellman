@@ -6,8 +6,14 @@
 # added.
 #
 # The one substitution, stated here and in VALIDATION.md: step 4's `git clone`
-# reads /srcrepo (a read-only bind mount of the checkout) instead of the
-# public URL, because the branch under test is not on public main yet.
+# reads /srcbundle instead of the public URL, because the branch under test is
+# not on public main yet. That bundle is a single self-contained file made on
+# the host with
+#     git bundle create <file> train/2026-08-01_0005
+# so the container needs nothing but the file — no bind-mounted checkout, and
+# in particular no dependency on a parent repository outside it. (Mounting a
+# git *worktree* would not do: its .git is a pointer to a gitdir that lives
+# elsewhere, so the clone fails inside the container.)
 set -eux
 id -u
 command -v sudo
@@ -28,7 +34,7 @@ cargo install tauri-cli --locked
 
 echo "=== README step 4: get the source, build the Fedora bundle ==="
 git config --global --add safe.directory '*'
-git clone --branch train/2026-08-01_0005 /srcrepo bellman
+git clone --branch train/2026-08-01_0005 /srcbundle bellman
 cd bellman
 git log --oneline -1
 cd ui
