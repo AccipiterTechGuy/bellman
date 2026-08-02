@@ -100,12 +100,18 @@ four turned out to be the product, not the tests:
 | six `sch1_dispatcher` tests failing at once, five of them at the same `.lock().unwrap()` | **one** failure, amplified. Those tests serialise on a mutex; a genuine timeout poisoned it and every later test in the binary then panicked on the unwrap. Six red tests reporting one problem, with the real one buried. The guard only orders the tests, so it now recovers from poisoning — one failure reports as one failure |
 | `pruner::tests::prune_with_lease_elsewhere_reports_skipped_and_never_stamps_last_prune` — *assertion failed: !report.skipped_not_leader* | **the product again**, D10: the election was refused by a lock nothing held. Chased in full below — it took the longest of the four and was the only one that first looked like the test being unreasonable |
 
-The first and the last were fixed in the product. The second was fixed in the test: the
-seeding cycle is now retried a bounded number of times and **asserted**, with
-the failure message naming the real cause (election lost, or an I/O error)
-instead of blaming rotation; the retention window matches the policy under
-test, so age retention is exercised by the 90-day-old file it plants rather
-than by a stopwatch.
+The first and the last were fixed in the product. The second was fixed in the
+test: the seeding cycle's result is now **asserted**, with the failure message
+naming the real cause (election lost, or an I/O error) instead of letting an
+empty log surface later as "non-empty current should rotate" and blame the
+pruner; the retention window matches the policy under test, so age retention
+is exercised by the 90-day-old file it plants rather than by a stopwatch.
+
+Both of these tests briefly grew bounded retry loops while the cause of the
+fourth symptom was unknown. **Both were removed once D10 was fixed** — they
+were losing to D10 and nothing else, and the one on the post-release prune
+was actively hiding it. Every assertion in the suite is now at least as
+strict as it was when this card opened, and two are stricter.
 
 Measured, not asserted:
 
