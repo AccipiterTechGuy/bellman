@@ -999,6 +999,18 @@ nothing added. The identity each run uses is stated, because §Install now
 names two of them and both are covered. Transcripts:
 [`qa-c11/harness/install/`](qa-c11/harness/install/).
 
+> "Nothing added" was very nearly not true. Each script also ran
+> `git config --global --add safe.directory '*'`, which §Install does not ask
+> for. The supervisor spotted it and proved it inert — the clone from
+> `/srcbundle` succeeds without it. It is removed rather than documented as a
+> second exception, and the Ubuntu run below was **re-run from scratch on the
+> commit that removed it** (`536d64c`), reaching `OK-UBUNTU-LITERAL` with
+> `EXIT=0`: `apt`, rustup, nvm, `cargo install tauri-cli`, `git clone`, `npm
+> ci`, `cargo tauri build --bundles deb,appimage`, and `apt install` of the
+> resulting `Bellman_0.1.0_amd64.deb`. The other three scripts differ from it
+> only in package manager and identity; the deleted line was byte-identical in
+> all four, and it is only `git` that could ever have read it.
+
 ```
 ### ubuntu:24.04 — root, image ships no sudo                        exit 0
 id -u → 0
