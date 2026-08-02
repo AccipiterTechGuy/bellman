@@ -56,32 +56,54 @@ enum ReplyRead {
     Missing,
 }
 
+/// What opening a reply path produced on unix.
+#[cfg(unix)]
+enum ReplyOpen {
+    File(std::fs::File),
+    Missing,
+    Special(&'static str),
+}
+
+/// Open a reply path with the flags R9/R12 require: no-follow (a symlink is
+/// refused, not followed), non-blocking (a FIFO can never park us), and
+/// **close-on-exec**.
+///
+/// `std::fs::File::open` sets `O_CLOEXEC` for you; `rustix::fs::open` passes
+/// its `OFlags` through verbatim, so it has to be asked for here. Without it
+/// this descriptor is inherited by every process Bellman launches — and those
+/// are user-supplied commands from timer configuration (D11).
+///
+/// Split out from [`read_reply_file`] so the flags can be tested on the real
+/// call rather than on a copy of it.
+#[cfg(unix)]
+fn open_reply_file(path: &Path) -> std::io::Result<ReplyOpen> {
+    use std::os::unix::io::FromRawFd;
+    let flags = rustix::fs::OFlags::RDONLY
+        | rustix::fs::OFlags::NOFOLLOW
+        | rustix::fs::OFlags::NONBLOCK
+        | rustix::fs::OFlags::CLOEXEC;
+    match rustix::fs::open(path, flags, rustix::fs::Mode::empty()) {
+        Ok(fd) => Ok(ReplyOpen::File(unsafe {
+            std::fs::File::from_raw_fd(std::os::unix::io::IntoRawFd::into_raw_fd(fd))
+        })),
+        Err(rustix::io::Errno::NOENT) => Ok(ReplyOpen::Missing),
+        Err(rustix::io::Errno::LOOP) => Ok(ReplyOpen::Special("symlink")),
+        Err(e) => Err(std::io::Error::from_raw_os_error(e.raw_os_error())),
+    }
+}
+
 /// Read a reply path safely (R9/R12):
 ///
-/// - open **no-follow** and non-blocking (a FIFO can never park us),
+/// - open no-follow, non-blocking and close-on-exec (see [`open_reply_file`]),
 /// - verify a regular file on the OPENED HANDLE (never a second path lookup),
 /// - size-check from that handle; over 64 KB the body is never read,
-/// - read at most the cap from the same handle,
-/// - open **close-on-exec**: `std::fs::File::open` sets `O_CLOEXEC` for you,
-///   but `rustix::fs::open` passes the flags through verbatim, so it has to
-///   be asked for here. Without it this descriptor is inherited by every
-///   process Bellman launches — and those are user-supplied commands.
+/// - read at most the cap from the same handle.
 fn read_reply_file(path: &Path) -> std::io::Result<ReplyRead> {
     #[cfg(unix)]
-    let file = {
-        use std::os::unix::io::FromRawFd;
-        let flags = rustix::fs::OFlags::RDONLY
-            | rustix::fs::OFlags::NOFOLLOW
-            | rustix::fs::OFlags::NONBLOCK
-            | rustix::fs::OFlags::CLOEXEC;
-        match rustix::fs::open(path, flags, rustix::fs::Mode::empty()) {
-            Ok(fd) => unsafe {
-                std::fs::File::from_raw_fd(std::os::unix::io::IntoRawFd::into_raw_fd(fd))
-            },
-            Err(rustix::io::Errno::NOENT) => return Ok(ReplyRead::Missing),
-            Err(rustix::io::Errno::LOOP) => return Ok(ReplyRead::Special("symlink")),
-            Err(e) => return Err(std::io::Error::from_raw_os_error(e.raw_os_error())),
-        }
+    let file = match open_reply_file(path)? {
+        ReplyOpen::File(f) => f,
+        ReplyOpen::Missing => return Ok(ReplyRead::Missing),
+        ReplyOpen::Special(s) => return Ok(ReplyRead::Special(s)),
     };
     #[cfg(windows)]
     let file = {
@@ -888,4 +910,58 @@ pub fn startup_scan(engine: &ReplyEngine, store: &Store, now_wall: DateTime<Utc>
         }
     }
     reconcile(engine, store);
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod cloexec_tests {
+    use super::*;
+
+    /// D11 regression: a reply-file descriptor must not survive into a child.
+    ///
+    /// Bellman launches user-supplied commands from timer configuration. Any
+    /// descriptor open without `O_CLOEXEC` at the moment of a `fork` is still
+    /// there after the `exec`, so the launched command inherits a live handle
+    /// on a reply file it has no business holding.
+    ///
+    /// This asserts the real thing rather than a flag: it opens through
+    /// [`open_reply_file`] — the exact call `read_reply_file` makes — holds
+    /// the handle, spawns a child, and asks the child which descriptors it
+    /// actually ended up with. Drop `OFlags::CLOEXEC` from `open_reply_file`
+    /// and the child reports the reply path and this fails.
+    #[test]
+    fn a_reply_file_descriptor_is_not_inherited_by_a_launched_command() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let reply = dir.path().join("reply-cloexec-probe.json");
+        std::fs::write(&reply, b"{\"schema\":\"bellman-reply/1\"}").expect("write reply");
+
+        let opened = open_reply_file(&reply).expect("open must succeed");
+        let ReplyOpen::File(handle) = opened else {
+            panic!("the probe file is a regular readable file");
+        };
+
+        // The child reports what it inherited. Reading its own /proc/self/fd
+        // after exec is the only view that reflects O_CLOEXEC having fired.
+        let out = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("for f in /proc/self/fd/*; do readlink \"$f\" 2>/dev/null; done; exit 0")
+            .output()
+            .expect("spawn the probe child");
+        assert!(
+            out.status.success(),
+            "probe child failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        // Kept open across the spawn on purpose: a closed handle would pass
+        // this test for the wrong reason.
+        drop(handle);
+
+        let inherited = String::from_utf8_lossy(&out.stdout);
+        let target = reply.to_string_lossy();
+        assert!(
+            !inherited.contains(target.as_ref()),
+            "a launched command inherited the reply-file descriptor {target}; \
+             it saw:\n{inherited}"
+        );
+    }
 }
