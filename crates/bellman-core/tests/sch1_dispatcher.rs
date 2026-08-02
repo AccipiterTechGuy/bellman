@@ -27,9 +27,15 @@ use uuid::Uuid;
 /// themselves stay wall-clock strict).
 fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    // Recover from poisoning instead of unwrapping it. These tests
+    // serialise on this mutex, so ONE genuine failure used to poison it and
+    // turn every later test in the binary into a second panic at this line —
+    // six red tests reporting one problem, with the real one buried. The
+    // guard only orders the tests; a panicking test leaves no shared state
+    // behind that the next one could observe.
     LOCK.get_or_init(|| std::sync::Mutex::new(()))
         .lock()
-        .unwrap()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────

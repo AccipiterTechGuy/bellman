@@ -11,7 +11,12 @@ use uuid::Uuid;
 /// Serialize tests that assert on process timing / global PATH noise.
 fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    // Recover from poisoning instead of unwrapping it — see the same note
+    // in tests/sch1_dispatcher.rs. One genuine failure must report as one
+    // failure, not poison the guard and take every later test with it.
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn sample_timer(action: Action, retry: RetryPolicy) -> Timer {
