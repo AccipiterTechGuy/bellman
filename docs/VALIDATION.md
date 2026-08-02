@@ -1450,6 +1450,14 @@ that was reviewed and kept. Headline: **zero logic-bearing code shared** with
   matched only paths. That was wrong — it was the allowlist, not a missing
   check. Both the fixtures and the description were caught by review rather
   than by me.
+
+  The *path* allowlist was checked for the same rot and deliberately left
+  alone. Three of its seven entries (`/home/alice`, `/home/runner`,
+  `/Users/runner`) currently match nothing tracked, but every entry there is
+  a fictional or infrastructural name, so an unused one cannot permit a real
+  person's identifier the way the file exemptions did. That reasoning is now
+  a comment in the script, so the next reader does not have to re-derive why
+  one allowlist was pruned and the other was not.
 - **Naming and dead code.** `cargo clippy --workspace --all-targets -D
   warnings` is clean, which covers unused code, unused imports and the naming
   lints. No `#[allow(dead_code)]` was added by this card.

@@ -25,11 +25,19 @@ cd "$(dirname "$0")/.."
 # ── Check 1: home-directory paths ────────────────────────────────────────
 
 # Allowed placeholder roots (exact username component match only).
+#
+# Every entry here is a FICTIONAL or infrastructural name. That is what makes
+# an unused entry harmless — unlike a per-file exemption, a placeholder can
+# never permit a real person's identifier — so these are not pruned when the
+# last file using one goes away. `alice`, `runner` and `Users/runner`
+# currently match nothing tracked and are kept deliberately: the first is the
+# example user in docs and fixtures, the last two appear in CI output that
+# may be committed as evidence.
 ALLOWLIST=(
   "/home/you"      # docs placeholder for "your home directory"
   "/home/tester"   # redacted QA-evidence placeholder
   "/home/me"       # crontab-parser test fixture placeholder
-  "/home/alice"    # json_normalization.md example user
+  "/home/alice"    # example user in docs and test fixtures
   "/home/u"        # demo/test fixture placeholder
   "/home/runner"   # GitHub Actions runner user (CI logs/scripts)
   "/Users/runner"  # GitHub Actions macOS runner user
