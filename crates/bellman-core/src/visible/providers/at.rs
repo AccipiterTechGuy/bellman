@@ -41,7 +41,7 @@ pub fn discover_at() -> (Vec<DiscoveredTask>, Vec<String>) {
 
 /// `atq` format (typical):
 /// `job_number\tdate time queue user`
-/// e.g. `2\tWed Jul 29 16:00:00 2026 a sami`
+/// e.g. `2\tWed Jul 29 16:00:00 2026 a alice`
 fn parse_atq_line(line: &str) -> Option<DiscoveredTask> {
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.is_empty() {
@@ -137,11 +137,11 @@ mod tests {
 
     #[test]
     fn parse_line() {
-        let line = "2\tWed Jul 29 16:00:00 2026 a sami";
+        let line = "2\tWed Jul 29 16:00:00 2026 a alice";
         // tab may be spaces in our split
         let line = line.replace('\t', " ");
         let t = parse_atq_line(&line).expect("parse");
-        assert_eq!(t.owner, "sami");
+        assert_eq!(t.owner, "alice");
         assert!(t.source.starts_with("at:"));
     }
 }
