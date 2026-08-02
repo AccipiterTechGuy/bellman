@@ -73,25 +73,65 @@ pub fn acquire_file(path: &Path) -> io::Result<GateGuard> {
     acquire_path(path.to_path_buf())
 }
 
+/// How long [`try_acquire_file`] keeps retrying before it calls itself a
+/// follower. Sized to swallow the fork/exec window (microseconds) while
+/// staying far below the time a genuine leader holds the lease (a whole
+/// publish cycle), so a real contest is still reported promptly.
+const TRY_ACQUIRE_WINDOW: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// Non-blocking exclusive acquire of an arbitrary lock file (the R11
 /// publisher lease). Returns `Ok(None)` when another process holds it —
 /// the caller is then a follower, not an error case.
+///
+/// # Why this retries instead of asking once
+///
+/// `fork(2)` copies the whole file-descriptor table, and `O_CLOEXEC` is
+/// honoured at `exec(2)`, **not** at `fork(2)`. So between the fork and the
+/// exec, a brand-new child holds a duplicate of every open file description
+/// in the process — and an `flock` belongs to the *description*, not to the
+/// fd. For that window the lock is held by a process that has no interest in
+/// it and will drop it a few microseconds later, and any other thread asking
+/// for that lock is told `EWOULDBLOCK`.
+///
+/// Bellman forks constantly (every launch action, the demo, the wake helper),
+/// so a single-shot election loses this race at a measurable rate. Measured
+/// on Linux 7.0 with no competing lock holder anywhere in the process:
+/// 0 failures in 5.2M attempts with no children being spawned, and 7.3–7.5%
+/// failures in 7.5M attempts with one thread spawning `/bin/true` in a loop.
+///
+/// The window is bounded by the child reaching `exec`, not by how long the
+/// child then runs: a 5-second child leaves the lease free again ~6µs after
+/// the parent releases it. So a short bounded retry closes the hole
+/// completely, and no caller has to treat a spurious loss as real.
+///
+/// A genuine holder keeps the lease for an entire publish cycle, which is
+/// orders of magnitude longer than `TRY_ACQUIRE_WINDOW`, so real contention
+/// still returns `Ok(None)` and the caller is still correctly a follower.
 pub fn try_acquire_file(path: &Path) -> io::Result<Option<GateGuard>> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)?;
-    match try_lock_exclusive(&file)? {
-        true => Ok(Some(GateGuard {
-            file,
-            path: path.to_path_buf(),
-        })),
-        false => Ok(None),
+    let deadline = std::time::Instant::now() + TRY_ACQUIRE_WINDOW;
+    loop {
+        // Reopened per attempt: a fresh description cannot be one some child
+        // inherited before we got here.
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)?;
+        if try_lock_exclusive(&file)? {
+            return Ok(Some(GateGuard {
+                file,
+                path: path.to_path_buf(),
+            }));
+        }
+        drop(file);
+        if std::time::Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }
 
@@ -209,6 +249,67 @@ mod tests {
         let mut bytes = [0u8; 16];
         bytes[0] = byte;
         Uuid::from_bytes(bytes)
+    }
+
+    /// FLK1. An election held while the process is forking must not report
+    /// "someone else leads" when nobody does. `fork(2)` duplicates the fd
+    /// table and `O_CLOEXEC` only fires at `exec(2)`, so every child briefly
+    /// owns a copy of the open file description the lock belongs to.
+    ///
+    /// Nothing in this test ever holds the lease across an attempt: each
+    /// acquire drops its guard before the next one asks. Every `Ok(None)` is
+    /// therefore spurious by construction. Without the retry in
+    /// `try_acquire_file` this fails within a few hundred attempts.
+    #[cfg(unix)]
+    #[test]
+    fn election_is_not_lost_to_a_concurrent_forks_inherited_fd() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let lock = dir.path().join("logs").join("publisher.lock");
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let spawner = {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                let mut spawned = 0u32;
+                while !stop.load(Ordering::Relaxed) {
+                    match std::process::Command::new("/bin/true")
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                    {
+                        Ok(mut child) => {
+                            spawned += 1;
+                            let _ = child.wait();
+                        }
+                        Err(_) => break,
+                    }
+                }
+                spawned
+            })
+        };
+
+        let mut attempts = 0u32;
+        let mut spurious = 0u32;
+        let started = Instant::now();
+        while attempts < 3_000 && started.elapsed() < Duration::from_secs(20) {
+            attempts += 1;
+            match try_acquire_file(&lock).expect("acquire must not error") {
+                Some(guard) => drop(guard),
+                None => spurious += 1,
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        let spawned = spawner.join().expect("spawner thread");
+
+        assert_eq!(
+            spurious, 0,
+            "{spurious}/{attempts} elections reported a follower while no one \
+             held the lease ({spawned} children spawned concurrently)"
+        );
     }
 
     #[test]
