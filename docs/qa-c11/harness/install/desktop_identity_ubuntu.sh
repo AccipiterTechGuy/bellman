@@ -55,7 +55,6 @@ nvm install 24
 cargo install tauri-cli --locked
 
 echo "=== README step 4: get the source, build the bundles ==="
-git config --global --add safe.directory '*'
 git clone --branch train/2026-08-01_0005 /srcbundle bellman
 cd bellman
 git log --oneline -1
