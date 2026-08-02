@@ -1,12 +1,18 @@
 #!/bin/bash
-# README §Install, Debian/Ubuntu, run VERBATIM in a clean ubuntu:24.04.
-# NO shim and NO invented step. Step 1's `sudo` prefix is dropped because the
-# README itself says to drop it when you are already root, which is what this
-# image gives you. Every other character is the README's.
+# README §Install, Debian/Ubuntu, run LITERALLY in a clean ubuntu:24.04.
+#
+# The image gives you a root shell with no `sudo`, which is one of the two
+# cases §Install names: step 1 drops the `sudo` prefix, steps 2 onward run as
+# the invoking user (here, root) with no prefix. Nothing else is changed and
+# nothing is added.
+#
+# The one substitution, stated here and in VALIDATION.md: step 4's `git clone`
+# reads /srcrepo (a read-only bind mount of the checkout) instead of the
+# public URL, because the branch under test is not on public main yet.
 set -eux
 id -u
 
-echo "=== README step 1: system prerequisites (root, so no sudo — README says so) ==="
+echo "=== README step 1: system prerequisites ==="
 apt update
 apt install -y git libwebkit2gtk-4.1-dev libgtk-3-dev build-essential \
   curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
@@ -41,4 +47,4 @@ ls /usr/share/applications/ | grep -i bellman
 ls -R /usr/share/bellman/testing_apps/
 bellman --version
 ls -l target/release/bundle/deb/*.deb target/release/bundle/appimage/*.AppImage
-echo "OK-UBUNTU-VERBATIM"
+echo "OK-UBUNTU-LITERAL"

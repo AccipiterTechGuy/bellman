@@ -40,7 +40,7 @@ its script, and the Perl client. Originality is a separate document:
 | 3 | Rejection + quarantine under a live watcher (5 cases) | **PASS** |
 | 3 | Slot CRUD live, no restart (SCH2) | **PASS** |
 | 3 | A client in a language the docs do not cover | **PASS** (Perl) |
-| 4 | README §Install verbatim on Ubuntu, Fedora and Arch | **FAILED, then fixed** — three defects (`sudo`, `libxdo`, `linuxdeploy`); all three recipes then re-run verbatim end to end with no bootstrap, **PASS** |
+| 4 | README §Install verbatim on Ubuntu, Fedora and Arch | **FAILED, then fixed** — three defects (`sudo`/identity, `libxdo`, `linuxdeploy`); all four runs then literal in clean containers — three distros × root, plus Ubuntu as an ordinary user — **PASS** |
 | 4 | `.deb` installs; demos ship at the wizard's path; demo runs | **PASS** |
 | 4 | First-run wizard on a clean session, demo offer | **PASS** |
 | 4 | Both data directories | **PASS**, with a documentation gap |
@@ -59,7 +59,7 @@ regression test that was verified to fail without its fix:
 | D4 | Three documentation gaps: undocumented `config.json` clamps, and three slot payload fields missing from the INTEGRATION.md table | `0e65c98` |
 | D5 | The **one background watcher** (reply ingest + slot channel + event publisher) exits at startup if `<data dir>/timers/` does not exist yet, and the app carries on looking healthy | see below |
 | D6 | An unparseable system timezone name aborts startup maintenance, so `system.prune` is never created and nothing ever prunes | see below |
-| D7 | README §Install's first command assumes `sudo`, which `ubuntu:24.04` and `archlinux:latest` do not ship — the recipe stops before installing anything | see §4 |
+| D7 | README §Install said nothing about who runs what: its first command assumes `sudo`, which `ubuntu:24.04` and `archlinux:latest` do not ship, so the recipe stopped before installing anything; and it had no guidance on `sudo` for steps 2–5 or on running `pacman` unattended | see §4 |
 
 The walkthrough in §4 and *[Walkthrough](#walkthrough--what-this-was-like-to-use)*
 records how each was found, including the one this card's first pass papered
@@ -554,8 +554,11 @@ phase 2: python3 present but tkinter missing → no Run button, python3-tk note 
 
 ## 4 — Install and packaging, as a stranger
 
-Each recipe was run **verbatim** in a clean container, as the only commands
+Each recipe was run **literally** in a clean container, as the only commands
 executed, with `bash` as the shell (the README's steps 2 and 3 use `source`).
+Nothing is shimmed, substituted or inferred: where the runs differ from each
+other it is because §Install itself distinguishes the cases, and each
+difference is named where it is used.
 
 `git clone https://github.com/AccipiterTechGuy/bellman` was run for real on
 the first pass; at the time of the run the public `main` was `f5b56de`, the
@@ -564,7 +567,7 @@ a stranger gets. The re-runs after the fixes clone this branch instead, since
 the fixes are not on public `main` yet — that substitution is named where it
 is used.
 
-### The first thing that failed was `sudo`
+### The first thing that failed was `sudo` — and the first fix was wrong too
 
 The first pass wrapped every recipe in a two-line `sudo` shim. That was
 wrong: the card says install verbatim **with no bootstrap step you invented**,
@@ -574,6 +577,7 @@ and a shim is exactly that. Removing it turns up a genuine defect:
 $ docker run --rm ubuntu:24.04     sh -lc 'sudo true'   → exit 127  sudo: not found
 $ docker run --rm archlinux:latest sh -lc 'sudo true'   → exit 127  sudo: command not found
 $ docker run --rm fedora:latest    sh -lc 'sudo true'   → exit 0
+$ docker run --rm {ubuntu:24.04,fedora:latest,archlinux:latest} id -u  → 0, 0, 0
 ```
 
 `ubuntu:24.04` and `archlinux:latest` ship no `sudo` at all, and all three
@@ -582,14 +586,34 @@ first command, before installing anything. A desktop has `sudo`; a container,
 a chroot or a minimal image very often does not, and those are exactly where
 people build.
 
-**Fixed** in the README: step 1 now says it is the only part that needs root,
-that it is written with `sudo` because that is how a desktop user runs it, and
-that **if you are already root you drop the `sudo`** — naming the two images
-where the prefix fails. Steps 2 onward are explicitly not for root.
+The **second** attempt at the fix was also wrong, in a way worth recording.
+It said "everything from step 2 on runs as your normal user and must not be
+run as root" — a sentence the transcripts then contradicted, because in a
+container they stay uid 0 all the way through. Either the README or the
+evidence was lying, and it was the README: running steps 2–5 as root is
+perfectly fine. rustup and nvm install into the **invoking user's** `$HOME`,
+so as root the toolchain lands in root's home, which is consistent and works.
+What is actually wrong is putting `sudo` in *front* of them — that installs
+the toolchain into root's home while you are someone else, and then `cargo`
+is not on your `PATH`.
 
-Every run below then follows the README *including that sentence*: `sudo` is
-kept on Fedora, which has it, and dropped on Ubuntu and Arch, which do not.
-No shim, no invented step.
+**Fixed** in the README, which now says the true thing:
+
+- step 1 is the only part needing root privileges; it is written with `sudo`
+  because that is how a desktop user gets them, and **you drop the `sudo` if
+  you already are root** — naming the two images where the prefix fails;
+- steps 2 onward need no privileges and must **not** be prefixed with `sudo`,
+  with the reason (`$HOME`, `PATH`) rather than a bare prohibition;
+- `pacman -Syu` deliberately keeps its confirmation prompt because it is a
+  full system upgrade, and **`--noconfirm` is what you add when running
+  unattended** — which is what the apt and dnf `-y` flags already are.
+
+That last point removes the other private substitution: the earlier Arch
+transcript piped `yes '' |` into `pacman`, a command the README did not
+contain. It now runs `--noconfirm`, because the README says to.
+
+Every run below follows the README including those sentences. No shim, no
+invented step, and the identity each run uses is stated.
 
 ### Ubuntu 24.04 — **PASS, verbatim, no bootstrap**
 
@@ -662,46 +686,74 @@ correct. With `xdotool` substituted, prerequisites install and the build runs
 **Fixed** (`e151f11`): the package name is corrected, and Arch's build step is
 now `cargo tauri build --no-bundle --ci` (Tauri has no pacman target).
 
-### All three recipes, re-run verbatim end to end, no shim
+### All four runs, literal, in clean containers
 
-The whole page again — every step, in order, in a fresh container each time,
-with nothing added.
+Every step of the page, in order, in a fresh container each time, with
+nothing added. The identity each run uses is stated, because §Install now
+names two of them and both are covered. Transcripts:
+[`qa-c11/harness/install/`](qa-c11/harness/install/).
 
 ```
-### ubuntu:24.04                                                   exit 0
-apt update; apt install -y …            (no sudo: root, per the README)
-rustup -y; source ~/.cargo/env
-nvm install 24; cargo install tauri-cli --locked
-npm ci; cargo tauri build --bundles deb,appimage --ci --no-sign
+### ubuntu:24.04 — root, image ships no sudo                        exit 0
+id -u → 0
+apt update; apt install -y …                     (no sudo: root, per §Install)
+curl … sh.rustup.rs | sh -s -- -y ; source ~/.cargo/env      (no sudo prefix)
+nvm install 24 ; cargo install tauri-cli --locked
+npm ci ; cargo tauri build --bundles deb,appimage --ci --no-sign
 apt install -y ./target/release/bundle/deb/Bellman_*.deb
   /usr/bin/bellman   /usr/bin/bellman-app   Bellman.desktop
   /usr/share/bellman/testing_apps/{README.md,lightbulb/,lightbulb_gui/}
-  Bellman_0.1.0_amd64.deb        7 118 924 B
-  Bellman_0.1.0_amd64.AppImage  81 357 304 B
+  Bellman_0.1.0_amd64.deb        7 118 832 B
+  Bellman_0.1.0_amd64.AppImage  81 353 208 B
   bellman --version → bellman 0.1.0
-OK-UBUNTU-VERBATIM
+OK-UBUNTU-LITERAL
 
-### fedora:latest                                                  exit 0
-sudo dnf install -y …                   (sudo kept: this image has it)
-rustup -y; nvm install 24; cargo install tauri-cli --locked
-npm ci; cargo tauri build --bundles rpm --ci --no-sign
+### fedora:latest — root, but this image HAS sudo                   exit 0
+id -u → 0 ; command -v sudo → /usr/sbin/sudo
+sudo dnf install -y …                       (prefix kept, exactly as written)
+rustup / nvm / tauri-cli, no sudo
+npm ci ; cargo tauri build --bundles rpm --ci --no-sign
 sudo dnf install -y ./target/release/bundle/rpm/Bellman-*.rpm
   /usr/sbin/bellman   /usr/sbin/bellman-app   Bellman.desktop
   /usr/share/bellman/testing_apps/{README.md,lightbulb/,lightbulb_gui/}
   bellman --version → bellman 0.1.0
-OK-FEDORA-VERBATIM
+OK-FEDORA-LITERAL
 
-### archlinux:latest                                               exit 0
-pacman -Syu --needed … xdotool …        (no sudo: root, per the README)
-rustup -y; nvm install 24; cargo install tauri-cli --locked
-npm ci; cargo tauri build --no-bundle --ci
-  target/release/bellman       7 489 000 B
+### archlinux:latest — root, no sudo, unattended                    exit 0
+id -u → 0
+pacman -Syu --needed --noconfirm … xdotool …
+      (no sudo: root · --noconfirm: §Install says to add it when unattended)
+rustup / nvm / tauri-cli, no sudo
+npm ci ; cargo tauri build --no-bundle --ci
+  target/release/bellman       7 488 776 B
   target/release/bellman-app  10 677 288 B
   ./target/release/bellman --version → bellman 0.1.0
-OK-ARCH-VERBATIM
+OK-ARCH-LITERAL
+
+### ubuntu:24.04 — an ORDINARY USER with sudo (the desktop case)    exit 0
+id -un → builder ; id -u → 1001
+sudo apt update ; sudo apt install -y …                 (sudo, as a user does)
+curl … | sh -s -- -y                        (NO sudo — §Install says not to)
+  assert: command -v cargo == $HOME/.cargo/bin/cargo
+npm ci ; cargo tauri build --bundles deb,appimage --ci --no-sign
+sudo apt install -y ./target/release/bundle/deb/Bellman_*.deb
+  /usr/bin/bellman   /usr/bin/bellman-app   Bellman.desktop  + both demos
+  drwxrwxr-x builder builder ~builder/.cargo
+  drwxrwxr-x builder builder ~builder/.nvm
+  assert: /root/.cargo and /root/.nvm do not exist
+OK-UBUNTU-NONROOT
 ```
 
-**PASS on all three distributions**, verbatim, with no bootstrap step.
+**PASS on all three distributions and on both identities.** The last run is
+the one that proves the `$HOME` sentence rather than asserting it: the
+toolchain belongs to `builder`, and root has none.
+
+That fourth run needs the container made to resemble a desktop first —
+install `sudo`, create a user, add them to sudoers. That scaffolding is **not
+part of §Install**, it is in the outer half of a two-part script with the
+README's own commands in the inner half, and it is written out rather than
+folded in so it cannot be mistaken for something the page asks of anyone. The
+other three need no scaffolding at all.
 
 ### The `.deb`'s own shipped demo — **found two more defects**
 
@@ -925,6 +977,16 @@ it is a real, ordinary defect (the page never says step 1 needs root, or what
 to do when you already are), and the fix is one useful sentence rather than a
 private workaround. The lesson generalises: a shim is a way of not hearing
 what the machine just told you.
+
+**And then I got the fix wrong, which is the more interesting mistake.**
+Having removed the shim, I wrote "steps 2 onward must not be run as root"
+into the README — and left the container transcripts running as root all the
+way through. That is worse than the shim: the shim was a private workaround,
+this was a published claim my own evidence contradicted. Nobody would have
+noticed from reading either half alone. The truth is narrower and more
+useful: root is fine, `sudo` in front of steps 2–5 is not, and the reason is
+`$HOME`. A prohibition without a reason is how you end up with a rule that
+does not survive contact with a container.
 
 **Then I tried Fedora and Arch, and both stopped again.** On Arch the very first
 command died on `libxdo`; I had to go and find out that Arch calls it

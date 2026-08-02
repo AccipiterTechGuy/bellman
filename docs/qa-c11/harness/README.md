@@ -120,20 +120,32 @@ BELLMAN_REFERENCE_REPOS=/path/to/clones python3 ../originality_sweep.py \
 
 ## The README §Install runs
 
-`install/readme_install_{ubuntu,fedora,arch}.sh` are the transcripts behind
-§4 — the README's own commands, in order, with nothing added. Each is run as
-the *only* thing in a clean container:
+`install/` holds the transcripts behind §4. They are the README's own
+commands, in order, with nothing added — each run as the *only* thing in a
+clean container:
 
 ```sh
 docker run --rm -v $PWD/docs/qa-c11/harness/install/readme_install_ubuntu.sh:/v.sh:ro \
-  -v <repo>:/srcrepo:ro ubuntu:24.04 bash /v.sh      # and fedora:latest, archlinux:latest
+  -v <repo>:/srcrepo:ro ubuntu:24.04 bash /v.sh
+#   readme_install_fedora.sh  fedora:latest
+#   readme_install_arch.sh    archlinux:latest
 ```
 
-Two things to know before reading them:
+§Install names two identities, and both are covered:
 
-- **`sudo` is dropped on Ubuntu and Arch and kept on Fedora.** That is not an
-  edit: those two images ship no `sudo` and all three run as root, and the
-  README now says to drop the prefix when you are already root. Following the
-  page includes following that sentence.
-- **`git clone` points at `/srcrepo`, not the public URL.** The fixes under
-  test are not on public `main` yet. Everything else is verbatim.
+| script | who runs it | what it exercises |
+|---|---|---|
+| `readme_install_ubuntu.sh` | root, no `sudo` in the image | step 1 without the `sudo` prefix, steps 2+ with no prefix |
+| `readme_install_fedora.sh` | root, but the image **has** `sudo` | step 1 keeps the prefix exactly as written |
+| `readme_install_arch.sh` | root, no `sudo` | step 1 without the prefix, plus `--noconfirm` because the README says to add it when running unattended |
+| `desktop_identity_ubuntu.sh` | an ordinary user with `sudo` | the desktop case: `sudo` on steps 1 and 5, **no** `sudo` on 2–4, and an assertion that the toolchain landed in the user's `$HOME` and not in root's |
+
+The last one needs the container to be made to resemble a desktop first —
+install `sudo`, create a user, put them in the sudoers file. That scaffolding
+is above a marked line in the script and is **not** part of §Install: a real
+desktop arrives with all three already true. It is written out rather than
+hidden so it cannot be mistaken for a step the README asks of anyone.
+
+The one substitution in all four: step 4's `git clone` reads `/srcrepo`, a
+read-only bind mount of the checkout, instead of the public URL — the branch
+under test is not on public `main` yet. Each script says so at the top.

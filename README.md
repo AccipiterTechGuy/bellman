@@ -46,12 +46,22 @@ Linux is the only platform validated on real hardware today; see
 **1. System prerequisites** (one time). Refresh the package list first — on a
 fresh machine the list is empty and nothing below installs without it.
 
-Step 1 is the only part that needs root, and it is written with `sudo`
-because that is how a desktop user runs it. **If you are already root — a
-container, a chroot, a minimal image — drop the `sudo`**: `ubuntu:24.04` and
-`archlinux:latest` do not ship `sudo` at all, so the prefix fails with
-`sudo: command not found` before anything installs. Everything from step 2
-on runs as your normal user and must not be run as root.
+**Who runs what.** Only **step 1** (system packages) and **step 5**
+(installing the package you built) need root, and both are written with
+`sudo` because that is how a desktop user gets it. **If you are already root
+— a container, a chroot, a minimal image — drop the `sudo`**: `ubuntu:24.04`
+and `archlinux:latest` do not ship `sudo` at all, so the prefix fails with
+`sudo: command not found` before anything installs.
+
+**Steps 2–4 need no privileges, and you should not put `sudo` in front of
+them.** rustup and nvm install into the invoking user's `$HOME`, so
+`sudo curl … | sh` would put the toolchain in root's home and leave `cargo`
+off your `PATH`. Run them as whoever you are — being root is fine, the
+toolchain simply lands in root's home instead.
+
+Both cases are exercised: the transcripts in
+`docs/qa-c11/harness/install/` run the whole page as root in a bare
+container, and once more as an ordinary user with `sudo`.
 
 Debian / Ubuntu:
 
@@ -77,6 +87,12 @@ sudo pacman -Syu --needed git base-devel webkit2gtk-4.1 curl wget file \
 
 Arch calls the `libxdo` library package **`xdotool`** — `pacman` has no
 `libxdo` target and stops the whole line with `error: target not found`.
+
+`pacman -Syu` is a full system upgrade, so the line above deliberately keeps
+its confirmation prompt: read what it plans to do. Running unattended (a
+container, a Dockerfile, CI) add **`--noconfirm`** — without it pacman waits
+for an answer no one is there to give. The apt and dnf lines already carry
+`-y` for the same reason.
 
 **2. Rust toolchain** (uses `curl` from step 1). `-y` accepts the standard
 install — without it rustup stops for a prompt, which a non-interactive

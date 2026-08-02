@@ -1,14 +1,20 @@
 #!/bin/bash
-# README §Install, Arch, run VERBATIM in a clean archlinux:latest.
-# NO shim and NO invented step. Step 1's `sudo` prefix is dropped because the
-# README itself says to drop it when you are already root, which is what this
-# image gives you. The pacman line carries no --noconfirm, so empty lines go
-# in on stdin — exactly what a human pressing Enter supplies.
+# README §Install, Arch, run LITERALLY in a clean archlinux:latest.
+#
+# Two things §Install names explicitly and this transcript therefore does:
+#   * the image is a root shell with no `sudo`, so step 1 drops the prefix;
+#   * this is an unattended run, so step 1 adds `--noconfirm` — the README
+#     says to, because `pacman -Syu` otherwise waits for an answer.
+# Steps 2 onward carry no prefix. Nothing else is changed and nothing added.
+#
+# The one substitution, stated here and in VALIDATION.md: step 4's `git clone`
+# reads /srcrepo (a read-only bind mount of the checkout) instead of the
+# public URL, because the branch under test is not on public main yet.
 set -eux
 id -u
 
 echo "=== README step 1: system prerequisites (Arch) ==="
-yes '' | pacman -Syu --needed git base-devel webkit2gtk-4.1 curl wget file \
+pacman -Syu --needed --noconfirm git base-devel webkit2gtk-4.1 curl wget file \
   openssl xdotool libayatana-appindicator librsvg
 
 echo "=== README step 2: Rust toolchain ==="
@@ -35,4 +41,4 @@ echo "=== README step 5: there is no package — run what you built ==="
 ls -l target/release/bellman-app target/release/bellman
 ./target/release/bellman --version
 ./target/release/bellman --help | head -3
-echo "OK-ARCH-VERBATIM"
+echo "OK-ARCH-LITERAL"

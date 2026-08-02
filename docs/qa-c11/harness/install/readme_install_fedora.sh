@@ -1,7 +1,13 @@
 #!/bin/bash
-# README §Install, Fedora, run VERBATIM in a clean fedora:latest.
-# This image DOES ship sudo, so step 1 keeps the `sudo` prefix exactly as the
-# README writes it. Nothing is shimmed and nothing is added.
+# README §Install, Fedora, run LITERALLY in a clean fedora:latest.
+#
+# This image DOES ship `sudo`, so step 1 keeps the prefix exactly as §Install
+# writes it. Steps 2 onward carry no prefix, per the same section. Nothing is
+# added.
+#
+# The one substitution, stated here and in VALIDATION.md: step 4's `git clone`
+# reads /srcrepo (a read-only bind mount of the checkout) instead of the
+# public URL, because the branch under test is not on public main yet.
 set -eux
 id -u
 command -v sudo
@@ -39,4 +45,4 @@ command -v bellman-app
 ls /usr/share/applications/ | grep -i bellman
 ls -R /usr/share/bellman/testing_apps/
 bellman --version
-echo "OK-FEDORA-VERBATIM"
+echo "OK-FEDORA-LITERAL"
