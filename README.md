@@ -297,13 +297,23 @@ validating the whole thing on real hardware.
 | Calendar Snapshot (`bellman calendar` / `agenda`) — headless SVG/PNG/JSON | ✅ built |
 | Packaging — deb / AppImage (Linux); NSIS, MSI, dmg unsigned in CI | ✅ built |
 | CI test execution | Linux: full `cargo test` workspace ✅ · macOS: full workspace ✅ · Windows: workspace **except** the `bellman-app` shell-crate unit tests — they exit abnormally on a headless Windows runner and are excluded in `windows.yml` (they still compile there, and run on Linux/macOS) |
-| **Full-system validation** — real Windows / macOS hardware, suspend-resume QA, long-run soak | ⬜ **not started — the one thing between here and a release** |
+| **Full-system validation on Linux** — install verbatim on Ubuntu/Fedora/Arch, the full integration surface, GUI, packaging | ✅ **done** — [docs/VALIDATION.md](docs/VALIDATION.md); found and fixed 12 defects |
+| **Wake from sleep across a real suspend/resume** | ⬜ **not tested** — the code and its permission probe exist, but no suspend/resume cycle has been run on hardware |
+| **Real Windows / macOS hardware** | ⬜ **not tested** — CI builds and runs the test suite on both; nobody has installed or used them |
 
-Linux `.deb` and `.AppImage` build and install today: the deb puts **Bellman** in
-the app launcher and the `bellman` CLI on `PATH`. Windows (NSIS + MSI) and macOS
-(dmg) packages build unsigned in CI and have **not** been validated on real
-hardware. Wake-from-sleep is implemented (platform probes + Settings + wizard);
-real suspend/resume hardware QA is still part of full-system validation.
+**Linux is validated.** A full-system pass ([docs/VALIDATION.md](docs/VALIDATION.md))
+followed this page's install steps verbatim in clean `ubuntu:24.04`,
+`fedora:latest` and `archlinux:latest` containers, exercised the whole
+integration surface against a live watcher, drove the GUI by clicking, and
+installed the built `.deb`. It found and fixed 12 defects on the way, each
+with a regression test verified to fail without its fix.
+
+**Two things are honestly untested.** Wake-from-sleep is implemented — platform
+probes, Settings, wizard, and a capability check that tells you when the
+permission is missing — but **no real suspend/resume cycle has been run**, so
+treat it as unproven. And while CI now builds *and tests* on Windows and
+macOS, nobody has installed or used Bellman on either; those packages are
+unsigned and unvalidated on real hardware.
 
 ## Development
 
