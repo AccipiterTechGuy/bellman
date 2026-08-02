@@ -340,6 +340,8 @@ python3 docs/qa-c11/harness/e2e_crud.py      # slot add / modify / delete, live
 
 ### A real app woken by a scheduled fire
 
+*(`e2e_apps.py`, above.)*
+
 `testing_apps/lightbulb/lightbulb.py`, unmodified, started before its timer
 was due and left watching `fires/`:
 
@@ -354,6 +356,8 @@ status.json: {"state":"completed", "acknowledged_at":…, "completed_at":…,
 **PASS.** Evidence: [`qa-c11/apps_evidence.json`](qa-c11/apps_evidence.json).
 
 ### Both transports — **found a defect**
+
+*(`e2e_apps.py`, above.)*
 
 Two timers identical except for `transport.mode` (`json` and `ipc`), owned by
 the same `app_name`, answered with **byte-identical** `bellman-reply/1`
@@ -405,6 +409,8 @@ log lines and the same `status.json` apart from identity, timing and the
 
 ### Pickup grace and `no_ack`, and a late reply revising it
 
+*(`e2e_reply.py`, above.)*
+
 An owned timer with nothing listening:
 
 ```
@@ -419,6 +425,8 @@ status.json: {"state":"completed", "completed_at":"21:13:13Z",
 so the whole story stays visible, exactly as INTEGRATION.md says.
 
 ### The opt-in watchdog, and heartbeats extending it
+
+*(`e2e_reply.py`, above.)*
 
 Watchdog armed with `error_detection: true, expected_secs: 5` (× factor 2.0 →
 a 10 s deadline), then silence:
@@ -442,6 +450,8 @@ final status.json:   {"state":"completed", …}
 heartbeat extends the deadline.
 
 ### Rejection and quarantine under a live watcher
+
+*(`e2e_reply.py`, above.)*
 
 Five bad writes onto a live reply path, each while the watcher was running:
 
@@ -475,6 +485,8 @@ as a polish item, not a failure.
 
 ### Slot channel CRUD against a running scheduler (SCH2)
 
+*(`e2e_crud.py`, above.)*
+
 One app session, never restarted; all three operations issued by an external
 `bellman slot-submit`:
 
@@ -488,6 +500,8 @@ delete  crud-delete  once @21:39:14Z, deleted first  → never fired; gone from 
 a live scheduler, with no restart.
 
 ### A client in a language the docs do not cover
+
+*(`e2e_apps.py`, above — it starts the Perl client alongside the lightbulb.)*
 
 `docs/INTEGRATION.md` ships copy-paste clients in Python, bash, PowerShell and
 Node. [`qa-c11/clock_in.pl`](qa-c11/clock_in.pl) is a **Perl** client written
@@ -1094,6 +1108,7 @@ INTEGRATION.md alone) and
 [`qa-c11/originality_sweep.py`](qa-c11/originality_sweep.py) (the originality
 sweep, which takes `BELLMAN_REFERENCE_REPOS` and re-runs anywhere).
 
-The install work in §4 is three shell transcripts rather than a script; the
-exact commands are the README's own, and the two stated substitutions are
-named where they are used.
+The three README §Install runs are committed too, under
+[`qa-c11/harness/install/`](qa-c11/harness/install/) — the README's own
+commands in order, with the two stated substitutions (`sudo` dropped where
+the image has none, and a local clone) named in the harness README.

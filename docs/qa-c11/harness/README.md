@@ -117,3 +117,23 @@ suite*).
 BELLMAN_REFERENCE_REPOS=/path/to/clones python3 ../originality_sweep.py \
   > ../originality.json
 ```
+
+## The README §Install runs
+
+`install/readme_install_{ubuntu,fedora,arch}.sh` are the transcripts behind
+§4 — the README's own commands, in order, with nothing added. Each is run as
+the *only* thing in a clean container:
+
+```sh
+docker run --rm -v $PWD/docs/qa-c11/harness/install/readme_install_ubuntu.sh:/v.sh:ro \
+  -v <repo>:/srcrepo:ro ubuntu:24.04 bash /v.sh      # and fedora:latest, archlinux:latest
+```
+
+Two things to know before reading them:
+
+- **`sudo` is dropped on Ubuntu and Arch and kept on Fedora.** That is not an
+  edit: those two images ship no `sudo` and all three run as root, and the
+  README now says to drop the prefix when you are already root. Following the
+  page includes following that sentence.
+- **`git clone` points at `/srcrepo`, not the public URL.** The fixes under
+  test are not on public `main` yet. Everything else is verbatim.
