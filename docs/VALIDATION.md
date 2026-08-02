@@ -26,7 +26,7 @@ its script, and the Perl client. Originality is a separate document:
 
 | # | Area | Result |
 |---|---|---|
-| 1 | Code health — fmt / clippy / tests / vitest | **PASS** — fmt, clippy, rustdoc and 113 JS tests clean; 485 Rust tests, **0 ignored, 0 skipped**, green on 25 consecutive full-workspace runs. Getting there cost a third product bug: a lease lost to a forking sibling thread ([FLK1](todo/cards/FLK1_publisher_lease_test_parallelism.md)) |
+| 1 | Code health — fmt / clippy / tests / vitest | **PASS** — fmt, clippy, rustdoc and 113 JS tests clean; 486 Rust tests, **0 ignored, 0 skipped**, green on 25 consecutive full-workspace runs. Getting there cost a third product bug: a lease lost to a forking sibling thread ([FLK1](todo/cards/FLK1_publisher_lease_test_parallelism.md)) |
 | 2 | All 7 occurrence kinds firing on their own schedule | **PASS** — every one within 8 ms of `scheduled_for` |
 | 2 | Misfire across a real stop/start | **PASS after a fix** — `skip` was silent in the log |
 | 2 | DST gap (spring forward), real clock | **PASS** |
@@ -176,20 +176,34 @@ again, so every failure is spurious by construction:
 | no | 5,234,658 | **0** (0.000%) |
 | yes | 7,564,851 | **499,234** (7.25 / 7.49 / 7.46 %) |
 
-**Can this happen in the product?** That was the question `FLK1` said to
-answer first, and it deserved the fear it was written with. The answer is
-**no, and it is measured**: the exposure is the fork→exec window, not the
-child's lifetime, because `exec` is where `O_CLOEXEC` fires. Hold the lease,
-spawn a child that sleeps five seconds, release the lease — the lease is free
-again after **~6µs** (7.397 / 5.584 / 6.167µs over three runs), not after
-five seconds. A Bellman spawning a wake action does not starve other
-publishers for the life of that child. Every spawn path was audited to be
-sure nothing widens the window: `actions/launch.rs` uses `pre_exec` only to
-`setsid()`, `demo.rs` only sets a process group, and nothing anywhere uses
-`dup2`, forks without exec, or hands a descriptor to a child deliberately.
-The worst real-world effect was one skipped maintenance round, which the
-pruner already handles by reporting the skip, not stamping `last_prune`, and
-retrying next tick.
+**Can this happen in the product?** `FLK1` asked that first, and it is really
+two questions. They have different answers, so they are answered separately —
+an earlier revision of this paragraph gave a flat "no" and then described a
+real production effect two sentences later, which is a contradiction and is
+corrected here.
+
+> **Does the race occur outside the test suite? YES.** Nothing about it is
+> test-specific. A Bellman that fires a launch action, opens the demo or runs
+> the wake helper is forking, and any election in that window can be refused
+> by a lock nobody holds. The effect is bounded: one skipped maintenance
+> round. The pruner already handles that correctly — it reports
+> `skipped_not_leader`, does **not** stamp `last_prune`, and the next tick
+> retries — so it is self-healing rather than damaging. Bounded and
+> self-healing is still a product defect, which is why D10 is filed as one and
+> fixed in `reply::gate` rather than in the tests.
+>
+> **Can a child retain the lease for as long as it runs? NO** — and this is
+> the part `FLK1` feared and got wrong. The exposure ends at `exec`, which is
+> where `O_CLOEXEC` fires, not when the child exits. Hold the lease, spawn a
+> child that sleeps five seconds, release the lease: the lease is free again
+> after **~6µs** (7.397 / 5.584 / 6.167µs over three runs), not after five
+> seconds. A Bellman spawning a wake action does not starve every other
+> publisher for the life of that child.
+
+Every spawn path was audited to be sure nothing widens the window:
+`actions/launch.rs` uses `pre_exec` only to `setsid()`, `demo.rs` only sets a
+process group, and nothing anywhere uses `dup2`, forks without exec, or hands
+a descriptor to a child deliberately.
 
 **The fix is in the layer that owns the problem.** `try_acquire_file` now
 retries for a bounded 100 ms rather than asking once — orders of magnitude
@@ -199,7 +213,17 @@ reported promptly and correctly as a follower. Each attempt reopens the file,
 so a description inherited before we arrived cannot be the one under test.
 `reply::gate::tests::election_is_not_lost_to_a_concurrent_forks_inherited_fd`
 spawns children on one thread while electing on another and asserts zero
-spurious follower reports; without the retry it fails at **120 of 3000**.
+spurious follower reports. A test like that can pass for the wrong reason —
+spawn nothing and there is no race to lose — so it refuses to: elections do
+not begin until children are demonstrably being produced, the loop runs until
+at least 20 have overlapped it, and the spawn count and any spawn error are
+asserted **before** the zero is believed. Verified three ways:
+
+| the test, run against | result |
+|---|---|
+| the fix as written | green |
+| the retry removed | **294 of 3000** elections spurious |
+| `Command::new` pointed at a path that cannot exist | *"cannot spawn children, so the fork race cannot be exercised"* — fails loudly rather than passing vacuously |
 
 **No assertion was weakened.** `pruner/tests.rs:129` still demands the prune
 win its election outright, and it now does. An earlier revision of this
@@ -213,6 +237,22 @@ reply files with `rustix::fs::open`, which passes its flags through verbatim
 descriptor was therefore inherited by every process Bellman launches, and
 those are **user-supplied commands from timer configuration**. Fixed by
 adding `OFlags::CLOEXEC`. It is the only `rustix::fs::open` in the tree.
+
+Its regression test asserts the behaviour rather than the flag: the open goes
+through `open_reply_file` — the exact call `read_reply_file` makes, split out
+so the test cannot drift from the product — the handle is held open across a
+spawn, and the child is asked which descriptors it actually ended up with
+after `exec`. With `OFlags::CLOEXEC` removed the child hands the path back:
+
+```
+$ cargo test -p bellman-core --lib -- reply::watcher::cloexec   # CLOEXEC removed
+a launched command inherited the reply-file descriptor
+/tmp/.tmpwi9P0h/reply-cloexec-probe.json; it saw:
+/dev/null
+pipe:[18602305]
+/dev/null
+/tmp/.tmpwi9P0h/reply-cloexec-probe.json
+```
 
 The dispatcher timeout that started the poison cascade was not itself
 reproducible on an idle machine: it happened while four container builds were saturating
@@ -233,8 +273,8 @@ $ cargo clippy --workspace --all-targets -- -D warnings ; echo $?
 0                                   # 0 warnings
 
 $ cargo test --workspace --all-targets
-… 485 passed; 0 failed; 0 ignored   # summed across 15 test binaries.
-                                    # 478 before this card; +7 regression
+… 486 passed; 0 failed; 0 ignored   # summed across 15 test binaries.
+                                    # 478 before this card; +8 regression
                                     # tests. 25 consecutive runs, all green
                                     # — see the measurement above.
 

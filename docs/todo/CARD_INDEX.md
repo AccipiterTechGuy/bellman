@@ -57,7 +57,7 @@ watches. See `testing_apps/README.md`.
 
 | card | scope | depends on |
 |---|---|---|
-| **FLK1** | ✅ **Closed on C11.** The `EventPublisher` lease was lost to a *sibling thread's* `fork` — `fork(2)` copies the fd table and `O_CLOEXEC` only fires at `exec(2)`, so a child briefly owns a duplicate of the open file description the `flock` belongs to. Fixed in `reply::gate::try_acquire_file` (bounded 100 ms retry). The production question is answered **no** and measured: the window is fork→exec, not the child's lifetime (~6µs with a 5 s child alive). The audit also found and fixed a real `O_CLOEXEC` leak of reply-file descriptors into user-supplied commands. Kept as the write-up | C11 |
+| **FLK1** | ✅ **Closed on C11.** The `EventPublisher` lease was lost to a *sibling thread's* `fork` — `fork(2)` copies the fd table and `O_CLOEXEC` only fires at `exec(2)`, so a child briefly owns a duplicate of the open file description the `flock` belongs to. Fixed in `reply::gate::try_acquire_file` (bounded 100 ms retry). The production question splits in two, both measured: the race **does** occur outside tests (bounded to one skipped, self-healing maintenance round — hence a product defect), but a child **cannot** retain the lease for its lifetime, because the window ends at `exec` (~6µs with a 5 s child alive). The audit also found and fixed a real `O_CLOEXEC` leak of reply-file descriptors into user-supplied commands. Kept as the write-up | C11 |
 
 ## Scheduler internals
 
