@@ -1420,12 +1420,36 @@ that was reviewed and kept. Headline: **zero logic-bearing code shared** with
   reports `personal-path gate: clean` on the tree including everything added
   by this card, and returns 1 with a precise message when a `/home/<user>`
   path is planted in a tracked file. Verified both directions.
-- **Personal *names*, which that gate does not cover.** It matches paths, so
-  six fixture strings carrying the operator's login (`visible/id.rs`,
-  `visible/providers/at.rs`) sat through it untouched. Present at this card's
-  base commit rather than introduced by it, and now `alice`: `task_id()`
-  hashes whatever it is handed and the `at -l` sample parses identically, so
-  the change is inert. Flagged by the supervisor.
+- **Personal *names*, and an allowlist that outlived its reason.** The gate
+  has a second scan, `PERSONAL_TOKENS`, which does cover the operator's
+  username — six fixture strings carrying it (`visible/id.rs`,
+  `visible/providers/at.rs`) passed only because both files were named in
+  `TOKEN_ALLOWED_FILES`. They are pre-existing at this card's base commit,
+  not introduced by it, and are now `alice`: `task_id()` hashes whatever it
+  is handed and the `at -l` sample parses identically, so the change is
+  inert. **The exemptions are deleted too** — left in place they would have
+  permitted the token to return to exactly the two files just cleaned, while
+  the gate reported clean. There is now no per-file exemption for the token
+  scan at all, and the failure text says so, so the next person cannot
+  "fix" a hit by re-adding one.
+
+  Verified in both directions, per file:
+
+  ```
+  $ bash scripts/check_no_personal_paths.sh                    # baseline
+  personal-path gate: clean                                    exit 0
+
+  # the token planted in each formerly-exempt file, one at a time
+  personal-token leak (…): crates/bellman-core/src/visible/id.rs:34: …
+                                                               exit 1
+  personal-token leak (…): crates/bellman-core/src/visible/providers/at.rs:44: …
+                                                               exit 1
+  ```
+
+  An earlier revision of this bullet said the gate "does not cover" names and
+  matched only paths. That was wrong — it was the allowlist, not a missing
+  check. Both the fixtures and the description were caught by review rather
+  than by me.
 - **Naming and dead code.** `cargo clippy --workspace --all-targets -D
   warnings` is clean, which covers unused code, unused imports and the naming
   lints. No `#[allow(dead_code)]` was added by this card.

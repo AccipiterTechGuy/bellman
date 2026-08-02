@@ -14,9 +14,10 @@
 # Two checks:
 #   1. home-path check — any /home/<user> or /Users/<user> path component
 #      outside ALLOWLIST is a leak;
-#   2. personal-token check — any occurrence of a PERSONAL_TOKENS entry
-#      (the author's username/hostname) outside TOKEN_ALLOWED_FILES is a
-#      leak, wherever it appears (uname strings, ls -l owner/group, …).
+#   2. personal-token check — ANY occurrence of a PERSONAL_TOKENS entry
+#      (the author's username/hostname) is a leak, wherever it appears
+#      (uname strings, ls -l owner/group, comments, fixtures). This one has
+#      no per-file exemption, on purpose: see the note above PERSONAL_TOKENS.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -45,14 +46,13 @@ PERSONAL_TOKENS=(
   "sa""mi"   # author's username; also the prefix of the machine hostname
 )
 
-# Pre-existing generic fixtures that use the token as an EXAMPLE cron/at
-# owner name (not this machine): task-id determinism tests and the at(1)
-# output parser fixture. Allowlisted by exact file; new hits elsewhere fail.
-TOKEN_ALLOWED_FILES=(
-  "crates/bellman-core/src/visible/id.rs"
-  "crates/bellman-core/src/visible/providers/at.rs"
-)
-
+# There is deliberately NO per-file allowlist for the token scan. There used
+# to be one, for two fixtures that used the token as an example cron/at owner
+# name; C11 changed those fixtures to `alice`, which left the exemptions
+# covering nothing while still permitting the token to come back in exactly
+# the two files that had just been cleaned. An allowlist outliving its reason
+# is a hole that reports "clean".
+#
 # Directories excluded from both scans: docs/todo and docs/archive are
 # process/history records — they legitimately QUOTE past leaks (the SHIP1
 # card itself names the leaked-home-path incident it mandated fixing).
@@ -85,18 +85,8 @@ for token in "${PERSONAL_TOKENS[@]}"; do
   hits="$(git grep -nF "$token" -- . "${EXCLUDES[@]}" ':(exclude)scripts/check_no_personal_paths.sh' || true)"
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    file="${line%%:*}"
-    allowed=0
-    for f in "${TOKEN_ALLOWED_FILES[@]}"; do
-      if [[ "$file" == "$f" ]]; then
-        allowed=1
-        break
-      fi
-    done
-    if [[ $allowed -eq 0 ]]; then
-      echo "personal-token leak ($token): $line" >&2
-      fail=1
-    fi
+    echo "personal-token leak ($token): $line" >&2
+    fail=1
   done <<< "$hits"
 done
 
@@ -106,8 +96,12 @@ if [[ $fail -ne 0 ]]; then
 Tracked files must not contain absolute home-directory paths or the
 author's personal identifiers (username/hostname). Replace them with a
 placeholder (/home/tester or 'tester' for QA evidence, /home/you in
-documentation) or a relative path, or extend the allowlists in
-scripts/check_no_personal_paths.sh if the hit is genuinely impersonal.
+documentation, 'alice' for an example cron/at owner) or a relative path.
+
+A genuinely impersonal PATH can be added to ALLOWLIST in
+scripts/check_no_personal_paths.sh. There is no per-file exemption for the
+TOKEN scan and adding one back is not the fix: a fixture that needs a
+username needs a fictional one, not permission to use this machine's.
 EOF
   exit 1
 fi
