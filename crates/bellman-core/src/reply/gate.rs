@@ -260,20 +260,34 @@ mod tests {
     /// acquire drops its guard before the next one asks. Every `Ok(None)` is
     /// therefore spurious by construction. Without the retry in
     /// `try_acquire_file` this fails within a few hundred attempts.
+    ///
+    /// The forking has to be proven, not assumed: a test that spawns nothing
+    /// sees zero spurious elections for the trivial reason that there is no
+    /// race to lose, and would pass just as happily against the bug. So the
+    /// elections do not begin until children are actually being produced, the
+    /// loop keeps going until enough of them have overlapped it, and the spawn
+    /// count and any spawn error are asserted BEFORE the result is believed.
     #[cfg(unix)]
     #[test]
     fn election_is_not_lost_to_a_concurrent_forks_inherited_fd() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        /// Children that must overlap the elections for the race to have been
+        /// exercised at all.
+        const MIN_CHILDREN: u32 = 20;
+        const MIN_ATTEMPTS: u32 = 3_000;
 
         let dir = tempfile::tempdir().expect("tempdir");
         let lock = dir.path().join("logs").join("publisher.lock");
 
         let stop = Arc::new(AtomicBool::new(false));
+        let spawned = Arc::new(AtomicU32::new(0));
+        let spawn_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
         let spawner = {
-            let stop = stop.clone();
+            let (stop, spawned, spawn_err) = (stop.clone(), spawned.clone(), spawn_err.clone());
             std::thread::spawn(move || {
-                let mut spawned = 0u32;
                 while !stop.load(Ordering::Relaxed) {
                     match std::process::Command::new("/bin/true")
                         .stdin(std::process::Stdio::null())
@@ -282,20 +296,40 @@ mod tests {
                         .spawn()
                     {
                         Ok(mut child) => {
-                            spawned += 1;
                             let _ = child.wait();
+                            spawned.fetch_add(1, Ordering::Relaxed);
                         }
-                        Err(_) => break,
+                        Err(e) => {
+                            // Recorded, not swallowed: dying quietly here is
+                            // exactly how this test would go vacuous.
+                            *spawn_err.lock().unwrap() = Some(e.to_string());
+                            return;
+                        }
                     }
                 }
-                spawned
             })
         };
+
+        // Do not start measuring until forks are demonstrably happening.
+        let warmup = Instant::now();
+        while spawned.load(Ordering::Relaxed) == 0 {
+            if let Some(e) = spawn_err.lock().unwrap().as_ref() {
+                stop.store(true, Ordering::Relaxed);
+                panic!("cannot spawn children, so the fork race cannot be exercised: {e}");
+            }
+            assert!(
+                warmup.elapsed() < Duration::from_secs(10),
+                "the spawner produced no children in 10s"
+            );
+            std::thread::yield_now();
+        }
 
         let mut attempts = 0u32;
         let mut spurious = 0u32;
         let started = Instant::now();
-        while attempts < 3_000 && started.elapsed() < Duration::from_secs(20) {
+        while (attempts < MIN_ATTEMPTS || spawned.load(Ordering::Relaxed) < MIN_CHILDREN)
+            && started.elapsed() < Duration::from_secs(20)
+        {
             attempts += 1;
             match try_acquire_file(&lock).expect("acquire must not error") {
                 Some(guard) => drop(guard),
@@ -303,12 +337,25 @@ mod tests {
             }
         }
         stop.store(true, Ordering::Relaxed);
-        let spawned = spawner.join().expect("spawner thread");
+        spawner.join().expect("spawner thread");
+        let children = spawned.load(Ordering::Relaxed);
 
+        // Assert the race was exercised BEFORE believing that it was survived.
+        assert!(
+            spawn_err.lock().unwrap().is_none(),
+            "spawning failed partway through, so the later elections raced \
+             nothing: {:?}",
+            spawn_err.lock().unwrap()
+        );
+        assert!(
+            children >= MIN_CHILDREN && attempts >= MIN_ATTEMPTS,
+            "the fork race was never exercised: {children} children (need \
+             {MIN_CHILDREN}) across {attempts} elections (need {MIN_ATTEMPTS})"
+        );
         assert_eq!(
             spurious, 0,
             "{spurious}/{attempts} elections reported a follower while no one \
-             held the lease ({spawned} children spawned concurrently)"
+             held the lease ({children} children spawned concurrently)"
         );
     }
 
