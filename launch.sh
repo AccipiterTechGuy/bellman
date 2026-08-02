@@ -106,14 +106,56 @@ source_stamp() {
   echo "$newest"
 }
 
+mtime_of() {
+  stat -c '%Y' "$1" 2>/dev/null || stat -f '%m' "$1" 2>/dev/null || echo 0
+}
+
+# A binary can be newer than every source file and still be unusable.
+#
+# `cargo tauri build` compiles with `--features tauri/custom-protocol`, which
+# embeds the built frontend. A plain `cargo build` does not — and a workspace
+# `cargo build --all-targets`, which any clippy or test run performs, drops
+# exactly such a binary into target/release. At runtime its webview falls back
+# to `devUrl` (http://localhost:1420), nothing is listening, and the window
+# reads "Could not connect to localhost: Connection refused". Its mtime is
+# newer than every source, so an mtime-only rule calls it fresh and launches
+# it. This has happened twice.
+#
+# The artifact cannot be told apart by inspection — it is stripped and its
+# assets are compressed, so the asset names, `custom-protocol` and the dev URL
+# are all absent as plain strings. So record provenance instead: a sidecar
+# touched right after *this script* builds. Anything that rewrites the binary
+# afterwards leaves it newer than its sidecar, and it is no longer trusted.
+gui_marker() { echo "$1.tauri-built"; }
+
+record_gui_build() {
+  local bin="$1"
+  : >"$(gui_marker "$bin")" 2>/dev/null || return 0
+  touch "$(gui_marker "$bin")" 2>/dev/null || true
+}
+
+# True when the sidecar exists and is at least as new as the binary.
+tauri_built() {
+  local bin="$1"
+  local marker
+  marker="$(gui_marker "$bin")"
+  [ -f "$marker" ] || return 1
+  [ "$(mtime_of "$marker")" -ge "$(mtime_of "$bin")" ]
+}
+
 is_fresh() {
   local bin="$1"
   local stamp="$2"
   [ -x "$bin" ] || return 1
+  # Fresh-but-frontend-less is worse than stale: it launches and looks broken.
+  if ! tauri_built "$bin"; then
+    echo "bellman: $bin was not built by 'cargo tauri build' (no embedded frontend) — rebuilding instead of launching a blank window" >&2
+    return 1
+  fi
   # No source inputs → treat as fresh (empty fixture / pure binary tree).
   [ "$stamp" -eq 0 ] && return 0
   local bmt
-  bmt=$(stat -c '%Y' "$bin" 2>/dev/null || stat -f '%m' "$bin" 2>/dev/null || echo 0)
+  bmt=$(mtime_of "$bin")
   [ "$bmt" -ge "$stamp" ]
 }
 
@@ -196,6 +238,12 @@ try_rebuild() {
   cargo tauri --version >/dev/null 2>&1 || return 1
   echo "bellman: binary stale or missing — rebuilding GUI (cargo tauri build --no-bundle)…" >&2
   (cd "$root" && cargo tauri build --no-bundle) || return 1
+  # Vouch for what we just built: only a binary this script produced with the
+  # tauri CLI carries the embedded frontend (see tauri_built).
+  local b
+  while IFS= read -r b; do
+    [ -x "$b" ] && record_gui_build "$b"
+  done < <(candidates "$root")
   # Re-select after rebuild — only exec a *fresh* binary.
   # Never fall back to a still-stale candidate without explicit BELLMAN_ALLOW_STALE=1.
   local stamp

@@ -23,6 +23,21 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local label="$3"
+  if printf '%s' "$haystack" | grep -q -- "$needle"; then
+    echo "  FAIL: $label"
+    echo "    expected NOT to contain: $needle"
+    echo "    got: $haystack"
+    FAIL=$((FAIL + 1))
+  else
+    echo "  PASS: $label"
+    PASS=$((PASS + 1))
+  fi
+}
+
 assert_eq() {
   local got="$1"
   local want="$2"
@@ -41,10 +56,26 @@ touch_epoch() {
   local path="$1"
   local epoch="$2"
   if touch -d "@${epoch}" "$path" 2>/dev/null; then
+    keep_marker_in_step "$path"
     return 0
   fi
   # BSD fallback
   touch -t "$(date -r "$epoch" '+%Y%m%d%H%M.%S' 2>/dev/null || date -d "@$epoch" '+%Y%m%d%H%M.%S')" "$path"
+  keep_marker_in_step "$path"
+}
+
+# Re-dating a fake GUI binary must not read as "something rebuilt this behind
+# launch.sh's back" — keep its provenance sidecar at the same mtime. Tests that
+# want to exercise the provenance rule itself delete or back-date the sidecar
+# explicitly (see "unvouched binary" below).
+keep_marker_in_step() {
+  local path="$1"
+  case "$path" in
+    */bellman-app)
+      : >"$path.tauri-built" 2>/dev/null || return 0
+      touch -r "$path" "$path.tauri-built" 2>/dev/null || true
+      ;;
+  esac
 }
 
 make_fixture() {
@@ -84,6 +115,24 @@ make_fixture() {
     "$fx/target/release/bellman-app" \
     "$fx/target/debug/bellman-app" \
     "$fx/src-tauri/target/release/bellman-app"
+  # Provenance sidecars: launch.sh only trusts a binary it built itself with
+  # the tauri CLI (a plain `cargo build` leaves no embedded frontend). The
+  # fixtures stand in for launcher-built binaries, so vouch for them.
+  mark_tauri_built "$fx"
+}
+
+# Re-vouch for every fake binary: sidecar mtime must be >= the binary's.
+mark_tauri_built() {
+  local fx="$1" b
+  for b in \
+    "$fx/target/release/bellman-app" \
+    "$fx/target/debug/bellman-app" \
+    "$fx/src-tauri/target/release/bellman-app" \
+    "$fx/src-tauri/target/debug/bellman-app"; do
+    [ -e "$b" ] || continue
+    : >"$b.tauri-built"
+    touch -r "$b" "$b.tauri-built" 2>/dev/null || true
+  done
 }
 
 # Age every known stamp input so a later binary mtime counts as fresh.
@@ -179,6 +228,37 @@ touch_epoch "$FX5/target/debug/bellman-app" 2000000000
 OUT=$(run_select "$FX5")
 assert_contains "$OUT" "action=exec" "debug-only fresh: exec"
 assert_contains "$OUT" "path=$FX5/target/debug/bellman-app" "debug-only fresh: debug path"
+
+# --- 5b. Fresh by mtime but not built by launch.sh → never exec'd --------
+# `cargo build --all-targets` (any clippy/test run) drops a binary with no
+# embedded frontend into target/release. It is newer than every source, so an
+# mtime-only rule calls it fresh and launches a window that can only say
+# "Could not connect to localhost". Provenance, not mtime, has to decide.
+FX5B=$(mktemp -d)
+make_fixture "$FX5B"
+rm -f \
+  "$FX5B/target/debug/bellman-app" \
+  "$FX5B/src-tauri/target/release/bellman-app"
+age_all_sources "$FX5B" 1000000000
+touch_epoch "$FX5B/target/release/bellman-app" 2000000000
+# Simulate the stray build: the binary is rewritten, its sidecar is not.
+rm -f "$FX5B/target/release/bellman-app.tauri-built"
+OUT=$(run_select "$FX5B")
+assert_not_contains "$OUT" "action=exec path=$FX5B/target/release/bellman-app freshness=fresh" \
+  "unvouched binary: not exec'd as fresh"
+assert_contains "$OUT" "freshness=stale" "unvouched binary: treated as stale"
+
+# A sidecar older than the binary means the same thing: something rebuilt it.
+FX5C=$(mktemp -d)
+make_fixture "$FX5C"
+age_all_sources "$FX5C" 1000000000
+touch_epoch "$FX5C/target/release/bellman-app" 2000000000
+touch_epoch "$FX5C/target/debug/bellman-app" 2000000000
+touch_epoch "$FX5C/src-tauri/target/release/bellman-app" 2000000000
+touch -d "@1500000000" "$FX5C/target/release/bellman-app.tauri-built" 2>/dev/null
+OUT=$(run_select "$FX5C")
+assert_not_contains "$OUT" "path=$FX5C/target/release/bellman-app freshness=fresh" \
+  "back-dated sidecar: release binary rejected"
 
 # --- 6. No binaries → tauri-dev ----------------------------------------
 FX6=$(mktemp -d)
