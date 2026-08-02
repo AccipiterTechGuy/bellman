@@ -113,6 +113,8 @@ impl RunState {
 }
 
 impl RunState {
+    /// The wire spelling of this run state — the one R5 vocabulary shared
+    /// by the event log, the slot feed and `status.json`.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Registered => "registered",
@@ -207,47 +209,58 @@ impl EventRecord {
         }
     }
 
+    /// Attach the timer this event is about.
     pub fn with_timer(mut self, id: Uuid, name: impl Into<String>) -> Self {
         self.timer_id = Some(id);
         self.timer_name = Some(name.into());
         self
     }
 
+    /// Attach the firing this event is about.
     pub fn with_run(mut self, run_id: Uuid) -> Self {
         self.run_id = Some(run_id);
         self
     }
 
+    /// Attach the instant the fire was intended for. The one field that is
+    /// an intent rather than an occurrence, which is why it is not `_at`.
     pub fn with_scheduled_for(mut self, when: DateTime<Utc>) -> Self {
         self.scheduled_for = Some(when);
         self
     }
 
+    /// Attach a short human summary.
     pub fn with_message(mut self, msg: impl Into<String>) -> Self {
         self.message = Some(msg.into());
         self
     }
 
+    /// Attach an error string.
     pub fn with_error(mut self, err: impl Into<String>) -> Self {
         self.error = Some(err.into());
         self
     }
 
+    /// Attach a count — missed instants, archives removed, and so on.
     pub fn with_count(mut self, n: u32) -> Self {
         self.count = Some(n);
         self
     }
 
+    /// Attach how long the thing took, in milliseconds.
     pub fn with_duration_ms(mut self, ms: i64) -> Self {
         self.duration_ms = Some(ms);
         self
     }
 
+    /// Attach an arbitrary JSON detail object. Free-form by design: it is
+    /// for the reader, not for a parser.
     pub fn with_detail(mut self, detail: serde_json::Value) -> Self {
         self.detail = Some(detail);
         self
     }
 
+    /// Override the timestamp instead of taking it from the clock.
     pub fn with_logged_at(mut self, logged_at: DateTime<Utc>) -> Self {
         self.logged_at = logged_at;
         self

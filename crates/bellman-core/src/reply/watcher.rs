@@ -135,11 +135,17 @@ struct InvalidEntry {
 /// Counts from one watcher pass (mostly for tests and ops logging).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PollStats {
+    /// Replies accepted and folded in.
     pub applied: usize,
+    /// Byte-identical repeats of an already-accepted reply — a no-op.
     pub duplicates: usize,
+    /// Replies for a run a newer firing has already replaced.
     pub superseded: usize,
+    /// Replies rejected and quarantined.
     pub rejected: usize,
+    /// Pickup or watchdog deadlines that expired this pass.
     pub deadline_transitions: usize,
+    /// I/O or store failures during the pass.
     pub errors: usize,
 }
 
@@ -573,8 +579,11 @@ pub enum BarrierRead {
     /// fire transaction. `bytes` are kept for the post-commit quarantine
     /// copy when the ingest is semantically rejected.
     Valid {
+        /// The parsed reply.
         doc: Box<ReplyDocument>,
+        /// Digest of the bytes, so an exact repeat is recognised.
         digest: String,
+        /// The bytes as read, kept for quarantine if ingest rejects them.
         bytes: Vec<u8>,
     },
     /// Rejected on sight (identity mismatch or stable-invalid bytes):

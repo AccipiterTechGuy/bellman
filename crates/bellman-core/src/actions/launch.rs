@@ -18,7 +18,9 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 pub struct LaunchConfig {
     /// Absolute or PATH-resolved binary (never passed to a shell).
     pub command: String,
+    /// Arguments, one per element — never shell-split.
     pub args: Vec<String>,
+    /// Working directory; the launcher's own when absent.
     pub workdir: Option<String>,
     /// Kill the process after this duration.
     pub timeout: Duration,
@@ -34,21 +36,27 @@ pub struct LaunchConfig {
 /// Outcome of a launch attempt.
 #[derive(Debug, Clone)]
 pub struct LaunchOutcome {
+    /// Exit status, when the process exited normally.
     pub exit_code: Option<i32>,
+    /// Whether the timeout expired.
     pub timed_out: bool,
+    /// Whether Bellman had to kill it.
     pub killed: bool,
     /// The cancellation token stopped the launch (SCH1 `Replace`) — distinct
     /// from a timeout kill: the policy interrupted a healthy run.
     pub cancelled: bool,
     /// Captured output (capped).
     pub output: String,
+    /// How long it ran.
     pub duration: Duration,
 }
 
 /// Launch failures (spawn / IO), distinct from non-zero exit.
 #[derive(Debug)]
 pub enum LaunchError {
+    /// The program could not be started at all.
     Spawn(String),
+    /// It started, but talking to it failed.
     Io(String),
 }
 

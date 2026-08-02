@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 /// A read-only view of the live event log path.
 #[derive(Debug, Clone)]
 pub struct LogPath {
+    /// The live `events.current.jsonl`.
     pub current: std::path::PathBuf,
+    /// The directory of rotated gzip archives, read after the live file so
+    /// a query can reach past the last rotation.
     pub archive_dir: std::path::PathBuf,
 }
 

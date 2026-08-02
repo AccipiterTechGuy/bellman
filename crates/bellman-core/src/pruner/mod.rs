@@ -97,8 +97,11 @@ pub struct PruneReport {
 /// Errors from prune / ensure-timer helpers.
 #[derive(Debug)]
 pub enum PruneError {
+    /// A database operation failed.
     Store(StoreError),
+    /// Rotating or retaining the event log failed.
     EventLog(String),
+    /// A pruner invariant failed.
     Internal(String),
 }
 
@@ -120,6 +123,7 @@ impl From<StoreError> for PruneError {
     }
 }
 
+/// Result alias for pruner operations.
 pub type PruneResult<T> = Result<T, PruneError>;
 
 /// Parse the stable system.prune timer id.

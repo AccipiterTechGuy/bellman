@@ -67,14 +67,21 @@ pub struct PublishReport {
 /// Operator-visible publisher health (`publisher_health.json`).
 #[derive(Debug, Clone, Serialize)]
 pub struct PublisherHealth {
+    /// Always `bellman-publisher-health/1`.
     pub schema: String,
+    /// Whether this process currently holds the publisher lease.
     pub leader: bool,
+    /// Outbox rows not yet written to the log — the number that says
+    /// whether publishing is keeping up.
     pub pending_events: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// The most recent publish failure, kept visible until one succeeds.
     pub last_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// When that failure happened.
     pub last_error_at: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// When publishing last succeeded.
     pub last_ok_at: Option<DateTime<Utc>>,
 }
 
@@ -119,10 +126,12 @@ impl EventPublisher {
         })
     }
 
+    /// Path of the live log file this publisher appends to.
     pub fn current_path(&self) -> PathBuf {
         self.log.current_path()
     }
 
+    /// Whether this process holds the lease. Exactly one publisher writes.
     pub fn is_leader(&self) -> bool {
         self.lease.is_some()
     }

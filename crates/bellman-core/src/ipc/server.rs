@@ -189,8 +189,11 @@ struct ClientCtx {
 /// Server configuration. The socket path is explicit so tests bind inside
 /// their temp dir; production passes [`super::default_socket_path`].
 pub struct IpcConfig {
+    /// Where to bind. One socket for all of Bellman, never one per timer.
     pub socket_path: PathBuf,
+    /// Data root, for the reply tree and the log.
     pub data_dir: PathBuf,
+    /// The database this server's ingest writes through.
     pub db_path: PathBuf,
     /// The one reply engine — the same instance the file watcher uses, so
     /// both adapters share ingest, deadlines and status projection.

@@ -52,11 +52,6 @@ watches. See `testing_apps/README.md`.
 |---|---|---|
 | **SHIP1** | 🔴 Fixes from the R9 ship-readiness swarm, all hand-verified: fire-notification docs describe a **deleted** schema (`bellman-fire/1`) and the wrong `occurrence_kind` vocabulary; the wizard **falsely** claims XDG autostart grants `CAP_WAKE_ALARM`; §Install lacks `apt update` and uses `curl` before installing it; dual data dirs half-documented; CLI cannot set a launch action; CI never runs tests on macOS/Windows; missing community files + 11 tracked `/home/sami` paths. **`patchelf`/`libgtk-3-dev` are refuted — do not add them** | — |
 
-## Follow-ups raised by C11
-
-| card | scope | depends on |
-|---|---|---|
-| **DOC1** | rustdoc coverage on the public API — `bellman-core` has **593** public items with no doc comment (module-level docs are already complete). One sentence each saying *why*, narrow anything that does not deserve one, then `#![warn(missing_docs)]` per crate. Comments and visibility only, no behaviour. Larger than C11 could absorb, so written up rather than half-done | C11 |
 
 ## Scheduler internals
 

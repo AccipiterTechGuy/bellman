@@ -14,10 +14,14 @@ use chrono::{DateTime, Datelike, TimeZone, Utc};
 /// Report from one recalibration pass.
 #[derive(Debug, Clone, Default)]
 pub struct YearRecalibrateReport {
+    /// How many timers the pass looked at.
     pub timers_checked: usize,
+    /// How many needed correcting. Next-fire is computed lazily, so this is
+    /// a consistency check rather than a yearly grid rebuild — normally 0.
     pub timers_updated: usize,
     /// True when the pass was skipped because already done this year.
     pub skipped_idempotent: bool,
+    /// The year the pass ran for.
     pub year: i32,
 }
 

@@ -46,7 +46,7 @@ its script, and the Perl client. Originality is a separate document:
 | 4 | Both data directories | **PASS**, with a documentation gap |
 | 4 | Windows / macOS | **PARTIAL** — see [Not tested, and why](#not-tested-and-why) |
 | 5 | Originality sweep | **PASS** — [ORIGINALITY.md](ORIGINALITY.md) |
-| 6 | Polish: personal-path gate, naming, dead code | **PASS** |
+| 6 | Polish: personal-path gate, naming, dead code, **doc coverage** | **PASS** — 756 undocumented public items cleared, `#![warn(missing_docs)]` landed |
 
 Seven defects were found and fixed on this card; each functional one has a
 regression test that was verified to fail without its fix:
@@ -1033,26 +1033,36 @@ that was reviewed and kept. Headline: **zero logic-bearing code shared** with
 - **Module docs: complete.** All 135 source files carry a `//!` header — two
   did not (`src-tauri/src/main.rs`, `src-tauri/src/dto_serde_tests.rs`) and
   now do.
-- **Item docs: measured, and written up as a follow-up card rather than
-  half-done.**
+- **Item docs: complete.** Every public function, method, struct field,
+  variant and constant in `bellman-core` and the desktop shell now carries a
+  sentence saying **why it exists**, not a restatement of its name.
 
   ```
-  $ RUSTFLAGS="-W missing_docs" cargo build -p bellman-core 2>&1 \
-      | grep -c '^warning: missing documentation'
-  593
+  $ RUSTFLAGS="-W missing_docs" cargo check -p bellman-core --message-format=short \
+      2>&1 | grep -c 'missing documentation'
+  0            # was 593
+  $ RUSTFLAGS="-W missing_docs" cargo check -p bellman-app  --message-format=short \
+      2>&1 | grep -c 'missing documentation'
+  0            # was 756 including bellman-core's
   ```
 
-  593 public functions, methods and struct fields in `bellman-core` have no
-  doc comment. Writing 593 sentences is a mechanical job an order of
-  magnitude larger than a validation card should absorb, and doing it badly
-  (restating names) would be worse than leaving it. Per this card's own rule
-  — "if a finding is larger than this card, write it up as a follow-up card
-  rather than half-fixing it" — it is
-  [`docs/todo/cards/DOC1_public_api_doc_coverage.md`](todo/cards/DOC1_public_api_doc_coverage.md),
-  registered in `CARD_INDEX.md`. The wire-shape types that integrators
-  actually read (`store::models`, `events::record`, `slots::envelope`,
-  `reply::document`) are already documented; the gap is on helpers and
-  builder setters.
+  `#![warn(missing_docs)]` now sits in `crates/bellman-core/src/lib.rs` and
+  `src-tauri/src/lib.rs`, so the gap cannot come back quietly — and since CI
+  builds with `RUSTFLAGS: -Dwarnings`, an undocumented `pub` fails the build
+  rather than scrolling past.
+
+  `cargo doc --no-deps` is also clean on both crates now (it was not: eight
+  intra-doc links pointed at private items or at names not in scope, so the
+  rendered pages had dead references).
+
+  This was worth doing rather than deferring: the wire-shape types were
+  already documented, but the *reasons* were not written down anywhere a
+  reader would find them — that `scheduled_for` is an intent rather than an
+  occurrence, that `no_ack_at` is retained after a late reply revises the
+  state, that an oversize reply is rejected unread, that `TimerPatch::
+  last_fired` is doubly wrapped because the outer `Some` means "change it"
+  and the inner `None` means "clear it". Those sentences are the ones an
+  integrator needs.
 
 ## Reproducing this
 

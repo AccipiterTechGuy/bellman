@@ -55,16 +55,20 @@ impl EventLogConfig {
         }
     }
 
+    /// How long archives are kept before age retention removes them.
     pub fn with_retention(mut self, retention: Duration) -> Self {
         self.retention = retention;
         self
     }
 
+    /// Rotate before an append would take the live file past this size.
     pub fn with_max_current_bytes(mut self, bytes: u64) -> Self {
         self.max_current_bytes = bytes;
         self
     }
 
+    /// Total bytes the live file plus its archives may occupy; the oldest
+    /// archives go first when it is exceeded.
     pub fn with_budget_bytes(mut self, bytes: u64) -> Self {
         self.budget_bytes = bytes;
         self
@@ -74,7 +78,9 @@ impl EventLogConfig {
 /// Errors from the event log.
 #[derive(Debug)]
 pub enum EventLogError {
+    /// A filesystem operation failed.
     Io(String),
+    /// A record could not be serialised.
     Serialize(String),
 }
 
@@ -106,6 +112,7 @@ impl From<crate::store::StoreError> for EventLogError {
     }
 }
 
+/// Result alias for event-log operations.
 pub type EventLogResult<T> = Result<T, EventLogError>;
 
 /// What retention removed in one pass (the caller logs this — never silent).
@@ -120,6 +127,7 @@ pub struct RetainReport {
 }
 
 impl RetainReport {
+    /// How many archives this retention pass deleted.
     pub fn removed_count(&self) -> usize {
         self.aged.len() + self.budget.len()
     }
@@ -201,14 +209,17 @@ impl EventLog {
         )
     }
 
+    /// The thresholds this log is operating under.
     pub fn config(&self) -> &EventLogConfig {
         &self.config
     }
 
+    /// Path of the live `events.current.jsonl`.
     pub fn current_path(&self) -> PathBuf {
         self.config.logs_dir.join(CURRENT_FILE_NAME)
     }
 
+    /// Directory holding the rotated gzip archives.
     pub fn archive_dir(&self) -> PathBuf {
         self.config.logs_dir.join("archive")
     }

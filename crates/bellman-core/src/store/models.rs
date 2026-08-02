@@ -368,7 +368,7 @@ pub struct TimerUpdate {
 /// The pre-SCH1 ledger used `claimed` / `completed` / `wake_failed`; the
 /// schema-v8 migration rewrites those rows (`claimed → pending`,
 /// `completed → finished + wake_delivered`, `wake_failed → finished +
-/// wake_failed`). [`FromStr`] still accepts the legacy strings so a
+/// wake_failed`). `from_wire` still accepts the legacy strings so a
 /// not-yet-migrated row can never crash a reader.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

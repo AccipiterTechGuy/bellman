@@ -106,26 +106,34 @@ impl<C: Clock, A: FireAction> Scheduler<C, A> {
         }
     }
 
+    /// Read access to the scheduler's store.
     pub fn store(&self) -> &Store {
         &self.store
     }
 
+    /// Mutable access to the scheduler's store.
     pub fn store_mut(&mut self) -> &mut Store {
         &mut self.store
     }
 
+    /// The fire action this scheduler drives — how tests read back what
+    /// fired.
     pub fn action(&self) -> &A {
         &self.action
     }
 
+    /// Mutable access to the fire action.
     pub fn action_mut(&mut self) -> &mut A {
         &mut self.action
     }
 
+    /// The clock this scheduler reads. Tests inject a simulated pair.
     pub fn clock(&self) -> &C {
         &self.clock
     }
 
+    /// How many timers are currently resident on the horizon heap — the
+    /// number that shows the near-horizon window is doing its job.
     pub fn heap_len(&self) -> usize {
         self.heap.len()
     }

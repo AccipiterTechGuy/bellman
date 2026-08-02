@@ -201,7 +201,7 @@ pub fn short_id(id: TimerId) -> String {
 /// `<slug>-<short-id>` — the default (4-hex) folder name for a timer. When
 /// that name is already taken by a DIFFERENT timer (same slug + same first 4
 /// hex digits), allocation lengthens the suffix — see
-/// [`TimersTree::allocate_folder`].
+/// `TimersTree::allocate_folder`.
 pub fn folder_name(name: &str, id: TimerId) -> String {
     format!("{}-{}", slugify(name), short_id(id))
 }

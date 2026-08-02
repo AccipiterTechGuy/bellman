@@ -5,7 +5,7 @@
 //! display, no GPU.**
 //!
 //! Natural-language boundary: only structured flags plus the fixed relative
-//! phrases in [`period`] (`today`, `tomorrow`, `this month`, `next month`,
+//! phrases in `period` (`today`, `tomorrow`, `this month`, `next month`,
 //! `next <weekday>`, bare month name, `YYYY-MM`). Richer phrasing is the
 //! calling agent's responsibility.
 

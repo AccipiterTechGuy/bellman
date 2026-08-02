@@ -19,13 +19,19 @@ pub enum StoreError {
     NotFound(Uuid),
     /// Optimistic concurrency failure.
     StaleRevision {
+        /// The timer that was being updated.
         id: Uuid,
+        /// The revision the caller had read.
         expected: i64,
+        /// The revision actually in the store — someone else wrote first.
         actual: i64,
     },
     /// Claim ledger already has `(timer_id, scheduled_for)`.
     AlreadyClaimed {
+        /// The timer whose fire slot was already claimed.
         timer_id: Uuid,
+        /// The instant that was already claimed. At-least-once delivery
+        /// means a second claim for the same slot is refused, not queued.
         scheduled_for: DateTime<Utc>,
     },
     /// Run claim id not found (or not in claimed state for complete).

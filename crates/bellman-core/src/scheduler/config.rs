@@ -74,6 +74,7 @@ impl Default for SchedulerConfig {
 }
 
 impl SchedulerConfig {
+    /// Product defaults.
     pub fn new() -> Self {
         Self::default()
     }
@@ -104,11 +105,14 @@ impl SchedulerConfig {
         }
     }
 
+    /// How far ahead of now the heap holds timers.
     pub fn with_horizon(mut self, horizon: Duration) -> Self {
         self.horizon = horizon;
         self
     }
 
+    /// Longest the loop sleeps before re-reading the wall clock. Chunked
+    /// sleeps are what make an oversleep across suspend detectable.
     pub fn with_max_sleep(mut self, max_sleep: Duration) -> Self {
         self.max_sleep = max_sleep;
         self
@@ -120,21 +124,26 @@ impl SchedulerConfig {
         self
     }
 
+    /// Wall-versus-monotonic divergence that counts as a clock jump.
     pub fn with_jump_threshold(mut self, jump_threshold: Duration) -> Self {
         self.jump_threshold = jump_threshold;
         self
     }
 
+    /// Global cap on wake actions running at once.
     pub fn with_max_concurrent_actions(mut self, n: usize) -> Self {
         self.max_concurrent_actions = n.max(1);
         self
     }
 
+    /// Default late-coalesce tolerance for high-frequency timers.
     pub fn with_accuracy_slack(mut self, slack: Duration) -> Self {
         self.accuracy_slack = slack;
         self
     }
 
+    /// The data directory. Without one the scheduler runs pure, with no
+    /// tree projections, no event log and no pruner — the unit-test shape.
     pub fn with_data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.data_dir = Some(dir.into());
         self

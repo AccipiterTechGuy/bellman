@@ -78,14 +78,18 @@ impl SlotService {
         self
     }
 
+    /// The directory layout this service operates on.
     pub fn layout(&self) -> &SlotLayout {
         &self.layout
     }
 
+    /// The tunables in force.
     pub fn config(&self) -> &SlotConfig {
         &self.config
     }
 
+    /// How many free stubs are on disk right now — the invariant the
+    /// replenisher holds at or above `min_free`.
     pub fn free_count(&self) -> SlotResult<usize> {
         self.layout.free_count()
     }

@@ -84,9 +84,14 @@ impl Clone for RunNowOptions {
 /// Result of [`run_now`].
 #[derive(Debug, Clone)]
 pub struct RunNowOutcome {
+    /// The timer as it stood after the run.
     pub timer: Timer,
+    /// Identity of the run that was minted. A manual run is a real run: it
+    /// gets a claim, a reply channel and a log line like any other.
     pub run_id: Uuid,
+    /// The instant recorded as intended.
     pub scheduled_for: DateTime<Utc>,
+    /// Human summary of what happened.
     pub message: String,
 }
 
@@ -383,9 +388,16 @@ pub fn resolve_slots_root_optional(db_path: &Path) -> Option<PathBuf> {
 /// Failure modes surfaced by [`run_now`].
 #[derive(Debug)]
 pub enum RunNowError {
-    NotFound { timer_id: Uuid },
+    /// No timer with that name or id.
+    NotFound {
+        /// The id that matched nothing.
+        timer_id: Uuid,
+    },
+    /// A database operation failed.
     Store(StoreError),
+    /// The wake action itself failed.
     Action(String),
+    /// Anything else.
     Other(String),
 }
 

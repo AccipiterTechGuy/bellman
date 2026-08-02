@@ -47,23 +47,30 @@ impl SlotLayout {
         Ok(layout)
     }
 
+    /// The `slots/` root.
     pub fn root(&self) -> &Path {
         &self.root
     }
 
+    /// Pre-generated empty stubs a producer claims by rename.
     pub fn free_dir(&self) -> PathBuf {
         self.root.join(DIR_FREE)
     }
+    /// Requests Bellman has claimed and is applying.
     pub fn work_dir(&self) -> PathBuf {
         self.root.join(DIR_WORK)
     }
+    /// Responses. Never fire notifications — those live in `fires/`.
     pub fn done_dir(&self) -> PathBuf {
         self.root.join(DIR_DONE)
     }
+    /// Quarantined garbage, each with an `.err.json` sidecar saying why.
     pub fn bad_dir(&self) -> PathBuf {
         self.root.join(DIR_BAD)
     }
 
+    /// How many free stubs are kept ready, so one app can never block
+    /// another by taking the last one.
     pub fn min_free(&self) -> usize {
         self.min_free
     }

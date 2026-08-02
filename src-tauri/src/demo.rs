@@ -47,7 +47,11 @@ pub struct DemoInfoDto {
     pub command: Option<String>,
     /// available AND python3 present AND tkinter importable.
     pub can_launch: bool,
+    /// Whether `python3` is on `PATH`.
     pub python3_present: bool,
+    /// Whether that `python3` can `import tkinter`. Without it the GUI demo
+    /// cannot run, so the Run button is hidden and the python3-tk note is
+    /// shown instead of offering a button that would fail.
     pub tkinter_present: bool,
     /// This install's slots root — the demo must be pointed at it.
     pub slots_dir: String,

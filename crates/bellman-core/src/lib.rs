@@ -5,6 +5,11 @@
 //! year recalibration + concurrency backpressure + config.json. Later phases
 //! add platform wake support under this crate.
 
+// Every public item carries a sentence saying why it exists. C11 cleared
+// the 593 that did not; this keeps them from coming back — an undocumented
+// `pub` is either a missing sentence or an item that should not be `pub`.
+#![warn(missing_docs)]
+
 pub mod actions;
 pub mod app_config;
 pub mod calendar;

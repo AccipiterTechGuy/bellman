@@ -648,6 +648,7 @@ pub struct DependencyCheckDto {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// One optional dependency the wizard reports on.
 pub struct DepItemDto {
     /// What was checked, in the user's words.
     pub name: String,
@@ -694,6 +695,7 @@ pub fn wake_open_login_items(state: State<'_, AppState>) -> Result<WakeStatusDto
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// The misfire defaults new calendar timers inherit.
 pub struct MisfireDefaultsDto {
     /// `skip` | `coalesce` | `catch_up`.
     pub policy: String,
@@ -981,6 +983,7 @@ fn default_preview_n() -> usize {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// The next-fires preview shown live in the edit dialog.
 pub struct PreviewResponseDto {
     /// The next N fires of the schedule as currently edited.
     pub fires: Vec<PreviewFireDto>,
@@ -990,6 +993,7 @@ pub struct PreviewResponseDto {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// One previewed fire, in UTC and in local time with its offset.
 pub struct PreviewFireDto {
     /// The instant, in UTC.
     pub utc: DateTime<Utc>,

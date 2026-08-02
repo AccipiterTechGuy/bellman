@@ -5,15 +5,15 @@
 //! watches it, validates, logs the transition, and folds the result into
 //! `status.json` — the mirror that must always show the truth right now.
 //!
-//! - [`document`] — the `bellman-reply/1` shape, caps and stub content.
-//! - [`engine`] — the transport-agnostic ingest: validation, transitions,
+//! - `document` — the `bellman-reply/1` shape, caps and stub content.
+//! - `engine` — the transport-agnostic ingest: validation, transitions,
 //!   event-log lines, `status.json` folding, pickup/watchdog deadlines.
 //!   Does not know a file exists.
-//! - [`watcher`] — the file transport: safe reads, debounce, quarantine,
+//! - `watcher` — the file transport: safe reads, debounce, quarantine,
 //!   the pre-fire barrier, startup scan, reconciler, background thread.
 //! - [`gate`] — the R10 interprocess per-timer lock shards.
 //! - [`quarantine`] — the copy-only, idempotent `bad/` for rejected replies.
-//! - [`notification`] — the `slots/fires/` fire notification with `reply_path`.
+//! - `notification` — the `slots/fires/` fire notification with `reply_path`.
 
 mod document;
 mod engine;

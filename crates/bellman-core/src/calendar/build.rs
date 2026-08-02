@@ -19,17 +19,25 @@ use std::str::FromStr;
 /// One task that can expand fires inside a window — source-agnostic.
 #[derive(Debug, Clone)]
 pub struct ExpandableTask {
+    /// Stable id of the task this expands.
     pub id: String,
+    /// Its display name.
     pub name: String,
+    /// Whether it is currently scheduled.
     pub enabled: bool,
+    /// The recurrence to expand across the window.
     pub occurrence: Occurrence,
     /// Past-fire status hint when known (ok/failed/unknown).
     pub past_status: CalendarStatus,
+    /// The command line, carried only when `--show-commands` was given.
     pub command: Option<String>,
+    /// Which scheduler it came from.
     pub source_kind: String,
 }
 
 impl ExpandableTask {
+    /// Adapt a Bellman store timer into the source-agnostic shape the
+    /// calendar expands, so cron and systemd rows can join the same grid.
     pub fn from_timer(t: &Timer) -> Self {
         let command = match &t.action {
             crate::store::Action::Launch { command, args, .. } => {

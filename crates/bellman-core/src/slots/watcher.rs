@@ -35,6 +35,7 @@ pub struct SlotWatcherStop {
 }
 
 impl SlotWatcherStop {
+    /// Ask the watcher thread to finish.
     pub fn stop(&self) {
         let _ = self.tx.send(());
     }

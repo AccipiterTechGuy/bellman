@@ -19,7 +19,9 @@ use uuid::Uuid;
 /// Executor configuration (timeouts / caps / test knobs).
 #[derive(Debug, Clone)]
 pub struct ExecutorConfig {
+    /// How long a launched program may run before it is killed.
     pub launch_timeout: Duration,
+    /// How many bytes of its output are kept; the rest is dropped.
     pub output_cap: usize,
     /// When true (tests), sleep for retry delay is skipped — only the retry
     /// *count* is honored. Production leaves this false.
@@ -41,9 +43,19 @@ impl Default for ExecutorConfig {
 pub enum ExecOutcome {
     /// Delivered; carries the human-readable summary (run-now message and
     /// the `wake_delivered` event message) and the retries used.
-    Delivered { message: String, attempts: u32 },
+    Delivered {
+        /// Human summary recorded on the run.
+        message: String,
+        /// How many tries it took, including the first.
+        attempts: u32,
+    },
     /// Failed after retries; carries the error and the retry count used.
-    Failed { error: String, attempts: u32 },
+    Failed {
+        /// What went wrong.
+        error: String,
+        /// How many tries were made before giving up.
+        attempts: u32,
+    },
     /// The cancellation token interrupted the run (`Replace`) — mid-launch
     /// or during retry backoff. Recorded `wake_failed(overlap_replace)`.
     Cancelled,
@@ -59,6 +71,7 @@ pub struct ActionExecutor {
 }
 
 impl ActionExecutor {
+    /// Build an executor with the given limits and cancellation source.
     pub fn new(
         config: ExecutorConfig,
         notify_sink: Arc<dyn NotifySink>,

@@ -56,7 +56,7 @@ pub struct OccurrenceInput {
     pub tz: Option<String>,
     /// Wall-clock time-of-day for daily/weekly/monthly/yearly.
     pub time: Option<String>,
-    /// Year-aware naive datetime for once: YYYY-MM-DDTHH:MM[:SS].
+    /// Year-aware naive datetime for once: `YYYY-MM-DDTHH:MM[:SS]`.
     pub once_at: Option<String>,
     /// Period in seconds, for `interval`.
     pub every_secs: Option<u64>,

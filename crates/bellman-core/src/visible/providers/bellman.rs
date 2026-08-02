@@ -7,6 +7,9 @@ use crate::visible::types::{DiscoveredTask, LastResult, SourceKind};
 use chrono::Utc;
 use std::path::Path;
 
+/// Discover Bellman's own store timers, so `bellman scan` lists them beside
+/// cron and systemd rather than pretending they are a different kind of
+/// thing. Returns the tasks and any non-fatal warnings.
 pub fn discover_bellman(db_path: &Path) -> (Vec<DiscoveredTask>, Vec<String>) {
     let mut warnings = Vec::new();
     if !db_path.exists() {

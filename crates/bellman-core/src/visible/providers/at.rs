@@ -6,6 +6,8 @@ use crate::visible::types::{DiscoveredTask, LastResult, SourceKind};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
 use std::process::Command;
 
+/// Discover jobs in the `at` queue. Returns the tasks and any non-fatal
+/// warnings (a missing `atq`, a spool we may not read).
 pub fn discover_at() -> (Vec<DiscoveredTask>, Vec<String>) {
     let mut warnings = Vec::new();
     let out = match Command::new("atq").output() {

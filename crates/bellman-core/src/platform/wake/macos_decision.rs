@@ -8,20 +8,29 @@ use super::{Caveat, DisabledReason, WakeCapability, WakeMechanism};
 /// SMAppService.daemon.status equivalents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelperStatus {
+    /// Registered and approved; wake works.
     Enabled,
+    /// Registered, waiting for the user in Login Items — optional, not
+    /// broken.
     RequiresApproval,
+    /// The bundle is present but was never registered.
     NotRegistered,
+    /// No helper bundle at all.
     NotFound,
 }
 
 /// Snapshot of macOS probe facts.
 #[derive(Debug, Clone)]
 pub struct MacosProbeFacts {
+    /// What SMAppService says about the helper.
     pub helper: HelperStatus,
     /// Through-daemon sentinel schedule/cancel round-trip succeeded.
     pub sentinel_ok: bool,
     /// Running on Apple Silicon.
     pub apple_silicon: bool,
+    /// Why the schedule/cancel round-trip through the helper failed, when
+    /// it did — the check that proves the helper actually works rather than
+    /// merely being registered.
     pub sentinel_error: Option<String>,
 }
 

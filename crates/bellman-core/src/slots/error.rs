@@ -13,7 +13,15 @@ pub enum SlotError {
     /// Path is a symlink (rejected for safety).
     Symlink(PathBuf),
     /// Input exceeded the size cap.
-    Oversized { path: PathBuf, size: u64, max: u64 },
+    Oversized {
+        /// The offending input.
+        path: PathBuf,
+        /// Its size in bytes.
+        size: u64,
+        /// The cap it exceeded. Rejected unread — an oversize file is never
+        /// parsed, only measured.
+        max: u64,
+    },
     /// JSON parse / schema validation failure.
     Invalid(String),
     /// No free slot available for publish (should not happen if replenish holds).

@@ -86,6 +86,7 @@ pub struct WebTimerDto {
 pub struct WebOccurrenceDto {
     /// Which occurrence kind this is.
     pub occ: String,
+    /// IANA zone the wall-clock fields are read in.
     pub tz: String,
     /// `{mon: true, tue: true, ...}` — booleans for the 7 ISO weekdays.
     /// Populated only when `occ == "weekly"`; null otherwise.

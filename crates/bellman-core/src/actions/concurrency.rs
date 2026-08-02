@@ -60,6 +60,8 @@ impl ActionLimiter {
         }
     }
 
+    /// The global cap on wake actions running at once — what stops a
+    /// mass-fire after a long suspend from forking a hundred processes.
     pub fn max_concurrent(&self) -> usize {
         self.max
     }

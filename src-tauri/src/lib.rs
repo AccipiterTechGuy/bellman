@@ -13,6 +13,9 @@
 //! - [`tray`] — system tray icon + menu (Open / Pause all / Quit).
 //! - [`run`] — build + run the Tauri application.
 
+// See crates/bellman-core/src/lib.rs — same rule, same reason.
+#![warn(missing_docs)]
+
 pub mod commands;
 pub mod config;
 pub mod demo;

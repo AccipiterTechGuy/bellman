@@ -287,8 +287,13 @@ fn disarm_timerfd(fd: &OwnedFd) -> io::Result<()> {
 /// - `own_slot`: whether we now own the register
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SysfsProgramPlan {
+    /// Epoch second to program, or `None` to leave a foreign alarm alone.
     pub write_epoch: Option<i64>,
+    /// A foreign alarm we displaced and must put back afterwards. The sysfs
+    /// register holds exactly one alarm, so sharing it politely is the whole
+    /// job of this plan.
     pub displace_foreign: Option<i64>,
+    /// Whether we now own the register.
     pub own_slot: bool,
 }
 
@@ -408,25 +413,40 @@ pub fn informational_facts() -> LinuxInfo {
     }
 }
 
+/// What the Linux probe read off this machine, for diagnostics.
 #[derive(Debug, Clone)]
 pub struct LinuxInfo {
+    /// Whether `/sys/class/rtc/rtc0` exists at all.
     pub rtc_present: bool,
+    /// The RTC's `wakeup` sysfs value, when readable.
     pub wakeup: Option<String>,
+    /// The kernel's supported sleep states.
     pub power_state: Option<String>,
+    /// The configured suspend-to-memory variant.
     pub mem_sleep: Option<String>,
+    /// `CLOCK_BOOTTIME`-style seconds since boot.
     pub since_epoch: Option<i64>,
+    /// Current wall-clock epoch second — paired with the above so a clock
+    /// step is visible in the diagnostics.
     pub wall_epoch: Option<i64>,
 }
 
 /// Decision-tree helper for unit tests (inject probe outcomes).
 #[derive(Debug, Clone)]
 pub struct LinuxProbeFacts {
+    /// Whether an RTC device is present.
     pub rtc_present: bool,
+    /// Whether the RTC is marked wake-capable; `None` when unreadable.
     pub wakeup_enabled: Option<bool>,
-    pub timerfd_result: Result<(), i32>, // Ok or errno
+    /// `Ok(())` if a `CLOCK_REALTIME_ALARM` timerfd could be armed, else the
+    /// errno — `EPERM` is the ordinary "no `CAP_WAKE_ALARM`" answer.
+    pub timerfd_result: Result<(), i32>,
+    /// Whether the sysfs `wakealarm` fallback is writable by this user.
     pub wakealarm_writable: bool,
 }
 
+/// The whole Linux decision tree as one pure function of the probe facts, so
+/// every branch is unit-testable without a machine that has the hardware.
 pub fn decide_from_facts(facts: &LinuxProbeFacts) -> WakeCapability {
     if !facts.rtc_present {
         return WakeCapability::Disabled {

@@ -32,18 +32,33 @@ pub const MAX_FREE_TEXT_BYTES: usize = 1024;
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct ReplyDocument {
+    /// Must be `bellman-reply/1`.
     pub schema: Option<String>,
+    /// Which run this answers; must match the reply filename.
     pub run_id: Option<Uuid>,
+    /// The claiming app; must match the run's snapshotted owner.
     pub app_name: Option<String>,
+    /// The state being reported. The only required field once identity is
+    /// established: `acknowledged` | `running` | `completed` | `failed`.
     pub state: Option<String>,
+    /// When the app picked the run up.
     pub acknowledged_at: Option<DateTime<Utc>>,
+    /// The app's own estimate of how long it will take.
     pub expected_secs: Option<u64>,
+    /// Opt into the silence watchdog. `true` without a positive
+    /// `expected_secs` is rejected — there would be no deadline to hold to.
     pub error_detection: Option<bool>,
+    /// A liveness ping; each new value extends an armed watchdog.
     pub heartbeat_at: Option<DateTime<Utc>>,
+    /// Free text for the live view. Never logged.
     pub progress: Option<String>,
+    /// When the app finished successfully.
     pub completed_at: Option<DateTime<Utc>>,
+    /// Any JSON the app wants to hand back; capped when stored.
     pub result: Option<serde_json::Value>,
+    /// When the app decided it had failed.
     pub failed_at: Option<DateTime<Utc>>,
+    /// Why it failed, in the app's words.
     pub reason: Option<String>,
     /// Present on the Bellman-written stub; how the transport tells
     /// "stub, untouched" (`state: null`) from an invalid stateless reply.
@@ -78,6 +93,8 @@ pub enum ReplyRejection {
 }
 
 impl ReplyRejection {
+    /// The reason recorded on the `reply_rejected` event and in the
+    /// quarantine sidecar — what the app's author will read.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::MissingSchema => "missing schema",

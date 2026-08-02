@@ -293,22 +293,28 @@ impl AppConfig {
         Duration::from_secs(self.pickup_grace_secs)
     }
 
+    /// `horizon_secs` as a `Duration`.
     pub fn horizon(&self) -> Duration {
         Duration::from_secs(self.horizon_secs)
     }
 
+    /// `retention_days` as a `Duration`.
     pub fn retention(&self) -> Duration {
         Duration::from_secs(self.retention_days.saturating_mul(24 * 60 * 60))
     }
 
+    /// `ack_grace_secs` as a `Duration` — the prune eligibility window, not
+    /// the reply pickup deadline (that is `pickup_grace`).
     pub fn ack_grace(&self) -> Duration {
         Duration::from_secs(self.ack_grace_secs)
     }
 
+    /// `prune_interval_secs` as a `Duration`.
     pub fn prune_interval(&self) -> Duration {
         Duration::from_secs(self.prune_interval_secs)
     }
 
+    /// `accuracy_slack_secs` as a `Duration`.
     pub fn accuracy_slack(&self) -> Duration {
         Duration::from_secs(self.accuracy_slack_secs)
     }
