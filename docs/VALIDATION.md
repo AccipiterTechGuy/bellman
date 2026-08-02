@@ -26,7 +26,7 @@ its script, and the Perl client. Originality is a separate document:
 
 | # | Area | Result |
 |---|---|---|
-| 1 | Code health — fmt / clippy / tests / vitest | **PASS** after fixing 538 rustfmt diffs; 482 Rust + 113 JS tests, **0 ignored, 0 skipped** |
+| 1 | Code health — fmt / clippy / tests / vitest | **PASS** — fmt, clippy, rustdoc and 113 JS tests clean; 485 Rust tests, **0 ignored, 0 skipped**, green on 25 consecutive full-workspace runs. Getting there cost a third product bug: a lease lost to a forking sibling thread ([FLK1](todo/cards/FLK1_publisher_lease_test_parallelism.md)) |
 | 2 | All 7 occurrence kinds firing on their own schedule | **PASS** — every one within 8 ms of `scheduled_for` |
 | 2 | Misfire across a real stop/start | **PASS after a fix** — `skip` was silent in the log |
 | 2 | DST gap (spring forward), real clock | **PASS** |
@@ -48,7 +48,7 @@ its script, and the Perl client. Originality is a separate document:
 | 5 | Originality sweep | **PASS** — [ORIGINALITY.md](ORIGINALITY.md) |
 | 6 | Polish: personal-path gate, naming, dead code, **doc coverage** | **PASS** — 756 undocumented public items cleared, `#![warn(missing_docs)]` landed |
 
-Nine defects were found and fixed on this card; each functional one has a
+Eleven defects were found and fixed on this card; each functional one has a
 regression test that was verified to fail without its fix:
 
 | # | Defect | Fix |
@@ -61,6 +61,8 @@ regression test that was verified to fail without its fix:
 | D6 | An unparseable system timezone name aborts startup maintenance, so `system.prune` is never created and nothing ever prunes | see below |
 | D8 | **Two concurrent producers could be handed the same slot name**, so one app's request was silently destroyed — both told `Ok`, nothing quarantined, the timer simply never appeared | see §3 |
 | D9 | The replenisher wrote free stubs with a *replacing* write after an `exists()` check, which could land on top of a request published onto a just-claimed name | see §3 |
+| D10 | The `EventPublisher` lease could be lost to a **sibling thread's `fork`** — `fork(2)` copies the fd table and `O_CLOEXEC` fires only at `exec(2)`, so a child briefly holds a duplicate of the description the `flock` belongs to, and an election refused by nobody skipped a maintenance round | see below |
+| D11 | Reply files were opened through `rustix::fs::open` **without `O_CLOEXEC`** (unlike `std`, which sets it for you), leaking that descriptor into every command Bellman launches — and those commands come from user timer configuration | see below |
 | D7 | README §Install said nothing about who runs what: its first command assumes `sudo`, which `ubuntu:24.04` and `archlinux:latest` do not ship, so the recipe stopped before installing anything; and it had no guidance on `sudo` for steps 2–5 or on running `pacman` unattended | see §4 |
 
 The walkthrough in §4 and *[Walkthrough](#walkthrough--what-this-was-like-to-use)*
@@ -104,33 +106,21 @@ instead of blaming rotation; the retention window matches the policy under
 test, so age retention is exercised by the 90-day-old file it plants rather
 than by a stopwatch.
 
-> **This gate is not fully closed, and saying so is the point.** Measured,
-> not asserted:
->
-> | `cargo test --workspace --all-targets` | failures |
-> |---|---|
-> | before this card's fixes | 3 in 20 runs, three different tests |
-> | after them | **1 in 20 runs**, always the same one |
-> | `-- --test-threads=1` | 0 in 3 runs (366/366 each) |
->
-> The remaining failure is confined to tests that drive `EventPublisher`
-> leadership and needs parallel in-process execution. It now fails on a
-> **setup assertion that names the cause** — the seeded publish could not
-> win the lease within ~2 s of retrying — instead of a downstream assertion
-> that blamed the pruner. It is written up as
-> [`FLK1`](todo/cards/FLK1_publisher_lease_test_parallelism.md) with the
-> evidence gathered, including the question that has to be answered first:
-> **whether the same thing can happen in the product.** A lease that stays
-> unavailable for two seconds is long enough to matter if it can happen
-> outside a test. A claim of "green" here would be the exact failure mode
-> this card exists to catch.
+Measured, not asserted:
 
-**The publisher-lease flake, and what is still unexplained.** The last one
-took instrumenting to understand, and the honest answer is partial. The test
-has a "live watcher" publisher hold the election lease, checks that a prune
-correctly reports `skipped_not_leader` and does not stamp `last_prune`, then
-releases the lease and asserts the *next* prune wins it. Roughly one
-full-suite run in twenty, it did not:
+| `cargo test --workspace --all-targets` | failures |
+|---|---|
+| before this card's fixes | 3 in 20 runs, three different tests |
+| after the slot and test fixes, before the lease fix | 1 in 20 runs, always the same one |
+| `-- --test-threads=1` (before the lease fix) | 0 in 3 runs (366/366 each) |
+| **after the lease fix** | **0 in 25 consecutive runs** |
+
+**The publisher-lease flake — the mechanism, and a third product bug.** This
+one took real instrumenting. The test has a "live watcher" publisher hold the
+election lease, checks that a prune correctly reports `skipped_not_leader`
+and does not stamp `last_prune`, then releases the lease and asserts the
+*next* prune wins it. Roughly one full-suite run in twenty, it did not — at
+`pruner/tests.rs:129`, `test setup: prune must hold the publisher lease`:
 
 ```
 DIAG2 leader=true published=1 error=None pending=Ok(0) cur_len=Ok(166)
@@ -143,34 +133,79 @@ The seed published cleanly and the holder had released — yet the `flock` on
 its own temp directory, so no other test shares that path, and 80 isolated
 runs of this test never reproduced it; it needs the full suite.
 
-Instrumenting `gate::try_acquire_file` to dump `/proc/self/fd` on
-`WOULDBLOCK` narrowed it further:
+Instrumenting `gate::try_acquire_file` to scan **every** process's
+`/proc/*/fd` on `WOULDBLOCK` — not just our own, since an inherited fd in a
+child would be invisible in `/proc/self/fd` — produced the decisive clue:
 
 ```
-DIAGLOCK wouldblock on /tmp/.tmpW1y5D4/logs/publisher.lock
-  open fds: ["31"=>/tmp/.tmpW1y5D4/logs/publisher.lock",
-             "42"=>/tmp/.tmpWzwpJS/logs/publisher.lock"]
+DIAGLOCK path=/tmp/.tmpfeHr3X/logs/publisher.lock dev=66309 ino=7623784 nlink=1 me=2572637
+  pid=2572637 (bellman_core-d2) fd="31" -> /tmp/.tmpfeHr3X/logs/publisher.lock same_inode=true
+  pid=2572637 (bellman_core-d2) fd="34" -> /tmp/.tmpyZjov3/logs/publisher.lock same_inode=false
 ```
 
-Exactly one fd in the process points at the contended path — the one
-`try_acquire_file` had just opened itself. So the lock is held by an open
-file *description* that is no longer a visible fd of this process, which
-points at an inherited fd in a spawned child. **The mechanism was not
-confirmed**, and the question that matters — whether a Bellman spawning a
-wake action while holding the lease can starve every other publisher for the
-life of that child — is the first thing `FLK1` has to answer. It is transient, and the production path is
-built for exactly this: losing an election is a legitimate outcome, the
-report says so, `last_prune` is deliberately not stamped, and the next pass
-retries.
+`nlink=1` rules out hard links. Across the entire process table exactly one
+fd points at the contended inode — fd 31, the one `try_acquire_file` had just
+opened itself. **Nothing on the machine held that lock, and the kernel still
+said `EWOULDBLOCK`.** That is only possible if the holder had gone away
+between the failed `flock` and the scan.
 
-So the test now retries the prune until it wins the lease, which is what the
-scheduler does, instead of demanding the first attempt succeed — a promise
-the code never made. Everything the test was actually for is still asserted:
-the follower reports the skip, does not stamp `last_prune`, and once the
-lease is free the rotation happens and `last_prune` is stamped. This is
-recorded rather than quietly smoothed over: an intermittently unacquirable
-lease is worth a look by someone with more room than this card has, and a
-"not identified" is more useful than a tidy guess.
+It had. The cause is a POSIX behaviour rather than anything in Bellman:
+
+> **`fork(2)` copies the file-descriptor table, and `O_CLOEXEC` is honoured
+> at `exec(2)`, not at `fork(2)`. An `flock` belongs to the open file
+> description, not to the descriptor.** So between fork and exec a brand-new
+> child holds a duplicate of every lock its parent holds — including one
+> another thread is about to release — and anyone asking for that lock in
+> that window is refused by a "holder" that has no interest in it.
+
+Bellman forks constantly (every launch action, the demo, the wake helper) and
+the test binary runs 366 of those at once. Isolated outside the codebase,
+with **no competing lock holder anywhere in the program** — the only
+lock/unlock is the measuring loop, which always releases before it asks
+again, so every failure is spurious by construction:
+
+| another thread spawning children | attempts | spurious `EWOULDBLOCK` |
+|---|---|---|
+| no | 5,234,658 | **0** (0.000%) |
+| yes | 7,564,851 | **499,234** (7.25 / 7.49 / 7.46 %) |
+
+**Can this happen in the product?** That was the question `FLK1` said to
+answer first, and it deserved the fear it was written with. The answer is
+**no, and it is measured**: the exposure is the fork→exec window, not the
+child's lifetime, because `exec` is where `O_CLOEXEC` fires. Hold the lease,
+spawn a child that sleeps five seconds, release the lease — the lease is free
+again after **~6µs** (7.397 / 5.584 / 6.167µs over three runs), not after
+five seconds. A Bellman spawning a wake action does not starve other
+publishers for the life of that child. Every spawn path was audited to be
+sure nothing widens the window: `actions/launch.rs` uses `pre_exec` only to
+`setsid()`, `demo.rs` only sets a process group, and nothing anywhere uses
+`dup2`, forks without exec, or hands a descriptor to a child deliberately.
+The worst real-world effect was one skipped maintenance round, which the
+pruner already handles by reporting the skip, not stamping `last_prune`, and
+retrying next tick.
+
+**The fix is in the layer that owns the problem.** `try_acquire_file` now
+retries for a bounded 100 ms rather than asking once — orders of magnitude
+longer than a fork→exec window, orders of magnitude shorter than a real
+leader's hold (an entire publish cycle), so genuine contention is still
+reported promptly and correctly as a follower. Each attempt reopens the file,
+so a description inherited before we arrived cannot be the one under test.
+`reply::gate::tests::election_is_not_lost_to_a_concurrent_forks_inherited_fd`
+spawns children on one thread while electing on another and asserts zero
+spurious follower reports; without the retry it fails at **120 of 3000**.
+
+**No assertion was weakened.** `pruner/tests.rs:129` still demands the prune
+win its election outright, and it now does. An earlier revision of this
+document said the test had been changed to retry the prune until it won —
+that change was reverted once the cause was known, because retrying in the
+test would have hidden exactly the bug below.
+
+**The audit turned up a second defect (D11).** `reply/watcher.rs` opened
+reply files with `rustix::fs::open`, which passes its flags through verbatim
+— unlike `std::fs::File::open`, which sets `O_CLOEXEC` for you. That
+descriptor was therefore inherited by every process Bellman launches, and
+those are **user-supplied commands from timer configuration**. Fixed by
+adding `OFlags::CLOEXEC`. It is the only `rustix::fs::open` in the tree.
 
 The dispatcher timeout that started the poison cascade was not itself
 reproducible on an idle machine: it happened while four container builds were saturating
@@ -178,9 +213,11 @@ all sixteen cores, against assertions that already allow 10–30 s. Timeouts
 that generous were left alone — loosening a test to survive a load spike I
 created myself would be weakening the gate, not fixing it.
 
-Stability after the fixes: **20 consecutive full-workspace runs, all green**,
-on an otherwise idle machine. The loop stops at the first failure; it did not
-stop.
+An earlier revision of this document claimed twenty consecutive green runs
+before the lease fix existed; that sentence was left behind by a later
+measurement that contradicted it, and it was removed rather than reconciled.
+The table at the top of this section is the measurement, and it now ends
+green for a reason that is named.
 
 ### clippy, tests, frontend
 
@@ -189,8 +226,10 @@ $ cargo clippy --workspace --all-targets -- -D warnings ; echo $?
 0                                   # 0 warnings
 
 $ cargo test --workspace --all-targets
-… 482 passed; 0 failed; 0 ignored   # summed across 15 test binaries
-                                    # (478 before this card; +4 regression tests)
+… 485 passed; 0 failed; 0 ignored   # summed across 15 test binaries.
+                                    # 478 before this card; +7 regression
+                                    # tests. 25 consecutive runs, all green
+                                    # — see the measurement above.
 
 $ cargo test --workspace --doc
 0 passed; 0 failed; 0 ignored       # there are no doctests

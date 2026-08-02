@@ -1,90 +1,116 @@
-# FLK1 — the publisher lease blocks itself under parallel in-process tests
+# FLK1 — RESOLVED: the publisher lease was lost to a forking sibling thread
 
-Raised by **C11** (full-system validation, 2026-08-02), which was asked to
-make `cargo test --workspace --all-targets` repeatably green and got most,
-but not all, of the way. Two genuine product bugs came out of chasing it
-(the slot-name collision and the replenisher clobber, both fixed and
-regression-tested on that card). This is the part that is left.
+Raised by **C11** (full-system validation, 2026-08-02) and **closed by C11**
+on the same card once the mechanism was found. Kept as the write-up, because
+the cause is a POSIX behaviour that will bite anyone who adds another
+non-blocking lock to this codebase.
+
+Three genuine product bugs came out of chasing this: the slot-name collision,
+the replenisher clobber, and the one below.
 
 ## The symptom
 
-Run in a loop, the workspace suite fails intermittently — never the same
-assertion twice in a row, always in the small family of tests that drive
+Run in a loop, the workspace suite failed intermittently — never the same
+assertion twice in a row, always in the family of tests that drive
 `EventPublisher` leadership:
 
 - `events::publisher::tests::recovery_keeps_the_journal_when_cleanup_fails`
 - `pruner::tests::prune_with_lease_elsewhere_reports_skipped_and_never_stamps_last_prune`
 - `pruner::tests::prune_rotates_jsonl_and_respects_retention_edges`
 
-Each ends up looking like "the publisher was not the leader when it should
-have been", which then surfaces as a misleading downstream assertion
+Each ended up looking like "the publisher was not the leader when it should
+have been", which then surfaced as a misleading downstream assertion
 (nothing rotated, no error cleared, no archive).
 
-## What is known
+## The mechanism
 
-- **Serial runs are clean.** `cargo test -p bellman-core --lib --
-  --test-threads=1` passed 366/366 three times in a row. The failures need
-  parallel in-process execution.
-- **Every test uses its own `tempfile::tempdir()`,** so no two share a
-  `publisher.lock` path. Confirmed by inspection of every
-  `EventPublisher::{open,with_config}` call site.
-- **The lock really is unavailable, not merely reported so.** Instrumenting
-  `gate::try_acquire_file` to dump `/proc/self/fd` on `WOULDBLOCK` caught it:
+**`fork(2)` copies the file-descriptor table; `O_CLOEXEC` is honoured at
+`exec(2)`, not at `fork(2)`. An `flock` belongs to the open file description,
+not to the descriptor. So between fork and exec, a brand-new child holds a
+duplicate of every lock the parent holds** — including one another thread is
+about to release. Any thread asking for that lock in that window is told
+`EWOULDBLOCK` by a "holder" that has no interest in it and will drop it
+microseconds later.
 
-  ```
-  DIAGLOCK wouldblock on /tmp/.tmpW1y5D4/logs/publisher.lock
-    open fds: ["31"=>/tmp/.tmpW1y5D4/logs/publisher.lock",
-               "42"=>/tmp/.tmpWzwpJS/logs/publisher.lock"]
-  ```
+Bellman forks constantly — every launch action, the demo, the wake helper —
+and the test binary runs 366 of those concurrently, so a single-shot election
+lost the race at a measurable rate.
 
-  Exactly one fd in this process points at the contended path — the one
-  `try_acquire_file` had just opened itself. So the `flock` is held by
-  something that is **not** a live fd of this process at that moment.
-- The owning `EventPublisher` had already released: the same run printed
-  `watcher_is_leader=false` immediately before.
+Isolated, outside the codebase, with **no competing lock holder anywhere in
+the program** (the only lock/unlock is the measuring loop itself, which always
+releases before it asks again, so every failure is spurious by construction):
 
-## How long it holds
+| another thread spawning children | attempts | spurious `EWOULDBLOCK` |
+|---|---|---|
+| no | 5,234,658 | **0** (0.000%) |
+| yes | 7,564,851 | **499,234** (7.25 / 7.49 / 7.46 %) |
 
-Long enough to matter. After C11's fixes the seeding retry waits ~2 s
-(100 attempts, 20 ms apart) and still loses roughly 1 run in 20. Whatever
-holds the lease is not a microsecond window.
+The earlier `/proc`-wide diagnostic had found no holder at all — every process
+on the machine was scanned and only our own just-opened fd pointed at the
+contended inode. That is the fingerprint of exactly this: by the time the scan
+ran, the child had exec'd and the inherited copy was gone.
 
-## Where to look next
+## Question (3) — does this hurt the product? Answered: no, and here is why
 
-`flock` locks belong to the open file description, so a lock outliving every
-visible fd points at a description still alive somewhere — an inherited fd in
-a child process is the obvious candidate, and these suites spawn `sleep`
-children through the action executor. Rust opens files `O_CLOEXEC` by
-default, so if that is the mechanism, something is bypassing it (a `dup`, a
-`pre_exec`, or a crate that opens without the flag). Worth checking:
+The card asked this first, and it deserved the fear it was written with. It
+does not reproduce, for a specific reason:
 
-1. whether any launch/executor path spawns while a lease guard is held;
-2. whether `rustix`/`tempfile`/`rusqlite` open any of these files without
-   `O_CLOEXEC`;
-3. whether the same thing can happen in the **product** — a Bellman that
-   spawns a wake action while holding the publisher lease would starve every
-   other publisher for the life of that child, which would be a real bug and
-   not merely a test annoyance. **Answer this one first.**
+**The exposure is the fork→exec window, not the child's lifetime.** `exec` is
+where `O_CLOEXEC` fires, so the inherited copy dies there. Measured: hold the
+lease, spawn a child that sleeps 5 seconds, release the lease — the lease is
+free again after **~6µs** (7.397µs / 5.584µs / 6.167µs over three runs), not
+after 5 seconds. A Bellman that spawns a wake action while holding the
+publisher lease does **not** starve other publishers for the life of that
+child.
 
-## Scope
+Every spawn path was audited for anything that would widen this:
 
-- Find the mechanism, then fix it in whichever layer owns it.
-- If it turns out to be test-only, say so with evidence and make the suite
-  green without weakening any assertion.
-- If (3) reproduces in the product, that is the actual bug and this card
-  becomes a lease-lifetime fix.
+| site | what it does | verdict |
+|---|---|---|
+| `actions/launch.rs:95` | `pre_exec` → `setsid()` only | execs immediately; window unchanged |
+| `src-tauri/src/demo.rs:198` | `process_group(0)` | no fd work at all |
+| `reply/watcher.rs:72` | `rustix::fs::open` | **defect, fixed — see below** |
 
-## Do NOT
+Nothing anywhere uses `dup2`, keeps a `fork` without `exec`, or hands a
+descriptor to a child on purpose.
 
-- Do not paper over it by retrying leadership inside the tests until they
-  pass; C11 already did that in exactly one place where the product's own
-  contract says a lost election is legitimate and retried next pass, and that
-  is the limit of what is honest without knowing the cause.
-- Do not raise the timeouts. They are already 10–30 s.
+Worst case in the product before the fix was therefore *one skipped
+maintenance round*, which `prune` already handles correctly: it reports
+`skipped_not_leader`, does **not** stamp `last_prune`, and the next tick
+retries. Real, but bounded and self-healing.
 
-## Exit gate
+## The fix
 
-- The mechanism is named, with evidence.
-- Question (3) is answered explicitly, either way.
-- `cargo test --workspace --all-targets` run 25 times in a row on an idle
-  machine, all green, with no assertion weakened relative to today.
+`reply::gate::try_acquire_file` now retries for a bounded 100 ms instead of
+asking once. That is orders of magnitude longer than a fork→exec window and
+orders of magnitude shorter than a real leader's hold (a whole publish cycle),
+so genuine contention is still reported promptly and correctly as
+`Ok(None)` — the caller is still a follower when someone really leads. Each
+attempt reopens the file, so a description some child inherited before we
+arrived cannot be the one we test.
+
+Regression test:
+`reply::gate::tests::election_is_not_lost_to_a_concurrent_forks_inherited_fd`
+— spawns children from one thread while electing on another, never holding a
+guard across an attempt, and asserts zero spurious follower reports. Without
+the retry it fails at **120 of 3000** attempts.
+
+**No assertion anywhere was weakened.** In particular
+`pruner/tests.rs:129` (`test setup: prune must hold the publisher lease`)
+still demands that the prune wins its election outright, and now it does.
+
+## The second defect this audit turned up
+
+`reply/watcher.rs` opened reply files through `rustix::fs::open`, which passes
+`OFlags` through verbatim — unlike `std::fs::File::open`, which sets
+`O_CLOEXEC` for you. The reply-file descriptor was therefore inherited by
+every process Bellman launches, and those are **user-supplied commands from
+timer configuration**. Fixed by adding `OFlags::CLOEXEC`. It is the only
+`rustix::fs::open` in the tree; the rest go through `std`.
+
+## Exit gate — met
+
+- [x] The mechanism is named, with evidence (table above, both directions).
+- [x] Question (3) is answered explicitly: no, and measured.
+- [x] `cargo test --workspace --all-targets`, 25 consecutive runs, all green,
+      with no assertion weakened relative to before.

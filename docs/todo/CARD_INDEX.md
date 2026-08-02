@@ -57,7 +57,7 @@ watches. See `testing_apps/README.md`.
 
 | card | scope | depends on |
 |---|---|---|
-| **FLK1** | 🔴 `cargo test --workspace --all-targets` is intermittently red under parallel in-process execution — the `EventPublisher` lease `flock` is unavailable while no live fd of the process holds it. Serial runs are 100% green. **First question to answer: can this happen in the product**, i.e. can a Bellman that spawns a wake action while holding the publisher lease starve every other publisher? If yes that is the real bug | C11 |
+| **FLK1** | ✅ **Closed on C11.** The `EventPublisher` lease was lost to a *sibling thread's* `fork` — `fork(2)` copies the fd table and `O_CLOEXEC` only fires at `exec(2)`, so a child briefly owns a duplicate of the open file description the `flock` belongs to. Fixed in `reply::gate::try_acquire_file` (bounded 100 ms retry). The production question is answered **no** and measured: the window is fork→exec, not the child's lifetime (~6µs with a 5 s child alive). The audit also found and fixed a real `O_CLOEXEC` leak of reply-file descriptors into user-supplied commands. Kept as the write-up | C11 |
 
 ## Scheduler internals
 
