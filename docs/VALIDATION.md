@@ -26,7 +26,7 @@ its script, and the Perl client. Originality is a separate document:
 
 | # | Area | Result |
 |---|---|---|
-| 1 | Code health — fmt / clippy / tests / vitest | **PASS** — fmt, clippy, rustdoc and 113 JS tests clean; 486 Rust tests, **0 ignored, 0 skipped**, green on 25 consecutive full-workspace runs. Getting there cost a third product bug: a lease lost to a forking sibling thread ([FLK1](todo/cards/FLK1_publisher_lease_test_parallelism.md)) |
+| 1 | Code health — fmt / clippy / tests / vitest | **PASS** — fmt, clippy, rustdoc and 113 JS tests clean; 487 Rust tests, **0 ignored, 0 skipped**, green on 25 consecutive full-workspace runs. Getting there cost a third product bug: a lease lost to a forking sibling thread ([FLK1](todo/cards/FLK1_publisher_lease_test_parallelism.md)) |
 | 2 | All 7 occurrence kinds firing on their own schedule | **PASS** — every one within 8 ms of `scheduled_for` |
 | 2 | Misfire across a real stop/start | **PASS after a fix** — `skip` was silent in the log |
 | 2 | DST gap (spring forward), real clock | **PASS** |
@@ -46,10 +46,12 @@ its script, and the Perl client. Originality is a separate document:
 | 4 | Both data directories | **PASS**, with a documentation gap |
 | 4 | Windows / macOS | **PARTIAL** — see [Not tested, and why](#not-tested-and-why) |
 | 5 | Originality sweep | **PASS** — [ORIGINALITY.md](ORIGINALITY.md) |
-| 6 | Polish: personal-path gate, naming, dead code, **doc coverage** | **PASS** — 756 undocumented public items cleared, `#![warn(missing_docs)]` landed |
+| 6 | Polish: personal-path gate, naming, dead code, **doc coverage** | **PASS** — 756 undocumented public items cleared, `#![warn(missing_docs)]` landed. The sweep also broke a frozen wire shape and had to be repaired: see D12 |
+| 7 | The diff changes no wire shape | **FAILED, then fixed** — the doc sweep silently dropped a `serde` attribute on `bellman-slot/1`. Caught by the supervisor, not by me. See D12 |
 
-Eleven defects were found and fixed on this card; each functional one has a
-regression test that was verified to fail without its fix:
+Twelve defects were found and fixed on this card; each functional one has a
+regression test that was verified to fail without its fix. **D12 was caused
+by this card**, not merely found by it:
 
 | # | Defect | Fix |
 |---|---|---|
@@ -63,6 +65,7 @@ regression test that was verified to fail without its fix:
 | D9 | The replenisher wrote free stubs with a *replacing* write after an `exists()` check, which could land on top of a request published onto a just-claimed name | see §3 |
 | D10 | The `EventPublisher` lease could be lost to a **sibling thread's `fork`** — `fork(2)` copies the fd table and `O_CLOEXEC` fires only at `exec(2)`, so a child briefly holds a duplicate of the description the `flock` belongs to, and an election refused by nobody skipped a maintenance round | see below |
 | D11 | Reply files were opened through `rustix::fs::open` **without `O_CLOEXEC`** (unlike `std`, which sets it for you), leaking that descriptor into every command Bellman launches — and those commands come from user timer configuration | see below |
+| D12 | **Self-inflicted.** The doc sweep dropped `#[serde(default, skip_serializing_if = "Option::is_none")]` from `SlotResponse::timer_id`, so every rejection written to `slots/done/` emitted `"timer_id": null` where the key had been absent — a change to a **frozen** wire shape | see below |
 | D7 | README §Install said nothing about who runs what: its first command assumes `sudo`, which `ubuntu:24.04` and `archlinux:latest` do not ship, so the recipe stopped before installing anything; and it had no guidance on `sudo` for steps 2–5 or on running `pacman` unattended | see §4 |
 
 The walkthrough in §4 and *[Walkthrough](#walkthrough--what-this-was-like-to-use)*
@@ -266,6 +269,52 @@ measurement that contradicted it, and it was removed rather than reconciled.
 The table at the top of this section is the measurement, and it now ends
 green for a reason that is named.
 
+### The doc sweep broke a frozen wire shape (D12)
+
+The worst finding on this card is one this card created. `cc32b0a`, the
+"document every public item" sweep, inserted a doc comment above
+`SlotResponse::timer_id` and in doing so dropped the attribute that was
+sitting there:
+
+```rust
+#[serde(default, skip_serializing_if = "Option::is_none")]
+pub timer_id: Option<Uuid>,
+```
+
+Every rejection Bellman writes into `slots/done/` has since carried a key
+that used to be absent:
+
+```
+expected (base f5b56de) {"schema":"bellman-slot/1",…,"status":"error","error":"bad","events":[]}
+observed (before fix)   {"schema":"bellman-slot/1",…,"status":"error","timer_id":null,"error":"bad","events":[]}
+```
+
+`bellman-slot/1` is frozen by CARD_INDEX's standing decision, and this card's
+own exit gate says nothing in the diff may change a wire shape. Reading was
+never affected — serde still defaults the field on parse — but emitting is
+exactly the surface the freeze is about. **My handoff and this document both
+stated no wire shape had changed. That was wrong, and the supervisor caught
+it, not me.**
+
+Nothing caught it because `json_shapes.rs` only ever built the accepted case
+through `sample_slot_response()`; the branch where every `Option` is `None`
+had no coverage at all. There is now a rejection sample in the shared shape
+list and a golden test that asserts the emitted object **key for key**, so an
+absent key and a `null` one are not the same answer. Verified red with the
+attribute removed:
+
+```
+assertion `left == right` failed: the bellman-slot/1 rejection shape changed
+  left: Object {…, "status": String("error"), "timer_id": Null}
+```
+
+Because the cause was a mechanical sweep rather than a considered edit, the
+same class of error was audited across the whole card rather than at the one
+site: **every `#[…]` attribute present at `f5b56de` is still present at HEAD,
+across all 117 changed `.rs` files.** `SlotResponse::timer_id` was the only
+one lost. (A first pass flagged `web.rs`'s `WebActionDto` attribute too; that
+was rustfmt wrapping it across lines, not a loss.)
+
 ### clippy, tests, frontend
 
 ```
@@ -273,8 +322,8 @@ $ cargo clippy --workspace --all-targets -- -D warnings ; echo $?
 0                                   # 0 warnings
 
 $ cargo test --workspace --all-targets
-… 486 passed; 0 failed; 0 ignored   # summed across 15 test binaries.
-                                    # 478 before this card; +8 regression
+… 487 passed; 0 failed; 0 ignored   # summed across 15 test binaries.
+                                    # 478 before this card; +9 regression
                                     # tests. 25 consecutive runs, all green
                                     # — see the measurement above.
 
@@ -1359,6 +1408,12 @@ that was reviewed and kept. Headline: **zero logic-bearing code shared** with
   reports `personal-path gate: clean` on the tree including everything added
   by this card, and returns 1 with a precise message when a `/home/<user>`
   path is planted in a tracked file. Verified both directions.
+- **Personal *names*, which that gate does not cover.** It matches paths, so
+  six fixture strings carrying the operator's login (`visible/id.rs`,
+  `visible/providers/at.rs`) sat through it untouched. Present at this card's
+  base commit rather than introduced by it, and now `alice`: `task_id()`
+  hashes whatever it is handed and the `at -l` sample parses identically, so
+  the change is inert. Flagged by the supervisor.
 - **Naming and dead code.** `cargo clippy --workspace --all-targets -D
   warnings` is clean, which covers unused code, unused imports and the naming
   lints. No `#[allow(dead_code)]` was added by this card.
