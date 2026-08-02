@@ -41,10 +41,42 @@ use tauri_plugin_notification::NotificationExt;
 use crate::first_run::WizardChoice;
 use crate::state::AppState;
 
+/// Usage text for `bellman-app --help`.
+///
+/// The GUI binary is deliberately not a CLI — `bellman` is (see
+/// `crates/bellman-cli`) — but it still has to answer `--help` rather than
+/// launch a window at someone who is probing it from a terminal.
+const USAGE: &str = "\
+bellman-app — Bellman desktop shell (GUI)
+
+Usage: bellman-app [OPTIONS]
+
+Options:
+      --run-now <NAME_OR_ID>  Fire this timer once at startup, then keep running
+  -h, --help                  Print this help and exit
+  -V, --version               Print version and exit
+
+With no options the desktop app starts normally (window + tray). Managing
+timers from a terminal is the `bellman` CLI's job, not this binary's — run
+`bellman --help` for that.
+";
+
 /// Application entry point. Builds the Tauri runtime and the bellman engine
 /// inside the setup hook, then runs the event loop until the user quits.
 pub fn run() {
     let cli_args: Vec<String> = std::env::args().collect();
+
+    // Answer --help / --version before building anything. Falling through to
+    // the builder would open the store, take the dispatcher lock and show a
+    // window — none of which is what someone typing `--help` asked for.
+    if cli_args.iter().any(|a| a == "--help" || a == "-h") {
+        print!("{USAGE}");
+        return;
+    }
+    if cli_args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("bellman-app {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
 
     let mut builder = tauri::Builder::default()
         // Single-instance: a second launch focuses the existing main window
