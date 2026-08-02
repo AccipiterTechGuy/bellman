@@ -90,16 +90,17 @@ $ cargo fmt --all --check ; echo $?
 ### The suite has to be repeatably green, not green once
 
 `cargo test --workspace --all-targets` was **not** stable. Run in a loop it
-failed roughly one time in twenty, in two different places:
+failed roughly three times in twenty, in four different places. Two of the
+four turned out to be the product, not the tests:
 
 | symptom | what it actually was |
 |---|---|
 | `slots::tests::concurrent_producers_all_get_unique_slots` — *expected 8 timers, got 7* | a **real product race**: two producers handed the same slot name, one app's request silently destroyed. Written up as D8 in [§3](#two-apps-publishing-at-once--found-a-silent-request-loss) |
 | `pruner::tests::prune_rotates_jsonl_and_respects_retention_edges` — *non-empty current should rotate* | a test defect: it ignored the return of the publish cycle that seeds the log, so a publish that did not land failed later with a message pointing at the pruner. The one-second retention it configured also raced the archive it had just created |
 | six `sch1_dispatcher` tests failing at once, five of them at the same `.lock().unwrap()` | **one** failure, amplified. Those tests serialise on a mutex; a genuine timeout poisoned it and every later test in the binary then panicked on the unwrap. Six red tests reporting one problem, with the real one buried. The guard only orders the tests, so it now recovers from poisoning — one failure reports as one failure |
-| `pruner::tests::prune_with_lease_elsewhere_reports_skipped_and_never_stamps_last_prune` — *assertion failed: !report.skipped_not_leader* | the test asserted something the product never promises. See below |
+| `pruner::tests::prune_with_lease_elsewhere_reports_skipped_and_never_stamps_last_prune` — *assertion failed: !report.skipped_not_leader* | **the product again**, D10: the election was refused by a lock nothing held. Chased in full below — it took the longest of the four and was the only one that first looked like the test being unreasonable |
 
-The first was fixed in the product. The second was fixed in the test: the
+The first and the last were fixed in the product. The second was fixed in the test: the
 seeding cycle is now retried a bounded number of times and **asserted**, with
 the failure message naming the real cause (election lost, or an I/O error)
 instead of blaming rotation; the retention window matches the policy under

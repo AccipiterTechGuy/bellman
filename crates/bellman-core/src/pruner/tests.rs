@@ -74,25 +74,13 @@ fn prune_rotates_jsonl_and_respects_retention_edges() {
         .enqueue_event(&EventRecord::new(RunState::Fired).with_message("keep-me"))
         .unwrap();
     //
-    // The cycle is retried a bounded number of times because a publish that
-    // does not land leaves the current file empty, and the rotation
-    // assertion below then fails with "non-empty current should rotate" —
-    // pointing at the pruner when the pruner is fine. Retrying makes the
-    // setup deterministic; the assert after it names what actually went
-    // wrong (election lost, or a real I/O error) instead of guessing.
-    let mut seed = publisher.publish_cycle(&store);
-    for _ in 0..100 {
-        if seed.published == 1 {
-            break;
-        }
-        // A short wait between attempts, not a tight spin: what this loses
-        // to is the publisher lease being briefly unavailable (see FLK1),
-        // and hammering it 20 times in a microsecond neither waits for that
-        // nor tells you anything. The scheduler retries on its next pass
-        // too — this is the same shape, bounded at ~2 s.
-        std::thread::sleep(Duration::from_millis(20));
-        seed = publisher.publish_cycle(&store);
-    }
+    // One cycle, asserted. An earlier revision retried this a hundred times
+    // over two seconds; the only thing it was losing to was D10, and with
+    // that fixed the seed lands first time. The assert names what actually
+    // went wrong (election lost, or a real I/O error) rather than letting an
+    // empty log surface later as "non-empty current should rotate" and blame
+    // the pruner.
+    let seed = publisher.publish_cycle(&store);
     assert_eq!(
         seed.published, 1,
         "test setup: the seeded event never reached the log \
@@ -624,36 +612,27 @@ fn prune_with_lease_elsewhere_reports_skipped_and_never_stamps_last_prune() {
     // prune wins the lease and really rotates.
     watcher_publisher.publish_cycle(&store);
 
-    // The prune retries until it wins the lease, because that is exactly what
-    // the product does: losing an election is a legitimate outcome — the
-    // report says `skipped_not_leader`, `last_prune` is deliberately NOT
-    // stamped, and "the next pass must retry". Asserting that the very first
-    // attempt after the release must win asserts something the code never
-    // promised, and it does intermittently lose: instrumenting this test
-    // caught `watcher_is_leader=false` while the flock on `publisher.lock`
-    // was still not acquirable, roughly once in twenty full-suite runs. What
-    // held it was not identified — see VALIDATION.md — but it is transient,
-    // and a scheduler that retries next tick never notices. What must hold,
-    // and is still asserted, is that the rotation DOES happen and
-    // `last_prune` IS stamped once the lease is free.
-    let mut report = None;
-    for _ in 0..50 {
-        let r = run_prune(
-            &mut store,
-            &mut prune_publisher,
-            &cfg,
-            Utc::now(),
-            true,
-            None,
-        )
-        .unwrap();
-        if !r.skipped_not_leader {
-            report = Some(r);
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let report = report.expect("prune never won the lease after the watcher released it");
+    // ONE attempt, and it must win. An earlier revision of this test looped
+    // here, on the reasoning that a lost election is a legitimate outcome the
+    // product retries — true of the product, but wrong here: the lease is
+    // free, so the very next attempt has nothing to lose to. The loop was
+    // hiding D10, where a sibling thread's `fork` briefly duplicated the
+    // descriptor the `flock` belonged to and the election was refused by a
+    // lock nobody held. That is fixed in `reply::gate`, so this can demand
+    // what it always should have.
+    let report = run_prune(
+        &mut store,
+        &mut prune_publisher,
+        &cfg,
+        Utc::now(),
+        true,
+        None,
+    )
+    .unwrap();
+    assert!(
+        !report.skipped_not_leader,
+        "the lease was released, so this prune must win the election outright"
+    );
     assert!(
         report.archived.is_some(),
         "rotation happened once the lease was free"
