@@ -146,12 +146,33 @@ impl SlotService {
             let claim_name = format!(".claim-{}-{}", Uuid::new_v4(), final_name);
             let claim_path = self.layout.free_dir().join(&claim_name);
             match std::fs::rename(&path, &claim_path) {
-                Ok(()) => {
-                    claimed = Some((claim_path, existing.slot_id, final_name));
-                    break;
-                }
+                Ok(()) => {}
                 Err(_) => continue, // lost race — try next stub
             }
+            // VERIFY, then keep. `rename` moves whatever is at that name; it
+            // does not check that the name still holds the stub we read a
+            // moment ago. Another producer can claim the same stub, publish
+            // its request back onto the same name, and finish — all between
+            // our read and our rename. We would then have renamed away
+            // SOMEONE ELSE'S REQUEST, written ours over the name, and
+            // deleted theirs with the claim temp: a silent loss, with both
+            // producers told they succeeded and nothing in `bad/`.
+            //
+            // So re-read what we actually claimed. If it is not still the
+            // free stub we read, put it straight back and move on.
+            let claimed_ok = read_capped(&claim_path, self.config.max_read_bytes)
+                .ok()
+                .and_then(|b| serde_json::from_slice::<SlotRequest>(&b).ok())
+                .is_some_and(|r| r.is_free_stub() && r.slot_id == existing.slot_id);
+            if !claimed_ok {
+                // Restore the other producer's file under its own name. It is
+                // briefly absent; a consumer that scans in that instant simply
+                // picks it up on the next pass, which is what a rescan is for.
+                let _ = std::fs::rename(&claim_path, &path);
+                continue;
+            }
+            claimed = Some((claim_path, existing.slot_id, final_name));
+            break;
         }
         let (claim_path, slot_id, final_name) = claimed.ok_or(SlotError::NoFreeSlot)?;
         request.slot_id = slot_id;

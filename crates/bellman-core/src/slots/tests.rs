@@ -1227,3 +1227,170 @@ fn watcher_starts_on_a_data_dir_with_no_timers_root_yet() {
         "a live watcher applies the request; a dead one silently never does"
     );
 }
+
+/// C11 regression: the replenisher must never write over a published request.
+///
+/// A producer claims a free stub by renaming it away and then writes its
+/// request back onto that reserved name. Between those two steps the name
+/// does not exist — and `replenish()` used to test `path.exists()` and then
+/// write a fresh stub with a *replacing* write. Landing in that window
+/// destroyed the request: the producer was told it succeeded, nothing was
+/// quarantined, and the timer simply never appeared. Every
+/// `SlotService::open` replenishes, so two apps integrating at the same
+/// moment were enough — this surfaced as a 1-in-20 flake in
+/// `concurrent_producers_all_get_unique_slots`, which is the same bug seen
+/// end to end.
+///
+/// This drives the window directly instead of hoping for it: producers
+/// publish in a loop while a second thread hammers `replenish()`.
+#[test]
+fn replenish_never_overwrites_a_published_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("slots");
+    let layout = SlotLayout::open(&root).unwrap();
+    let service = SlotService::open(&root, SlotConfig::default()).unwrap();
+
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let hammer = {
+        let layout = layout.clone();
+        let stop = Arc::clone(&stop);
+        thread::spawn(move || {
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                // Ignore errors: the point is the writes it attempts.
+                let _ = layout.replenish();
+            }
+        })
+    };
+
+    let mut published: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for i in 0..60 {
+        let req = make_add_request(
+            &format!("app-{i}"),
+            &format!("timer-{i}"),
+            "interval",
+            None,
+            Some(60),
+        );
+        let rid = req.request_id.clone().unwrap();
+        let path = service.publish(req).expect("publish should succeed");
+        published.push((rid, path));
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    hammer.join().unwrap();
+
+    // Every published request must still be on disk, byte-for-byte its own.
+    // A replaced one reads back as a free stub (or a different request_id).
+    let mut lost: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for (rid, path) in &published {
+        let ok = match read_capped(path, DEFAULT_MAX_READ_BYTES) {
+            Ok(bytes) => serde_json::from_slice::<SlotRequest>(&bytes)
+                .map(|r| r.request_id.as_deref() == Some(rid.as_str()))
+                .unwrap_or(false),
+            Err(_) => false,
+        };
+        if !ok {
+            lost.push((rid.clone(), path.clone()));
+        }
+    }
+    assert!(
+        lost.is_empty(),
+        "{} of {} published requests were overwritten by the replenisher: {lost:?}",
+        lost.len(),
+        published.len()
+    );
+}
+
+/// C11 regression: two producers must never be handed the same slot name.
+///
+/// `publish` reserves a slot by reading a free stub and then renaming that
+/// name away. `rename` moves whatever is at the name — it does not check
+/// that the name still holds the stub that was read. Between one producer's
+/// read and its rename, another can claim the same stub, publish its request
+/// back onto the same name and finish; the first then renames away the
+/// SECOND's request, writes its own over the name, and deletes the second's
+/// with the claim temp. Both producers are told `Ok`, nothing is
+/// quarantined, and one timer simply never appears.
+///
+/// Seen live as a ~1-in-20 failure of
+/// `concurrent_producers_all_get_unique_slots` ("expected 8 timers, got 7"),
+/// with two threads reporting the same reserved path. This test asks the
+/// question directly and over enough rounds to be reliable.
+#[test]
+fn concurrent_publishers_never_share_a_reserved_slot_name() {
+    for round in 0..25 {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("slots");
+        let layout = SlotLayout::open(&root).unwrap();
+        // Headroom, exactly as `concurrent_producers_all_get_unique_slots`
+        // does: with only MIN_FREE_SLOTS stubs some producers legitimately
+        // get NoFreeSlot, and this test is about name collisions, not
+        // exhaustion.
+        for i in 100..120 {
+            let id = format!("{i:04}");
+            let name = format!("slot-{id}.json");
+            if !layout.free_dir().join(&name).exists() {
+                atomic_write_json(&layout.free_dir(), &name, &SlotRequest::free_stub(&id)).unwrap();
+            }
+        }
+
+        let n = 8usize;
+        let barrier = Arc::new(Barrier::new(n));
+        let root = Arc::new(root);
+        let out = Arc::new(Mutex::new(Vec::new()));
+        let mut handles = Vec::new();
+        for i in 0..n {
+            let barrier = Arc::clone(&barrier);
+            let root = Arc::clone(&root);
+            let out = Arc::clone(&out);
+            handles.push(thread::spawn(move || {
+                let svc = SlotService::open(root.as_path(), SlotConfig::default()).unwrap();
+                barrier.wait();
+                let req = make_add_request(
+                    &format!("app-{i}"),
+                    &format!("timer-{i}"),
+                    "interval",
+                    None,
+                    Some(60),
+                );
+                let rid = req.request_id.clone().unwrap();
+                if let Ok(path) = svc.publish(req) {
+                    out.lock().unwrap().push((rid, path));
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        let out = out.lock().unwrap();
+        assert_eq!(out.len(), n, "round {round}: every producer should publish");
+
+        // 1. No two producers may be given the same name.
+        let mut names: Vec<String> = out
+            .iter()
+            .map(|(_, p)| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        let unique = names
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        assert_eq!(
+            unique, n,
+            "round {round}: two producers were handed the same slot name: {names:?}"
+        );
+
+        // 2. And every request must still be the one its producer wrote.
+        for (rid, path) in out.iter() {
+            let bytes = read_capped(path, DEFAULT_MAX_READ_BYTES)
+                .unwrap_or_else(|e| panic!("round {round}: {} unreadable: {e}", path.display()));
+            let got: SlotRequest = serde_json::from_slice(&bytes)
+                .unwrap_or_else(|e| panic!("round {round}: {} not JSON: {e}", path.display()));
+            assert_eq!(
+                got.request_id.as_deref(),
+                Some(rid.as_str()),
+                "round {round}: {} was overwritten by another producer",
+                path.display()
+            );
+        }
+    }
+}
