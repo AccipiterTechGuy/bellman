@@ -43,6 +43,9 @@ All product shots live in [`docs/screenshots/`](docs/screenshots/). QA before/af
 Linux is the only platform validated on real hardware today; see
 [Status](#status--what-actually-exists-today).
 
+**Disk space:** allow about **5 GB** — 2.6 GB for the build in `target/`, and
+about 2.5 GB for the Rust and Node toolchains in your home directory.
+
 **1. System prerequisites** (one time). Refresh the package list first — on a
 fresh machine the list is empty and nothing below installs without it.
 
@@ -94,6 +97,14 @@ container, a Dockerfile, CI) add **`--noconfirm`** — without it pacman waits
 for an answer no one is there to give. The apt and dnf lines already carry
 `-y` for the same reason.
 
+**Check step 1 worked.** The package managers print no summary at the end, so
+ask for the three key libraries directly — three version numbers and
+`step 1 OK` means you are ready:
+
+```sh
+pkg-config --modversion webkit2gtk-4.1 gtk+-3.0 ayatana-appindicator3-0.1 && echo "step 1 OK"
+```
+
 **2. Rust toolchain** (uses `curl` from step 1). `-y` accepts the standard
 install — without it rustup stops for a prompt, which a non-interactive
 shell cannot answer. rustup writes `~/.cargo/env` but cannot modify the
@@ -118,8 +129,9 @@ cargo install tauri-cli --locked
 ```
 
 Any Node **24.x** works — `nvm install 24` resolves to the newest 24 release,
-so your version will not match anyone else's exactly. Verified on Ubuntu 24.04
-with rustc 1.97.1, tauri-cli 2.11.4, and Node 24.13.0 and 24.18.1.
+so your version will not match anyone else's exactly. Last verified
+2026-10-24 with rustc 1.99.1, tauri-cli 2.12.4 and Node 24.22.1 (and earlier
+with rustc 1.97.1, tauri-cli 2.11.4, Node 24.13.0).
 
 **Each list is sufficient on its own.** All three were checked by running the
 steps on this page verbatim in clean `ubuntu:24.04`, `fedora:latest` and
@@ -143,6 +155,12 @@ cd ui && npm ci && cd ..
 `npm ci` is the only manual front-end step: `cargo tauri build` runs the UI
 build and stages the `bellman` CLI sidecar itself (`beforeBuildCommand` in
 `src-tauri/tauri.conf.json`), but it never installs dependencies for you.
+
+`npm ci` ends with an audit summary ("12 vulnerabilities …") and an
+`install-scripts` warning about `esbuild`. Both concern development-only
+packages (the test runner and dev server) that never ship in the app, and the
+build does not need the skipped script. Leave them: `npm audit fix --force`
+would upgrade the front-end stack past the versions this page was tested with.
 
 Debian / Ubuntu:
 
@@ -179,13 +197,13 @@ target at all, so it builds the two binaries directly.
 Debian / Ubuntu — install the deb (or just run the AppImage):
 
 ```sh
-sudo apt install ./target/release/bundle/deb/Bellman_*.deb
+sudo apt install -y ./target/release/bundle/deb/Bellman_*.deb
 ```
 
 Fedora — install the rpm:
 
 ```sh
-sudo dnf install ./target/release/bundle/rpm/Bellman-*.rpm
+sudo dnf install -y ./target/release/bundle/rpm/Bellman-*.rpm
 ```
 
 Either way you get a **Bellman** entry in the app launcher, the `bellman` CLI
@@ -203,6 +221,46 @@ and copy the two binaries onto your `PATH` yourself if you want them there.
 
 Working on Bellman itself rather than installing it? See
 [Development](#development).
+
+### Update
+
+From your clone:
+
+```sh
+git pull
+cd ui && npm ci && cd ..
+```
+
+then run your distro's build command from step 4 and its install command from
+step 5 again. The package manager replaces the old version; your timers are
+kept.
+
+### Uninstall
+
+1. **Turn off "Start at login"** in Settings first (the first-run wizard turns
+   it on by default). Otherwise `~/.config/autostart/Bellman.desktop` stays
+   behind and points at a program that no longer exists — delete it by hand
+   if you have already uninstalled.
+2. **Remove the package:**
+
+   ```sh
+   sudo apt remove -y bellman      # Debian / Ubuntu
+   sudo dnf remove -y bellman      # Fedora
+   ```
+
+   On Arch, delete `bellman` and `bellman-app` from wherever you copied them.
+   Fedora leaves empty folders under `/usr/share/bellman/` (Tauri's rpm does
+   not claim its directories); `sudo rm -r /usr/share/bellman` clears them.
+3. **Your data is kept** unless you delete it. To remove every timer, log and
+   slot for good — this cannot be undone:
+
+   ```sh
+   rm -rf ~/.bellman ~/.local/share/io.bellman.desktop
+   ```
+
+   If you used `bellman task new` to write cron entries, they sit between
+   `# BEGIN bellman-managed` and `# END bellman-managed` in `crontab -e`;
+   delete that block too.
 
 ## What it does
 
