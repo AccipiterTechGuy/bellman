@@ -5,8 +5,11 @@ use super::envelope::{
     SlotOperation, SlotPayload, SlotRequest, SlotResponse, SlotRunEvent, SlotStatus,
 };
 use super::error::{SlotError, SlotResult};
-use super::layout::{SlotLayout, DEFAULT_DONE_RETENTION, DEFAULT_ORPHAN_AGE, MIN_FREE_SLOTS};
+use super::layout::{
+    parse_slot_id_from_name, SlotLayout, DEFAULT_DONE_RETENTION, DEFAULT_ORPHAN_AGE, MIN_FREE_SLOTS,
+};
 use super::payload::{new_timer_from_payload, patch_from_payload};
+use crate::reply::gate::{try_acquire_file, GateGuard};
 use crate::reply::RunDb;
 use crate::store::{SlotRequestRecord, Store, TimerId, TimerUpdate};
 use chrono::Utc;
@@ -14,6 +17,9 @@ use rusqlite::Transaction;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use uuid::Uuid;
+
+/// Number of claim-lock files producers shard slot numbers across.
+const CLAIM_LOCK_SHARDS: u32 = 64;
 
 /// Configuration for the slot service.
 #[derive(Debug, Clone)]
@@ -122,11 +128,23 @@ impl SlotService {
         // Exclusive claim: rename free stub → free/.claim-<uuid>-slot-N.json so
         // two producers cannot overwrite the same reserved id.
         let free_files = self.layout.list_free_files()?;
-        let mut claimed: Option<(PathBuf, String, String)> = None; // claim_path, slot_id, final_name
+        // claim_path, slot_id, final_name, and the claim lock held until the
+        // request is written back.
+        let mut claimed: Option<(PathBuf, String, String, GateGuard)> = None;
         for path in free_files {
             if refuse_symlink(&path).is_err() {
                 continue;
             }
+            // Producers take the slot's claim lock before touching the name.
+            // The rename below is not enough on its own on Windows: rename
+            // opens the source and then renames the open handle, so a producer
+            // that opened `slot-N` just before another claimed it renames the
+            // OTHER producer's claim file — both then believe they own slot N.
+            // An OS lock (flock / LockFileEx) is released if the process dies,
+            // so it can never leave a slot stuck.
+            let Some(claim_lock) = self.try_claim_lock(&path)? else {
+                continue; // another producer is working on this slot
+            };
             let bytes = match read_capped(&path, self.config.max_read_bytes) {
                 Ok(b) => b,
                 Err(_) => continue,
@@ -171,21 +189,41 @@ impl SlotService {
                 let _ = std::fs::rename(&claim_path, &path);
                 continue;
             }
-            claimed = Some((claim_path, existing.slot_id, final_name));
+            claimed = Some((claim_path, existing.slot_id, final_name, claim_lock));
             break;
         }
-        let (claim_path, slot_id, final_name) = claimed.ok_or(SlotError::NoFreeSlot)?;
+        let (claim_path, slot_id, final_name, claim_lock) = claimed.ok_or(SlotError::NoFreeSlot)?;
         request.slot_id = slot_id;
 
         // Write the complete request onto the reserved final name.
         let write_result = atomic_write_json(&self.layout.free_dir(), &final_name, &request);
-        // Drop the claim temp regardless.
+        // Drop the claim temp regardless, then let the next producer in.
         let _ = std::fs::remove_file(&claim_path);
+        drop(claim_lock);
         write_result?;
 
         // Replenish so free stubs stay at floor even while this filled request sits in free/.
         let _ = self.layout.replenish()?;
         Ok(self.layout.free_dir().join(final_name))
+    }
+
+    /// Non-blocking claim lock for the slot at `free_path`, or `None` when
+    /// another producer holds it. Locks are sharded by slot number into
+    /// `<root>/locks/claim-NN.lock` so the set stays bounded; two slots sharing
+    /// a shard only make one producer move on to the next stub.
+    fn try_claim_lock(&self, free_path: &Path) -> SlotResult<Option<GateGuard>> {
+        let id = free_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(parse_slot_id_from_name)
+            .unwrap_or(0);
+        let lock = self
+            .layout
+            .root()
+            .join("locks")
+            .join(format!("claim-{:02}.lock", id % CLAIM_LOCK_SHARDS));
+        try_acquire_file(&lock)
+            .map_err(|e| SlotError::Io(format!("claim lock {}: {e}", lock.display())))
     }
 
     /// One full scan pass: claim filled free slots, process work, sweep, GC, replenish.
