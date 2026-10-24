@@ -290,7 +290,8 @@ mod tests {
             let (stop, spawned, spawn_err) = (stop.clone(), spawned.clone(), spawn_err.clone());
             std::thread::spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
-                    match std::process::Command::new("/bin/true")
+                    // Via PATH: `true` is /bin/true on Linux, /usr/bin/true on macOS.
+                    match std::process::Command::new("true")
                         .stdin(std::process::Stdio::null())
                         .stdout(std::process::Stdio::null())
                         .stderr(std::process::Stdio::null())
@@ -419,13 +420,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_path_buf();
         let id = Uuid::new_v4();
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
         std::thread::scope(|s| {
             s.spawn(|| {
                 let _guard = acquire(&dir, id).unwrap();
+                held_tx.send(()).unwrap();
                 std::thread::sleep(Duration::from_millis(150));
             });
-            // Give the spawned thread a head start so it holds the lock first.
-            std::thread::sleep(Duration::from_millis(30));
+            // Wait until the other thread really holds the lock. A fixed
+            // head-start sleep loses on a loaded runner: the thread starts
+            // late, this side takes the lock first, and the test fails.
+            held_rx.recv().unwrap();
             let start = Instant::now();
             let _guard = acquire(tmp.path(), id).unwrap();
             let elapsed = start.elapsed();
