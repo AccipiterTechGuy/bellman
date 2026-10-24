@@ -102,6 +102,7 @@ pub fn run_launch(cfg: &LaunchConfig) -> Result<LaunchOutcome, LaunchError> {
     let mut child = cmd
         .spawn()
         .map_err(|e| LaunchError::Spawn(format!("spawn '{}': {e}", cfg.command)))?;
+    let tree = ProcessTree::track(&child);
 
     let start = Instant::now();
     let timeout = cfg.timeout;
@@ -124,7 +125,7 @@ pub fn run_launch(cfg: &LaunchConfig) -> Result<LaunchOutcome, LaunchError> {
                     // SCH1 `Replace`: the policy cancelled this run — kill
                     // and reap the child, same as the timeout path.
                     cancelled = true;
-                    kill_child_tree(&mut child);
+                    kill_child_tree(&mut child, &tree);
                     killed = true;
                     let status = child
                         .wait()
@@ -134,7 +135,7 @@ pub fn run_launch(cfg: &LaunchConfig) -> Result<LaunchOutcome, LaunchError> {
                 if start.elapsed() >= timeout {
                     timed_out = true;
                     // Kill the whole process group (see setsid above).
-                    kill_child_tree(&mut child);
+                    kill_child_tree(&mut child, &tree);
                     killed = true;
                     let status = child
                         .wait()
@@ -221,8 +222,72 @@ fn push_utf8_capped(dst: &mut String, bytes: &[u8], cap: usize) {
     }
 }
 
+/// Everything a launched action started, so a kill reaches its descendants.
+///
+/// Unix needs nothing extra: the child leads its own process group (setsid
+/// at spawn). Windows has no process groups, so killing `sh.exe` alone left
+/// e.g. its `sleep` running with the captured pipes open, and the reap waited
+/// for it — a `Replace` cancellation took the action's full runtime. There the
+/// child goes into a Job Object, which its descendants join automatically.
+///
+/// The job deliberately does NOT kill on close: an action that starts a
+/// long-lived program and exits (a launcher script) must leave that program
+/// running, exactly as on Unix. Only a cancel or timeout terminates the job.
+#[cfg(not(windows))]
+struct ProcessTree;
+
+#[cfg(not(windows))]
+impl ProcessTree {
+    fn track(_child: &std::process::Child) -> Self {
+        Self
+    }
+}
+
+#[cfg(windows)]
+struct ProcessTree {
+    /// Job HANDLE as an integer; `None` when the job could not be set up, and
+    /// the kill falls back to the direct child.
+    job: Option<isize>,
+}
+
+#[cfg(windows)]
+impl ProcessTree {
+    fn track(child: &std::process::Child) -> Self {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
+        unsafe {
+            let Ok(job) = CreateJobObjectW(None, None) else {
+                return Self { job: None };
+            };
+            // Processes the child starts from here on join the job. Anything
+            // it spawns in the instant before this call is not covered.
+            if AssignProcessToJobObject(job, HANDLE(child.as_raw_handle())).is_err() {
+                let _ = CloseHandle(job);
+                return Self { job: None };
+            }
+            Self {
+                job: Some(job.0 as isize),
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        if let Some(job) = self.job.take() {
+            unsafe {
+                let _ = windows::Win32::Foundation::CloseHandle(
+                    windows::Win32::Foundation::HANDLE(job as *mut _),
+                );
+            }
+        }
+    }
+}
+
 #[cfg(unix)]
-fn kill_child_tree(child: &mut std::process::Child) {
+fn kill_child_tree(child: &mut std::process::Child, _tree: &ProcessTree) {
     if let Some(pid) = rustix::process::Pid::from_raw(child.id() as i32) {
         let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
     }
@@ -230,7 +295,20 @@ fn kill_child_tree(child: &mut std::process::Child) {
     let _ = child.kill();
 }
 
-#[cfg(not(unix))]
-fn kill_child_tree(child: &mut std::process::Child) {
+#[cfg(windows)]
+fn kill_child_tree(child: &mut std::process::Child, tree: &ProcessTree) {
+    if let Some(job) = tree.job {
+        unsafe {
+            let _ = windows::Win32::System::JobObjects::TerminateJobObject(
+                windows::Win32::Foundation::HANDLE(job as *mut _),
+                1,
+            );
+        }
+    }
+    let _ = child.kill();
+}
+
+#[cfg(not(any(unix, windows)))]
+fn kill_child_tree(child: &mut std::process::Child, _tree: &ProcessTree) {
     let _ = child.kill();
 }
