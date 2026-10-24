@@ -1388,3 +1388,32 @@ fn concurrent_publishers_never_share_a_reserved_slot_name() {
         }
     }
 }
+
+/// The claim window, made deterministic. A producer claims the highest stub
+/// by renaming it to `.claim-<uuid>-slot-N.json`; until it writes its request
+/// back, `slot-N.json` does not exist. Replenish must still treat N as taken,
+/// or it recreates `slot-N`, a second producer claims that, and both requests
+/// end up written to one name. Windows CI hit this through the concurrent
+/// publisher tests; it is a timing window on every OS.
+#[test]
+fn replenish_never_reissues_an_id_held_by_a_claim() {
+    let (_dir, _store, service) = open_harness();
+    let layout = service.layout();
+    let free = layout.free_dir();
+    let highest = layout
+        .list_free_files()
+        .unwrap()
+        .into_iter()
+        .max()
+        .expect("replenished stubs");
+    let name = highest.file_name().unwrap().to_string_lossy().into_owned();
+    let claim = free.join(format!(".claim-{}-{name}", Uuid::new_v4()));
+    fs::rename(&highest, &claim).unwrap();
+
+    layout.replenish().unwrap();
+
+    assert!(
+        !highest.exists(),
+        "replenish recreated {name} while a producer held its claim"
+    );
+}

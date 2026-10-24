@@ -291,7 +291,16 @@ fn next_slot_id(layout: &SlotLayout) -> SlotResult<u32> {
             let ent = ent.map_err(|e| SlotError::Io(format!("read_dir entry: {e}")))?;
             let name = ent.file_name();
             let s = name.to_string_lossy();
-            if let Some(id) = parse_slot_id_from_name(&s) {
+            // A producer's claim (`.claim-<uuid>-slot-0007.json`) still owns
+            // its id: the name is absent only until the request is written
+            // back onto it. Ignoring claims let replenish recreate the
+            // highest id in that window, hand it to a second producer, and
+            // the two requests then landed on one name — one silently lost.
+            let s = s
+                .strip_prefix(".claim-")
+                .and_then(|rest| rest.rfind("slot-").map(|i| &rest[i..]))
+                .unwrap_or(&s);
+            if let Some(id) = parse_slot_id_from_name(s) {
                 max = max.max(id);
             }
         }
