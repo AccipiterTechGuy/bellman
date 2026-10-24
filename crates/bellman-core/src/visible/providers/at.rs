@@ -3,14 +3,20 @@
 use crate::visible::explain::explain_at;
 use crate::visible::id::task_id;
 use crate::visible::types::{DiscoveredTask, LastResult, SourceKind};
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use std::process::Command;
 
 /// Discover jobs in the `at` queue. Returns the tasks and any non-fatal
 /// warnings (a missing `atq`, a spool we may not read).
 pub fn discover_at() -> (Vec<DiscoveredTask>, Vec<String>) {
     let mut warnings = Vec::new();
-    let out = match Command::new("atq").output() {
+    // Pin atq's output to UTC and the C locale: local wall-clock text is
+    // ambiguous in the DST fall-back hour, and %a/%b are localized.
+    let out = match Command::new("atq")
+        .env("TZ", "UTC")
+        .env("LC_ALL", "C")
+        .output()
+    {
         Ok(o) => o,
         Err(e) => {
             warnings.push(format!("atq not available: {e}"));
@@ -123,9 +129,8 @@ fn parse_at_time(s: &str) -> Option<DateTime<Utc>> {
     ];
     for fmt in formats {
         if let Ok(naive) = NaiveDateTime::parse_from_str(s.trim(), fmt) {
-            if let Some(local) = Local.from_local_datetime(&naive).single() {
-                return Some(local.with_timezone(&Utc));
-            }
+            // atq runs with TZ=UTC (see `discover_at`).
+            return Some(Utc.from_utc_datetime(&naive));
         }
     }
     None
@@ -143,5 +148,11 @@ mod tests {
         let t = parse_atq_line(&line).expect("parse");
         assert_eq!(t.owner, "alice");
         assert!(t.source.starts_with("at:"));
+    }
+
+    #[test]
+    fn at_time_is_utc_on_every_host() {
+        let t = parse_at_time("Wed Jul 29 16:00:00 2026").expect("parse");
+        assert_eq!(t.to_rfc3339(), "2026-07-29T16:00:00+00:00");
     }
 }

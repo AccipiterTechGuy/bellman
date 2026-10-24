@@ -3,7 +3,7 @@
 use crate::visible::explain::explain_systemd;
 use crate::visible::id::task_id;
 use crate::visible::types::{DiscoveredTask, LastResult, SourceKind};
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use std::process::Command;
 
 /// Discover system and user systemd timers.
@@ -22,11 +22,23 @@ pub fn discover_systemd() -> (Vec<DiscoveredTask>, Vec<String>) {
     (tasks, warnings)
 }
 
-fn list_timers(user: bool) -> Result<Vec<DiscoveredTask>, String> {
+/// `systemctl` pinned to UTC and the C locale.
+///
+/// Its timestamps are wall-clock text in the caller's zone and locale. Reading
+/// them back as local time breaks in the DST fall-back hour (ambiguous) and in
+/// locales whose weekday names are not three ASCII letters. Pinning the output
+/// makes every timestamp an unambiguous UTC instant on any host.
+fn systemctl(user: bool) -> Command {
     let mut cmd = Command::new("systemctl");
+    cmd.env("TZ", "UTC").env("LC_ALL", "C");
     if user {
         cmd.arg("--user");
     }
+    cmd
+}
+
+fn list_timers(user: bool) -> Result<Vec<DiscoveredTask>, String> {
+    let mut cmd = systemctl(user);
     cmd.args(["list-timers", "--all", "--no-pager", "--no-legend"]);
     let out = cmd.output().map_err(|e| format!("spawn systemctl: {e}"))?;
     if !out.status.success() {
@@ -170,9 +182,9 @@ fn parse_ymd_hms_prefix(s: &str) -> Option<DateTime<Utc>> {
     if s.len() < 19 {
         return None;
     }
+    // systemctl runs with TZ=UTC (see `systemctl`), so the wall clock is UTC.
     let naive = NaiveDateTime::parse_from_str(&s[..19], "%Y-%m-%d %H:%M:%S").ok()?;
-    let local = Local.from_local_datetime(&naive).single()?;
-    Some(local.with_timezone(&Utc))
+    Some(Utc.from_utc_datetime(&naive))
 }
 
 /// Whether UnitFileState means the timer is armed / participating.
@@ -281,10 +293,7 @@ fn enrich_timer(task: &mut DiscoveredTask, user: bool) {
     let unit = unit_from_source(&task.source).to_string();
 
     // Unit file / active state + calendar schedule
-    let mut cmd = Command::new("systemctl");
-    if user {
-        cmd.arg("--user");
-    }
+    let mut cmd = systemctl(user);
     cmd.args([
         "show",
         &unit,
@@ -359,10 +368,7 @@ fn enrich_timer(task: &mut DiscoveredTask, user: bool) {
         .map(|s| s.to_string())
         .unwrap_or_else(|| unit.replace(".timer", ".service"));
 
-    let mut cmd = Command::new("systemctl");
-    if user {
-        cmd.arg("--user");
-    }
+    let mut cmd = systemctl(user);
     cmd.args([
         "show",
         &service,
@@ -421,7 +427,7 @@ mod tests {
 
     #[test]
     fn parse_sample_line() {
-        let line = "Wed 2026-07-29 15:38:10 EEST  233ms Wed 2026-07-29 15:37:55 EEST      14s ago oom-protect.timer            oom-protect.service";
+        let line = "Wed 2026-07-29 15:38:10 UTC  233ms Wed 2026-07-29 15:37:55 UTC      14s ago oom-protect.timer            oom-protect.service";
         let t = parse_timer_line(line, false).expect("parse");
         assert!(t.source.contains("oom-protect.timer"));
         assert!(t.next_run.is_some(), "next_run");
@@ -430,13 +436,14 @@ mod tests {
 
     #[test]
     fn last_run_when_next_is_na() {
-        let line = "n/a                         n/a Wed 2026-07-29 15:37:55 EEST      14s ago foo.timer                    foo.service";
+        let line = "n/a                         n/a Wed 2026-07-29 15:37:55 UTC      14s ago foo.timer                    foo.service";
         let t = parse_timer_line(line, false).expect("parse");
         assert!(t.next_run.is_none(), "next should be None for n/a");
         let last = t
             .last_run
             .expect("last_run must be extracted when NEXT is n/a");
-        assert_eq!(last.to_rfc3339(), "2026-07-29T12:37:55+00:00");
+        // systemctl is run with TZ=UTC, so this is exact on every host.
+        assert_eq!(last.to_rfc3339(), "2026-07-29T15:37:55+00:00");
     }
 
     #[test]
@@ -451,7 +458,7 @@ mod tests {
     #[test]
     fn real_success_after_start() {
         let r = last_result_from_props(
-            "Wed 2026-07-29 15:00:00 EEST",
+            "Wed 2026-07-29 15:00:00 UTC",
             "success",
             Some(0),
             Some(Utc::now()),
@@ -469,7 +476,7 @@ mod tests {
 
     #[test]
     fn parse_oncalendar_schedule() {
-        let cal = "{ OnCalendar=*-*-* 6:00:00 ; next_elapse=Thu 2026-07-30 06:00:00 EEST }";
+        let cal = "{ OnCalendar=*-*-* 6:00:00 ; next_elapse=Thu 2026-07-30 06:00:00 UTC }";
         let (expr, human) = parse_timer_schedule(cal, "");
         assert!(expr.contains("OnCalendar="), "{expr}");
         assert!(
