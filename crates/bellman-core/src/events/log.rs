@@ -158,22 +158,37 @@ pub struct EventLog {
 /// OS file identity used to detect that the path our handle points at was
 /// rotated away by another process.
 #[cfg(unix)]
-fn file_id(meta: &fs::Metadata) -> Option<(u64, u64)> {
+fn file_id(file: &File) -> Option<(u64, u64)> {
     use std::os::unix::fs::MetadataExt;
+    let meta = file.metadata().ok()?;
     Some((meta.dev(), meta.ino()))
 }
 
-/// Windows equivalent of [`file_id`] (volume serial + file index).
+/// Windows equivalent of [`file_id`] (volume serial + file index). std's
+/// `MetadataExt` accessors for these are unstable, so ask Win32 directly.
 #[cfg(windows)]
-fn file_id(meta: &fs::Metadata) -> Option<(u64, u64)> {
-    use std::os::windows::fs::MetadataExt;
-    Some((meta.volume_serial_number()?, meta.file_index()?))
+fn file_id(file: &File) -> Option<(u64, u64)> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut info) }.ok()?;
+    let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+    Some((u64::from(info.dwVolumeSerialNumber), index))
 }
 
 /// Platforms without a file-id API skip the stale-handle check.
 #[cfg(not(any(unix, windows)))]
-fn file_id(_meta: &fs::Metadata) -> Option<(u64, u64)> {
+fn file_id(_file: &File) -> Option<(u64, u64)> {
     None
+}
+
+/// Identity of whatever file `path` names right now. Opening is harmless on
+/// Windows: std shares read/write/delete, so it never blocks a rotation.
+fn path_file_id(path: &Path) -> Option<(u64, u64)> {
+    File::open(path).ok().as_ref().and_then(file_id)
 }
 
 impl EventLog {
@@ -387,10 +402,8 @@ impl EventLog {
         let Some(handle) = self.file.as_ref() else {
             return Ok(());
         };
-        let handle_id = handle.metadata().ok().and_then(|m| file_id(&m));
-        let path_id = fs::metadata(self.current_path())
-            .ok()
-            .and_then(|m| file_id(&m));
+        let handle_id = file_id(handle);
+        let path_id = path_file_id(&self.current_path());
         let stale = match (handle_id, path_id) {
             (Some(h), Some(p)) => h != p,
             // Path missing (mid-rotation elsewhere) or no id support: treat a

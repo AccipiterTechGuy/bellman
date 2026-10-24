@@ -190,9 +190,9 @@ fn try_lock_exclusive(file: &File) -> io::Result<bool> {
     };
     use windows::Win32::System::IO::OVERLAPPED;
 
-    let handle = HANDLE(file.as_raw_handle() as isize);
+    let handle = HANDLE(file.as_raw_handle());
     let mut overlapped = OVERLAPPED::default();
-    let flags = LOCKFILE_EXCLUSIVE_LOCK.0 | LOCKFILE_FAIL_IMMEDIATELY.0;
+    let flags = LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY;
     match unsafe { LockFileEx(handle, flags, 0, u32::MAX, u32::MAX, &mut overlapped) } {
         Ok(()) => Ok(true),
         Err(e) if e.code() == ERROR_LOCK_VIOLATION.to_hresult() => Ok(false),
@@ -207,13 +207,13 @@ fn lock_exclusive(file: &File) -> io::Result<()> {
     use windows::Win32::Storage::FileSystem::{LockFileEx, LOCKFILE_EXCLUSIVE_LOCK};
     use windows::Win32::System::IO::OVERLAPPED;
 
-    let handle = HANDLE(file.as_raw_handle() as isize);
+    let handle = HANDLE(file.as_raw_handle());
     let mut overlapped = OVERLAPPED::default();
     // Lock the whole file (offset 0, max length) exclusively, blocking.
     unsafe {
         LockFileEx(
             handle,
-            LOCKFILE_EXCLUSIVE_LOCK.0,
+            LOCKFILE_EXCLUSIVE_LOCK,
             0,
             u32::MAX,
             u32::MAX,
@@ -231,7 +231,7 @@ impl Drop for GateGuard {
         use windows::Win32::Storage::FileSystem::UnlockFileEx;
         use windows::Win32::System::IO::OVERLAPPED;
 
-        let handle = HANDLE(self.file.as_raw_handle() as isize);
+        let handle = HANDLE(self.file.as_raw_handle());
         let mut overlapped = OVERLAPPED::default();
         // Unlock before close; ignore errors (close also releases the lock).
         unsafe {
@@ -243,6 +243,7 @@ impl Drop for GateGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::time::{Duration, Instant};
 
     fn id_with_first_byte(byte: u8) -> Uuid {

@@ -244,6 +244,7 @@ fn oversized_input_quarantined() {
     assert!(free_stub_count(&service) >= MIN_FREE_SLOTS);
 }
 
+#[cfg(unix)]
 #[test]
 fn symlink_input_quarantined() {
     let (_dir, mut store, service) = open_harness();
@@ -259,10 +260,6 @@ fn symlink_input_quarantined() {
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(&outside, &link).expect("symlink");
-    }
-    #[cfg(not(unix))]
-    {
-        return;
     }
     assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
     service.poll(&mut store).unwrap();
@@ -292,6 +289,7 @@ fn symlink_input_quarantined() {
     assert!(free_stub_count(&service) >= MIN_FREE_SLOTS);
 }
 
+#[cfg(unix)]
 #[test]
 fn dangling_symlink_input_quarantined() {
     // Acceptance: symlinked input is quarantined even when the target is missing.
@@ -302,10 +300,6 @@ fn dangling_symlink_input_quarantined() {
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(&missing, &link).expect("dangling symlink");
-    }
-    #[cfg(not(unix))]
-    {
-        return;
     }
     assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
     assert!(
