@@ -1,16 +1,15 @@
 # Bellman
 
-> ## 🚧 Work in progress — not ready to use
+> ## Linux: works · Windows / macOS: not yet
 >
-> Bellman is **under active construction.** There is no tagged release and no
-> signed build: packages are built from source, unsigned, and have not been
-> validated on real Windows or macOS hardware. Nothing here is stable — APIs,
-> file formats, the database schema and the slot protocol can all change without
-> notice, and the `main` branch is not guaranteed to build at any given moment.
+> **On Linux, Bellman installs and runs.** Follow the [install guide](#install)
+> — it is tested end to end on Ubuntu, Fedora and Arch, and on a real desktop.
 >
-> The repository is public so the work can be followed in the open, **not**
-> because it is ready to install. Please don't file bugs about missing features
-> yet. Progress is tracked in [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md).
+> It is still **pre-release** (0.1.0, no tagged release, no signed packages):
+> the CLI, file formats, database schema and slot protocol may still change.
+> **Windows and macOS** build in CI but have not been installed or used on real
+> hardware — treat them as unfinished. Progress is tracked in
+> [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md).
 
 Cross-platform (Windows / macOS / Linux) **task scheduler** desktop app — the
 desktop cousin of cron. Named after the bellmen (knocker-uppers) who woke
@@ -39,32 +38,19 @@ All product shots live in [`docs/screenshots/`](docs/screenshots/). QA before/af
 
 ## Install
 
-**There is no tagged release and no signed build — you build it yourself.**
-Linux is the only platform validated on real hardware today; see
-[Status](#status--what-actually-exists-today).
+There is no tagged release yet — you build Bellman from source. It takes six
+steps and about **5 GB** of disk (2.6 GB build, ~2.5 GB toolchains).
 
-**Disk space:** allow about **5 GB** — 2.6 GB for the build in `target/`, and
-about 2.5 GB for the Rust and Node toolchains in your home directory.
+- **Linux** (Debian/Ubuntu, Fedora, Arch) is validated — see
+  [Status](#status--what-actually-exists-today).
+- **Windows and macOS** packages build in CI but are unsigned and have not been
+  tried on real hardware — treat them as unfinished.
 
-**1. System prerequisites** (one time). Refresh the package list first — on a
-fresh machine the list is empty and nothing below installs without it.
+**Who runs what.** Steps 1 and 5 install system packages and need `sudo`.
+Steps 2–4 install into your home directory — run them as yourself, **never**
+with `sudo`. Already root (a container)? Leave out `sudo`.
 
-**Who runs what.** Only **step 1** (system packages) and **step 5**
-(installing the package you built) need root, and both are written with
-`sudo` because that is how a desktop user gets it. **If you are already root
-— a container, a chroot, a minimal image — drop the `sudo`**: `ubuntu:24.04`
-and `archlinux:latest` do not ship `sudo` at all, so the prefix fails with
-`sudo: command not found` before anything installs.
-
-**Steps 2–4 need no privileges, and you should not put `sudo` in front of
-them.** rustup and nvm install into the invoking user's `$HOME`, so
-`sudo curl … | sh` would put the toolchain in root's home and leave `cargo`
-off your `PATH`. Run them as whoever you are — being root is fine, the
-toolchain simply lands in root's home instead.
-
-Both cases are exercised: the transcripts in
-`docs/qa-c11/harness/install/` run the whole page as root in a bare
-container, and once more as an ordinary user with `sudo`.
+### 1. System packages
 
 Debian / Ubuntu:
 
@@ -88,179 +74,172 @@ sudo pacman -Syu --needed git base-devel webkit2gtk-4.1 curl wget file \
   openssl xdotool libayatana-appindicator librsvg
 ```
 
-Arch calls the `libxdo` library package **`xdotool`** — `pacman` has no
-`libxdo` target and stops the whole line with `error: target not found`.
+`pacman -Syu` upgrades the whole system and asks before it starts; add
+`--noconfirm` only for unattended runs.
 
-`pacman -Syu` is a full system upgrade, so the line above deliberately keeps
-its confirmation prompt: read what it plans to do. Running unattended (a
-container, a Dockerfile, CI) add **`--noconfirm`** — without it pacman waits
-for an answer no one is there to give. The apt and dnf lines already carry
-`-y` for the same reason.
-
-**Check step 1 worked.** The package managers print no summary at the end, so
-ask for the three key libraries directly — three version numbers and
-`step 1 OK` means you are ready:
+Check it worked — you should see three version numbers and `step 1 OK`:
 
 ```sh
 pkg-config --modversion webkit2gtk-4.1 gtk+-3.0 ayatana-appindicator3-0.1 && echo "step 1 OK"
 ```
 
-**2. Rust toolchain** (uses `curl` from step 1). `-y` accepts the standard
-install — without it rustup stops for a prompt, which a non-interactive
-shell cannot answer. rustup writes `~/.cargo/env` but cannot modify the
-shell you are in, so source it (or open a new terminal) before using cargo.
+### 2. Rust
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 ```
 
-**3. Node 24 + Tauri CLI**, for the UI build. Any Node 24 works — a distro
-package or fnm is fine. Using nvm: it is a shell function rather than a
-binary, so it has to be installed and sourced before `nvm` exists as a
-command.
+### 3. Node 24 and the Tauri CLI
 
 ```sh
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
 source "$HOME/.nvm/nvm.sh"
 nvm install 24
-
 cargo install tauri-cli --locked
 ```
 
-Any Node **24.x** works — `nvm install 24` resolves to the newest 24 release,
-so your version will not match anyone else's exactly. Last verified
-2026-10-24 with rustc 1.99.1, tauri-cli 2.12.4 and Node 24.22.1 (and earlier
-with rustc 1.97.1, tauri-cli 2.11.4, Node 24.13.0).
+Any Node 24.x works, including a distro package. `cargo install` compiles the
+Tauri CLI and takes a few minutes.
 
-**Each list is sufficient on its own.** All three were checked by running the
-steps on this page verbatim in clean `ubuntu:24.04`, `fedora:latest` and
-`archlinux:latest` containers with nothing else installed — no `patchelf`,
-`fakeroot`, `appstream` or `libfuse2`; Tauri's AppImage bundler brings its own
-tooling. (Running an `.AppImage` afterwards is a different matter and needs
-FUSE on the machine that runs it.)
-
-`libgtk-3-dev` is listed explicitly even though `libwebkit2gtk-4.1-dev`
-depends on it today. Relying on that edge means the list is only complete for
-as long as someone else's packaging keeps it — naming it costs nothing (apt
-reports it already installed) and keeps this list self-contained.
-
-**4. Get the source, then build the package your distro can install.**
+### 4. Get the source and build
 
 ```sh
 git clone https://github.com/AccipiterTechGuy/bellman && cd bellman
 cd ui && npm ci && cd ..
 ```
 
-`npm ci` is the only manual front-end step: `cargo tauri build` runs the UI
-build and stages the `bellman` CLI sidecar itself (`beforeBuildCommand` in
-`src-tauri/tauri.conf.json`), but it never installs dependencies for you.
-
-`npm ci` ends with an audit summary ("12 vulnerabilities …") and an
-`install-scripts` warning about `esbuild`. Both concern development-only
-packages (the test runner and dev server) that never ship in the app, and the
-build does not need the skipped script. Leave them: `npm audit fix --force`
-would upgrade the front-end stack past the versions this page was tested with.
+Then build for your distro (this takes several minutes):
 
 Debian / Ubuntu:
 
 ```sh
 cargo tauri build --bundles deb,appimage --ci --no-sign
-# → target/release/bundle/deb/Bellman_*.deb
-# → target/release/bundle/appimage/Bellman_*.AppImage
 ```
 
 Fedora:
 
 ```sh
 cargo tauri build --bundles rpm --ci --no-sign
-# → target/release/bundle/rpm/Bellman-*.rpm
 ```
 
 Arch:
 
 ```sh
 cargo tauri build --no-bundle --ci
-# → target/release/bellman-app  (GUI)   target/release/bellman  (CLI)
 ```
 
-**Why the AppImage is Debian/Ubuntu only.** Tauri's AppImage step shells out
-to `linuxdeploy`, whose bundled `strip` predates the `SHT_RELR` (`.relr.dyn`)
-section that current Fedora and Arch shared libraries carry; it fails to read
-them and the bundle aborts with `failed to run linuxdeploy`. That is upstream
-tooling, not Bellman — asking for `deb,appimage` on those distros will stop
-the build, so the recipes above do not. Arch has no native Tauri bundle
-target at all, so it builds the two binaries directly.
+Stay in the `bellman` folder for step 5.
 
-**5. Install what you built.**
+### 5. Install
 
-Debian / Ubuntu — install the deb (or just run the AppImage):
+Debian / Ubuntu:
 
 ```sh
 sudo apt install -y ./target/release/bundle/deb/Bellman_*.deb
 ```
 
-Fedora — install the rpm:
+Fedora:
 
 ```sh
 sudo dnf install -y ./target/release/bundle/rpm/Bellman-*.rpm
 ```
 
-Either way you get a **Bellman** entry in the app launcher, the `bellman` CLI
-on `PATH`, the GUI binary `bellman-app`, and the two demo apps under
-`/usr/share/bellman/testing_apps/`. Verify with
-`scripts/smoke_install_deb.sh` (add `SMOKE_MODE=docker` to check it in a
-container instead of on the host); the manual VM checklist is in
-[docs/QA_P6.md](docs/QA_P6.md).
+Arch:
 
-Arch — there is no package to install: run `./target/release/bellman-app`,
-and copy the two binaries onto your `PATH` yourself if you want them there.
+```sh
+sudo install -Dm755 -t /usr/local/bin target/release/bellman target/release/bellman-app
+```
 
-**Windows and macOS** packages (NSIS, MSI, dmg) build unsigned in CI and have
-**not** been validated on real hardware — treat them as unfinished.
+The deb and rpm add a **Bellman** entry to your app launcher; on Arch, start
+the app with `bellman-app`.
 
-Working on Bellman itself rather than installing it? See
-[Development](#development).
+### 6. Check it works
+
+```sh
+bellman --version
+bellman-app --version
+```
+
+Both print `0.1.0`. Now open **Bellman** from your app launcher (Arch: run
+`bellman-app`) — the first-run wizard appears. The demo apps for the
+[integration guide](docs/INTEGRATION.md) are in
+`/usr/share/bellman/testing_apps/` (deb/rpm) or `testing_apps/` in your clone.
 
 ### Update
 
-From your clone:
+From your `bellman` folder:
 
 ```sh
 git pull
 cd ui && npm ci && cd ..
 ```
 
-then run your distro's build command from step 4 and its install command from
-step 5 again. The package manager replaces the old version; your timers are
+Then repeat your distro's command from step 4 and from step 5. Your timers are
 kept.
 
 ### Uninstall
 
-1. **Turn off "Start at login"** in Settings first (the first-run wizard turns
-   it on by default). Otherwise `~/.config/autostart/Bellman.desktop` stays
-   behind and points at a program that no longer exists — delete it by hand
-   if you have already uninstalled.
-2. **Remove the package:**
+1. If you chose **Start at login** (in the first-run wizard or Settings), turn
+   it off in **Settings** first. Already uninstalled? Delete
+   `~/.config/autostart/Bellman.desktop` instead.
+2. Remove the program:
+
+   Debian / Ubuntu:
 
    ```sh
-   sudo apt remove -y bellman      # Debian / Ubuntu
-   sudo dnf remove -y bellman      # Fedora
+   sudo apt remove -y bellman
    ```
 
-   On Arch, delete `bellman` and `bellman-app` from wherever you copied them.
-   Fedora leaves empty folders under `/usr/share/bellman/` (Tauri's rpm does
-   not claim its directories); `sudo rm -r /usr/share/bellman` clears them.
-3. **Your data is kept** unless you delete it. To remove every timer, log and
-   slot for good — this cannot be undone:
+   Fedora:
+
+   ```sh
+   sudo dnf remove -y bellman && sudo rm -rf /usr/share/bellman
+   ```
+
+   Arch:
+
+   ```sh
+   sudo rm -f /usr/local/bin/bellman /usr/local/bin/bellman-app
+   ```
+
+3. Optional — delete all your timers, logs and slots. **This cannot be undone:**
 
    ```sh
    rm -rf ~/.bellman ~/.local/share/io.bellman.desktop
    ```
 
-   If you used `bellman task new` to write cron entries, they sit between
-   `# BEGIN bellman-managed` and `# END bellman-managed` in `crontab -e`;
-   delete that block too.
+   If you used `bellman task new` to write cron entries, run `crontab -e` and
+   delete the block between `# BEGIN bellman-managed` and
+   `# END bellman-managed`.
+
+### Install notes
+
+- **Arch package names.** Arch ships the `libxdo` library in the `xdotool`
+  package; there is no `libxdo` package.
+- **Why `libgtk-3-dev` is listed** although WebKitGTK pulls it in today: so the
+  list stays complete if that dependency ever changes.
+- **AppImage (Debian/Ubuntu only).** Step 4 also builds
+  `target/release/bundle/appimage/Bellman_*.AppImage`, which runs without
+  installing but needs FUSE 2 (`libfuse2t64` on Ubuntu 24.04). Fedora and Arch
+  cannot build it: the `linuxdeploy` tool Tauri uses fails on their newer
+  shared libraries, which is an upstream limitation.
+- **`npm ci` warnings.** It ends with an audit summary ("12 vulnerabilities …")
+  and an `esbuild` install-scripts notice. Both concern development-only
+  packages that are not part of the app. Do not run `npm audit fix --force`: it
+  upgrades the front-end past the tested versions.
+- **What `cargo tauri build` does.** It builds the UI and the `bellman` CLI
+  itself; `npm ci` is the only front-end step you run by hand.
+- **Fuller checks.** On Debian/Ubuntu, `scripts/smoke_install_deb.sh` tests the
+  installed package (`SMOKE_MODE=docker` runs it in a container); the manual
+  VM checklist is [docs/QA_P6.md](docs/QA_P6.md).
+- **How this guide is tested.** `tests/readme_install/run.sh ubuntu|fedora|arch`
+  extracts every command block above from this file and runs it verbatim in a
+  clean container — install, update, then uninstall — and checks that nothing
+  is left behind (`--user` runs Ubuntu as a normal user with `sudo`). Last
+  verified 2026-10-24 with rustc 1.99.1, tauri-cli 2.12.4 and Node 24.22.1.
+
+Working on Bellman itself? See [Development](#development).
 
 ## What it does
 
@@ -354,17 +333,20 @@ validating the whole thing on real hardware.
 | Visible Scheduler (`bellman scan` / `task`) — machine-wide schedule inventory | ✅ built (Linux) |
 | Calendar Snapshot (`bellman calendar` / `agenda`) — headless SVG/PNG/JSON | ✅ built |
 | Packaging — deb / AppImage (Linux); NSIS, MSI, dmg unsigned in CI | ✅ built |
-| CI test execution | Linux: full `cargo test` workspace ✅ · macOS: full workspace ✅ · Windows: workspace **except** the `bellman-app` shell-crate unit tests — they exit abnormally on a headless Windows runner and are excluded in `windows.yml` (they still compile there, and run on Linux/macOS) |
+| CI test execution | Linux: full `cargo test` workspace ✅ · macOS: full workspace ✅ · Windows: builds; the test suite is not green yet (it excludes the `bellman-app` shell-crate unit tests, which exit abnormally on a headless Windows runner) |
 | **Full-system validation on Linux** — install verbatim on Ubuntu/Fedora/Arch, the full integration surface, GUI, packaging | ✅ **done** — [docs/VALIDATION.md](docs/VALIDATION.md); found and fixed 12 defects |
+| **Install guide tested end to end** — every command in [Install](#install) run verbatim: install → update → uninstall, nothing left behind | ✅ **done** 2026-10-24 — Ubuntu 24.04 (as root and as a normal user with `sudo`), Fedora, Arch; re-run any time with `tests/readme_install/run.sh` |
+| **Fresh install on a real Linux desktop** | ✅ **done** 2026-10-24 — Linux Mint 22.3: guide followed step by step from a fresh `git clone`; CLI round-trip 36/36 against the installed binary; GUI and first-run wizard; demo app woken through the full fired → acknowledged → completed handshake; start-at-login and start-hidden-in-tray confirmed across a restart |
 | **Wake from sleep across a real suspend/resume** | ⬜ **not tested** — the code and its permission probe exist, but no suspend/resume cycle has been run on hardware |
 | **Real Windows / macOS hardware** | ⬜ **not tested** — CI builds and runs the test suite on both; nobody has installed or used them |
 
 **Linux is validated.** A full-system pass ([docs/VALIDATION.md](docs/VALIDATION.md))
-followed this page's install steps verbatim in clean `ubuntu:24.04`,
-`fedora:latest` and `archlinux:latest` containers, exercised the whole
-integration surface against a live watcher, drove the GUI by clicking, and
-installed the built `.deb`. It found and fixed 12 defects on the way, each
-with a regression test verified to fail without its fix.
+exercised the whole integration surface against a live watcher, drove the GUI
+by clicking, and installed the built `.deb`, finding and fixing 12 defects —
+each with a regression test verified to fail without its fix. The install
+guide itself is tested by `tests/readme_install/run.sh`, which extracts every
+command from this file and runs it verbatim in clean containers, and it was
+followed step by step for a fresh install on a real Linux Mint 22.3 desktop.
 
 **Two things are honestly untested.** Wake-from-sleep is implemented — platform
 probes, Settings, wizard, and a capability check that tells you when the
