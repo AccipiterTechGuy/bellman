@@ -19,7 +19,10 @@ use uuid::Uuid;
 
 fn integration_doc() -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/INTEGRATION.md");
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+        // A Windows checkout (core.autocrlf) has CRLF line endings.
+        .replace("\r\n", "\n")
 }
 
 /// Extract the first ```json fenced block inside the named section.
