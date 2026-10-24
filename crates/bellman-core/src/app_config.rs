@@ -250,13 +250,9 @@ impl AppConfig {
         if self.min_free_slots == 0 {
             self.min_free_slots = DEFAULT_MIN_FREE_SLOTS;
         }
-        if self.max_concurrent_actions == 0 {
-            self.max_concurrent_actions = 1;
-        }
-        // Hard ceiling so a typo cannot open thousands of concurrent launches.
-        if self.max_concurrent_actions > 256 {
-            self.max_concurrent_actions = 256;
-        }
+        // At least one lane, and a hard ceiling so a typo cannot open
+        // thousands of concurrent launches.
+        self.max_concurrent_actions = self.max_concurrent_actions.clamp(1, 256);
         if self.prune_interval_secs == 0 {
             self.prune_interval_secs = DEFAULT_PRUNE_INTERVAL_SECS;
         }

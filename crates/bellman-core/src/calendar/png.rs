@@ -102,7 +102,7 @@ fn build_fontdb() -> resvg::usvg::fontdb::Database {
 pub fn count_dark_pixels(pixmap: &Pixmap, max_sum: u32) -> usize {
     let data = pixmap.data();
     let mut n = 0usize;
-    for px in data.chunks_exact(4) {
+    for px in data.as_chunks::<4>().0 {
         // tiny-skia stores premultiplied RGBA; for near-black text on white
         // backgrounds alpha is high and rgb is low.
         let r = px[0] as u32;
@@ -120,7 +120,7 @@ pub fn count_pixels_near(pixmap: &Pixmap, target: (u8, u8, u8), tol: u8) -> usiz
     let (tr, tg, tb) = target;
     let data = pixmap.data();
     let mut n = 0usize;
-    for px in data.chunks_exact(4) {
+    for px in data.as_chunks::<4>().0 {
         let a = px[3];
         if a < 200 {
             continue; // ignore transparent / anti-aliased fringe
