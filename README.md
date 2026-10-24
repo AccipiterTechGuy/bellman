@@ -333,7 +333,7 @@ validating the whole thing on real hardware.
 | Visible Scheduler (`bellman scan` / `task`) — machine-wide schedule inventory | ✅ built (Linux) |
 | Calendar Snapshot (`bellman calendar` / `agenda`) — headless SVG/PNG/JSON | ✅ built |
 | Packaging — deb / AppImage (Linux); NSIS, MSI, dmg unsigned in CI | ✅ built |
-| CI test execution | Linux: full `cargo test` workspace ✅ · macOS: full workspace ✅ · Windows: builds; the test suite is not green yet (it excludes the `bellman-app` shell-crate unit tests, which exit abnormally on a headless Windows runner) |
+| CI test execution | Linux: full `cargo test` workspace ✅ · macOS: full workspace ✅ · Windows: workspace ✅ **except** the `bellman-app` shell-crate unit tests, which exit abnormally on a headless Windows runner (they still compile there, and run on Linux/macOS) · all three also build their packages (deb/AppImage, dmg, NSIS/MSI) |
 | **Full-system validation on Linux** — install verbatim on Ubuntu/Fedora/Arch, the full integration surface, GUI, packaging | ✅ **done** — [docs/VALIDATION.md](docs/VALIDATION.md); found and fixed 12 defects |
 | **Install guide tested end to end** — every command in [Install](#install) run verbatim: install → update → uninstall, nothing left behind | ✅ **done** 2026-10-24 — Ubuntu 24.04 (as root and as a normal user with `sudo`), Fedora, Arch; re-run any time with `tests/readme_install/run.sh` |
 | **Fresh install on a real Linux desktop** | ✅ **done** 2026-10-24 — Linux Mint 22.3: guide followed step by step from a fresh `git clone`; CLI round-trip 36/36 against the installed binary; GUI and first-run wizard; demo app woken through the full fired → acknowledged → completed handshake; start-at-login and start-hidden-in-tray confirmed across a restart |
