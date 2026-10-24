@@ -688,6 +688,15 @@ fn accept_loop(
         }
         match listener.accept() {
             Ok((stream, _)) => {
+                // The listener is non-blocking so the loop can poll `stop`.
+                // On macOS and the BSDs an accepted socket inherits that flag
+                // (Linux does not), so the client's first read returned
+                // WouldBlock and was taken for a hang-up. Clients are served
+                // on their own blocking thread.
+                if let Err(e) = stream.set_nonblocking(false) {
+                    eprintln!("bellman: ipc client blocking mode: {e}");
+                    continue;
+                }
                 // The writer half gets the bounded send timeout (a wedged
                 // peer costs only its own writer thread).
                 let _ = rustix::net::sockopt::set_socket_timeout(
