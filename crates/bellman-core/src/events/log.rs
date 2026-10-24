@@ -406,9 +406,11 @@ impl EventLog {
         let path_id = path_file_id(&self.current_path());
         let stale = match (handle_id, path_id) {
             (Some(h), Some(p)) => h != p,
-            // Path missing (mid-rotation elsewhere) or no id support: treat a
-            // missing path as stale so we recreate the live file.
-            (_, None) => fs::metadata(self.current_path()).is_err(),
+            // No id for the path: stale when it is missing (mid-rotation
+            // elsewhere) or is not a regular file — our handle cannot be
+            // pointing at it. Windows lands here for a directory, which it
+            // cannot open as a File.
+            (_, None) => fs::metadata(self.current_path()).map_or(true, |m| !m.is_file()),
             (None, Some(_)) => false,
         };
         if stale {

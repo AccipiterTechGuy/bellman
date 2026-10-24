@@ -526,9 +526,18 @@ fn verify_gzip(path: &Path) -> bool {
 
 /// Directory fsync (rename/delete/create durability). Errors PROPAGATE —
 /// advancing the journal past an unsynced step would make recovery lie.
+#[cfg(unix)]
 fn sync_dir(dir: &Path) -> EventLogResult<()> {
     let d = fs::File::open(dir)?;
     d.sync_all()?;
+    Ok(())
+}
+
+/// Windows cannot open a directory as a `File` (it fails with "Access is
+/// denied"), and has nothing to sync: NTFS journals directory metadata, so a
+/// completed rename is already durable.
+#[cfg(not(unix))]
+fn sync_dir(_dir: &Path) -> EventLogResult<()> {
     Ok(())
 }
 
