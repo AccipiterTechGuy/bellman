@@ -153,14 +153,14 @@
         <p class="hint" data-testid="wizard-wake-probe">
           {#if wake.platformEnabled}
             {wake.statusLine || 'Wake capability is available on this machine.'}
-          {:else if wake.fixAction}
-            Probe: {wake.statusLine || 'wake is unavailable on this machine'} —
-            answering yes turns the feature on, but the permission fix above is
-            still needed for it to work.
-          {:else}
+          {:else if wake.platform === 'macos'}
             Probe: {wake.statusLine || 'wake is unavailable on this machine'}.
             Timers that fall due while the machine is asleep are handled on
             resume by the misfire pass.
+          {:else}
+            Probe: {wake.statusLine || 'wake is unavailable on this machine'} —
+            answering yes turns the feature on, but the permission fix above is
+            still needed for it to work.
           {/if}
         </p>
       {/if}

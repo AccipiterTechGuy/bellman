@@ -61,6 +61,8 @@ Watch the terminal: the bulb lights for 15 seconds and goes out. In the
 meantime, in another terminal, watch the truth change:
 
 ```bash
+# On macOS (where watch is not pre-installed):
+# while :; do clear; cat ~/.bellman/timers/lightbulb-demo-*/status.json; sleep 1; done
 watch -n1 cat ~/.bellman/timers/lightbulb-demo-*/status.json
 grep lightbulb-demo ~/.bellman/logs/events.current.jsonl | tail
 ```

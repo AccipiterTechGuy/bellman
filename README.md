@@ -365,10 +365,11 @@ xattr -dr com.apple.quarantine /Applications/Bellman.app
 /Applications/Bellman.app/Contents/MacOS/bellman-app --version
 ```
 
-Both print `0.1.0`. Launch **Bellman** from `/Applications` (or run
-`open -a /Applications/Bellman.app`) — the window and menu-bar tray icon
-appear, and the first-run wizard opens on a fresh setup. The demo apps for the
-[integration guide](docs/INTEGRATION.md) are in `testing_apps/` in your clone.
+They print `bellman 0.1.0` and `bellman-app 0.1.0`. Launch **Bellman** from
+`/Applications` (or run `open -a /Applications/Bellman.app`) — the window and
+menu-bar tray icon appear, and the first-run wizard opens on a fresh setup. The
+demo apps for the [integration guide](docs/INTEGRATION.md) are in
+`testing_apps/` in your clone.
 
 ### Update (macOS)
 
@@ -392,12 +393,13 @@ Your timers in `~/Library/Application Support/io.bellman.desktop/` and
 1. Quit **Bellman** from the menu-bar icon (**Quit**).
 2. If you turned on **Start at login** (in the first-run wizard or Settings),
    turn it off in **Settings** before uninstalling. If you already removed the
-   app, unload and delete the LaunchAgent plist (and remove Bellman from
+   app, unload and delete the `Bellman` LaunchAgent plist written by
+   `tauri-plugin-autostart` (and remove Bellman from
    **System Settings → General → Login Items** if listed):
 
    ```sh
-   launchctl bootout "gui/$(id -u)/io.bellman.desktop" 2>/dev/null || true
-   rm -f "$HOME/Library/LaunchAgents/io.bellman.desktop.plist"
+   launchctl bootout "gui/$(id -u)/Bellman" 2>/dev/null || true
+   rm -f "$HOME/Library/LaunchAgents/Bellman.plist"
    ```
 
 3. Remove the app bundle and the CLI binary:
