@@ -6,7 +6,6 @@
     wakeStatus,
     wakeReprobe,
     dependencyCheck,
-    wakeEnrollMacos,
     demoInfo,
   } from './api.js';
   import DemoPanel from './DemoPanel.svelte';
@@ -59,12 +58,6 @@
         demoData = null;
       }
       if (withWake) {
-        // Per-OS setup: macOS enrolls the helper; others just probe.
-        try {
-          if (typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || '')) {
-            try { await wakeEnrollMacos(); } catch { /* optional */ }
-          }
-        } catch { /* ignore */ }
         try {
           const w = await wakeReprobe();
           statusLine = w?.statusLine || '';
@@ -160,6 +153,10 @@
         <p class="hint" data-testid="wizard-wake-probe">
           {#if wake.platformEnabled}
             {wake.statusLine || 'Wake capability is available on this machine.'}
+          {:else if wake.platform === 'macos'}
+            Probe: {wake.statusLine || 'wake is unavailable on this machine'}.
+            Timers that fall due while the machine is asleep are handled on
+            resume by the misfire pass.
           {:else}
             Probe: {wake.statusLine || 'wake is unavailable on this machine'} —
             answering yes turns the feature on, but the permission fix above is

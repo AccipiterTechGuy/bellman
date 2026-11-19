@@ -96,142 +96,16 @@ pub fn run() {
 
     builder = register_commands(builder);
 
-    builder
+    let result = builder
         .setup(move |app| {
-            // Bellman data directory: the per-OS app-data dir for identifier
-            // io.bellman.desktop (~/.local/share/io.bellman.desktop on Linux,
-            // ~/Library/Application Support/io.bellman.desktop on macOS,
-            // %APPDATA%\io.bellman.desktop on Windows) — NOT the CLI's
-            // ~/.bellman; both are documented in docs/LOCAL.md.
-            let data_dir = resolve_data_dir(app.handle())?;
-            std::fs::create_dir_all(&data_dir).map_err(setup_err("create data dir"))?;
-            let db_path = data_dir.join("timers.db");
-            let logs_dir = data_dir.join("logs");
-            let slots_dir = data_dir.join("slots");
-            std::fs::create_dir_all(&logs_dir).map_err(setup_err("create logs dir"))?;
-            std::fs::create_dir_all(&slots_dir).map_err(setup_err("create slots dir"))?;
-            // The per-timer view root is created lazily by the first timer
-            // folder, but the background watcher watches it recursively from
-            // startup — so on a fresh data directory it has to exist before
-            // that thread starts, or the watch fails and the thread ends.
-            std::fs::create_dir_all(data_dir.join("timers"))
-                .map_err(setup_err("create timers dir"))?;
-
-            // Load (or create) the user config — the wizard's persisted answer.
-            let config = config::Config::load(&data_dir)?;
-            log::info!(
-                "bellman: data_dir={} wizard_completed={} autostart_enabled={:?}",
-                data_dir.display(),
-                config.wizard_completed,
-                config.autostart_enabled
-            );
-
-            // Open the store. This applies the schema (v4) and PRAGMAs.
-            let store = bellman_core::open_store(&db_path)
-                .map_err(|e| setup_err_str(format!("open store: {e}")))?;
-            // Persist a complete config.json on first run so packaging / hand
-            // edits see every documented key (horizon, retention, slots, cap).
-            if !config::config_path(&data_dir).exists() {
-                let _ = config.save(&data_dir);
+            if let Err(err) = setup_app(app, &cli_args) {
+                // With `panic = "abort"` in the release profile, returning
+                // `Err` from Tauri's setup hook panics inside `tauri::App`
+                // and aborts the process with no user-visible message.
+                // Surface a native error dialog on all OSes before exiting.
+                report_startup_error(&err.to_string());
+                std::process::exit(1);
             }
-            // `update_timer` + `claim_run` are &mut on the store; all the
-            // scheduler / Tauri commands share one Store via Mutex.
-
-            // Read the persisted global pause-all flag (if any) and apply
-            // it to the engine (the scheduler starts unpaused by default).
-            let pause_all = config::read_pause_all_flag(&data_dir);
-
-            let state = AppState::new(
-                store,
-                data_dir.clone(),
-                config.clone(),
-                pause_all,
-                notify_sink::TauriNotifySink::new(app.handle().clone()),
-            );
-
-            // IK5: one `run-status-changed` invalidation after every accepted
-            // status projection (reply ingest, pickup/watchdog deadlines,
-            // fire). It carries only the timer id — the webview refetches the
-            // affected row via `list_run_states`; no second copy of state.
-            {
-                let handle = app.handle().clone();
-                state.set_status_listener(bellman_core::reply::StatusListener(
-                    std::sync::Arc::new(move |timer_id: uuid::Uuid| {
-                        let _ = handle.emit("run-status-changed", timer_id.to_string());
-                    }),
-                ));
-            }
-
-            // Build the scheduler + start the background tick thread.
-            // The thread is the only writer to the engine; Tauri commands
-            // mutate the store directly (and the next tick observes via
-            // `Refill` control messages).
-            state.start_scheduler();
-
-            // P7: wake capability JSONL at startup + single-next-wake rearm.
-            state.emit_wake_capability_startup();
-            state.rearm_wake();
-
-            // Stash the AppState under a managed handle BEFORE the tray
-            // is installed — the tray's pause-toggle calls into
-            // AppState, and the set_pause_all command needs to push
-            // updates back into the tray's CheckMenuItem.
-            app.manage(state);
-
-            // Linux: login1 delay inhibitor + PrepareForSleep → rearm bridge.
-            #[cfg(target_os = "linux")]
-            {
-                let handle = app.handle().clone();
-                start_linux_power_watch(handle);
-            }
-
-            // Tray icon + menu (Open / Pause all / Quit).
-            tray::install(app.handle())?;
-
-            // First-run wizard: when `wizard_completed` is false, the window
-            // is shown with the wizard modal open. The webview asks
-            // `wizard_status()` and persists the answer with `wizard_set_choice()`.
-            if !config.wizard_completed {
-                // Ensure the main window is visible for the wizard.
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.set_focus();
-                }
-                log::info!("bellman: first-run wizard will prompt on webview open");
-            } else {
-                // Honor the user's wizard answer:
-                // - autostart: enable/disable per `config.autostart_enabled`
-                // - on macOS the window would otherwise be hidden by default
-                apply_autostart_from_config(app.handle(), &config)?;
-                if config.start_minimized {
-                    if let Some(win) = app.get_webview_window("main") {
-                        let _ = win.hide();
-                    }
-                } else if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.set_focus();
-                }
-            }
-
-            // Pre-request notification permission so the first fire is
-            // visible (best-effort — no UI prompt, no error if denied).
-            if let Ok(state) = app.notification().permission_state() {
-                log::info!("bellman: notification permission state = {state:?}");
-                if matches!(state, tauri_plugin_notification::PermissionState::Prompt) {
-                    let _ = app.notification().request_permission();
-                }
-            }
-
-            // CLI arg `--run-now <name-or-id>` (headless, no window) — used by
-            // CI scripts and the wizard's "open & fire" shortcut.
-            if let Some(id_or_name) = parse_run_now_arg(&cli_args) {
-                if let Some(state) = app.try_state::<AppState>() {
-                    if let Err(e) = state.cli_run_now(&id_or_name) {
-                        log::error!("bellman: --run-now failed: {e}");
-                    }
-                }
-            }
-
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -244,9 +118,266 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running bellman");
+        .run(tauri::generate_context!());
+
+    if let Err(err) = result {
+        report_startup_error(&format!("error while running Bellman: {err}"));
+        std::process::exit(1);
+    }
 }
+
+/// Perform all engine, store, tray, and window setup inside the Tauri setup hook.
+fn setup_app(app: &mut tauri::App, cli_args: &[String]) -> tauri::Result<()> {
+    // Bellman data directory: the per-OS app-data dir for identifier
+    // io.bellman.desktop (~/.local/share/io.bellman.desktop on Linux,
+    // ~/Library/Application Support/io.bellman.desktop on macOS,
+    // %APPDATA%\io.bellman.desktop on Windows) — NOT the CLI's
+    // ~/.bellman; both are documented in docs/LOCAL.md.
+    let data_dir = resolve_data_dir(app.handle())?;
+    std::fs::create_dir_all(&data_dir).map_err(setup_err("create data dir"))?;
+    let db_path = data_dir.join("timers.db");
+    let logs_dir = data_dir.join("logs");
+    let slots_dir = data_dir.join("slots");
+    std::fs::create_dir_all(&logs_dir).map_err(setup_err("create logs dir"))?;
+    std::fs::create_dir_all(&slots_dir).map_err(setup_err("create slots dir"))?;
+    // The per-timer view root is created lazily by the first timer
+    // folder, but the background watcher watches it recursively from
+    // startup — so on a fresh data directory it has to exist before
+    // that thread starts, or the watch fails and the thread ends.
+    std::fs::create_dir_all(data_dir.join("timers")).map_err(setup_err("create timers dir"))?;
+
+    // Load (or create) the user config — the wizard's persisted answer.
+    let config = config::Config::load(&data_dir)?;
+    log::info!(
+        "bellman: data_dir={} wizard_completed={} autostart_enabled={:?}",
+        data_dir.display(),
+        config.wizard_completed,
+        config.autostart_enabled
+    );
+
+    // Open the store. This applies the schema (v4) and PRAGMAs.
+    let store = bellman_core::open_store(&db_path)
+        .map_err(|e| setup_err_str(format!("open store: {e}")))?;
+    // Persist a complete config.json on first run so packaging / hand
+    // edits see every documented key (horizon, retention, slots, cap).
+    if !config::config_path(&data_dir).exists() {
+        let _ = config.save(&data_dir);
+    }
+    // `update_timer` + `claim_run` are &mut on the store; all the
+    // scheduler / Tauri commands share one Store via Mutex.
+
+    // Read the persisted global pause-all flag (if any) and apply
+    // it to the engine (the scheduler starts unpaused by default).
+    let pause_all = config::read_pause_all_flag(&data_dir);
+
+    let state = AppState::new(
+        store,
+        data_dir.clone(),
+        config.clone(),
+        pause_all,
+        notify_sink::TauriNotifySink::new(app.handle().clone()),
+    );
+
+    // IK5: one `run-status-changed` invalidation after every accepted
+    // status projection (reply ingest, pickup/watchdog deadlines,
+    // fire). It carries only the timer id — the webview refetches the
+    // affected row via `list_run_states`; no second copy of state.
+    {
+        let handle = app.handle().clone();
+        state.set_status_listener(bellman_core::reply::StatusListener(std::sync::Arc::new(
+            move |timer_id: uuid::Uuid| {
+                let _ = handle.emit("run-status-changed", timer_id.to_string());
+            },
+        )));
+    }
+
+    // Build the scheduler + start the background tick thread.
+    // The thread is the only writer to the engine; Tauri commands
+    // mutate the store directly (and the next tick observes via
+    // `Refill` control messages).
+    state.start_scheduler().map_err(setup_err_str)?;
+
+    // P7: wake capability JSONL at startup + single-next-wake rearm.
+    state.emit_wake_capability_startup();
+    state.rearm_wake();
+
+    // Stash the AppState under a managed handle BEFORE the tray
+    // is installed — the tray's pause-toggle calls into
+    // AppState, and the set_pause_all command needs to push
+    // updates back into the tray's CheckMenuItem.
+    app.manage(state);
+
+    // Linux: login1 delay inhibitor + PrepareForSleep → rearm bridge.
+    #[cfg(target_os = "linux")]
+    {
+        let handle = app.handle().clone();
+        start_linux_power_watch(handle);
+    }
+
+    // Tray icon + menu (Open / Pause all / Quit).
+    tray::install(app.handle())?;
+
+    // First-run wizard: when `wizard_completed` is false, the window
+    // is shown with the wizard modal open. The webview asks
+    // `wizard_status()` and persists the answer with `wizard_set_choice()`.
+    if !config.wizard_completed {
+        // Ensure the main window is visible for the wizard.
+        if let Some(win) = app.get_webview_window("main") {
+            let _ = win.show();
+            let _ = win.set_focus();
+        }
+        log::info!("bellman: first-run wizard will prompt on webview open");
+    } else {
+        // Honor the user's wizard answer:
+        // - autostart: enable/disable per `config.autostart_enabled`
+        // - on macOS the window would otherwise be hidden by default
+        apply_autostart_from_config(app.handle(), &config)?;
+        if config.start_minimized {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.hide();
+            }
+        } else if let Some(win) = app.get_webview_window("main") {
+            let _ = win.show();
+            let _ = win.set_focus();
+        }
+    }
+
+    // Pre-request notification permission so the first fire is
+    // visible (best-effort — no UI prompt, no error if denied).
+    if let Ok(state) = app.notification().permission_state() {
+        log::info!("bellman: notification permission state = {state:?}");
+        if matches!(state, tauri_plugin_notification::PermissionState::Prompt) {
+            let _ = app.notification().request_permission();
+        }
+    }
+
+    // CLI arg `--run-now <name-or-id>` (headless, no window) — used by
+    // CI scripts and the wizard's "open & fire" shortcut.
+    if let Some(id_or_name) = parse_run_now_arg(cli_args) {
+        if let Some(state) = app.try_state::<AppState>() {
+            if let Err(e) = state.cli_run_now(&id_or_name) {
+                log::error!("bellman: --run-now failed: {e}");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Log a fatal startup error to stderr and display a native OS error dialog
+/// so GUI launches from Finder / desktop launchers never vanish silently.
+///
+/// Set `BELLMAN_NO_ERROR_DIALOG=1` in automated tests to suppress the modal
+/// dialog while still exercising the error reporting path.
+pub fn report_startup_error(msg: &str) {
+    log::error!("bellman-app: failed to start: {msg}");
+    eprintln!("bellman-app: failed to start: {msg}");
+
+    if std::env::var_os("BELLMAN_NO_ERROR_DIALOG").is_some() {
+        return;
+    }
+
+    show_native_error_dialog("Bellman failed to start", msg);
+}
+
+#[cfg(target_os = "macos")]
+fn show_native_error_dialog(title: &str, msg: &str) {
+    let _ = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            "on run argv",
+            "-e",
+            "display alert (item 1 of argv) message (item 2 of argv) as critical",
+            "-e",
+            "end run",
+            "--",
+            title,
+            msg,
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+#[cfg(target_os = "linux")]
+fn show_native_error_dialog(title: &str, msg: &str) {
+    let shown = std::process::Command::new("zenity")
+        .args([
+            "--error",
+            "--no-markup",
+            "--width=420",
+            "--title",
+            title,
+            "--text",
+            msg,
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
+        || std::process::Command::new("kdialog")
+            .args(["--title", title, "--error", msg])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+        || std::process::Command::new("xmessage")
+            .args(["-center", &format!("{title}\n\n{msg}")])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok();
+    if !shown {
+        let _ = std::process::Command::new("notify-send")
+            .args([title, msg])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
+#[cfg(windows)]
+fn show_native_error_dialog(title: &str, msg: &str) {
+    use std::os::windows::ffi::OsStrExt;
+
+    const MB_OK: u32 = 0x0000_0000;
+    const MB_ICONERROR: u32 = 0x0000_0010;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn MessageBoxW(
+            hwnd: *const std::ffi::c_void,
+            lp_text: *const u16,
+            lp_caption: *const u16,
+            u_type: u32,
+        ) -> i32;
+    }
+
+    let text: Vec<u16> = std::ffi::OsStr::new(msg)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let caption: Vec<u16> = std::ffi::OsStr::new(title)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        MessageBoxW(
+            std::ptr::null(),
+            text.as_ptr(),
+            caption.as_ptr(),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+fn show_native_error_dialog(_title: &str, _msg: &str) {}
 
 fn parse_run_now_arg(args: &[String]) -> Option<String> {
     let mut it = args.iter();
@@ -410,4 +541,15 @@ pub(crate) fn persist_wizard_choice(
 ) -> anyhow::Result<()> {
     let _ = (data_dir, choice);
     Ok(())
+}
+
+#[cfg(test)]
+mod startup_error_tests {
+    use super::*;
+
+    #[test]
+    fn report_startup_error_respects_no_dialog_env() {
+        std::env::set_var("BELLMAN_NO_ERROR_DIALOG", "1");
+        report_startup_error("open store: network filesystem refused");
+    }
 }

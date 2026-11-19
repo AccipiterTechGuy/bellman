@@ -176,7 +176,8 @@ echo "=== launch freshness tests ==="
 
 # --- 1. Fresh release binary preferred ---------------------------------
 FX=$(mktemp -d)
-trap 'rm -rf "$FX" "$FX2" "$FX3" "$FX4" "$FX5" "$FX6" "$FX7" "$FX8" "$FX9" 2>/dev/null || true' EXIT
+FX2="" FX3="" FX4="" FX5="" FX5B="" FX5C="" FX6="" FX7="" FX8="" FX9=""
+trap 'rm -rf "${FX:-}" "${FX2:-}" "${FX3:-}" "${FX4:-}" "${FX5:-}" "${FX5B:-}" "${FX5C:-}" "${FX6:-}" "${FX7:-}" "${FX8:-}" "${FX9:-}" 2>/dev/null || true' EXIT
 make_fixture "$FX"
 # Source old, binaries newer.
 age_all_sources "$FX" 1000000000
@@ -255,7 +256,7 @@ age_all_sources "$FX5C" 1000000000
 touch_epoch "$FX5C/target/release/bellman-app" 2000000000
 touch_epoch "$FX5C/target/debug/bellman-app" 2000000000
 touch_epoch "$FX5C/src-tauri/target/release/bellman-app" 2000000000
-touch -d "@1500000000" "$FX5C/target/release/bellman-app.tauri-built" 2>/dev/null
+touch_epoch "$FX5C/target/release/bellman-app.tauri-built" 1500000000
 OUT=$(run_select "$FX5C")
 assert_not_contains "$OUT" "path=$FX5C/target/release/bellman-app freshness=fresh" \
   "back-dated sidecar: release binary rejected"

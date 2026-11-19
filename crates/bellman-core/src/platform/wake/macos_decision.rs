@@ -132,10 +132,18 @@ mod tests {
             apple_silicon: false,
             sentinel_error: None,
         });
-        match cap {
+        match &cap {
             WakeCapability::Disabled {
-                reason: DisabledReason::HelperNotInstalled,
-            } => {}
+                reason: reason @ DisabledReason::HelperNotInstalled,
+            } => {
+                assert!(
+                    cap.status_line()
+                        .contains("not available in this macOS build"),
+                    "got: {}",
+                    cap.status_line()
+                );
+                assert_eq!(reason.fix_action(), None);
+            }
             other => panic!("unexpected: {other:?}"),
         }
     }

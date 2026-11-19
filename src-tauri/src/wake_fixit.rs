@@ -62,22 +62,16 @@ pub fn run_windows_powercfg_fix(rail: PowerRail) -> Result<String, String> {
     }
 }
 
-/// Enroll the macOS SMAppService wake daemon (user-initiated Login Items approval).
+/// Enroll the macOS SMAppService wake daemon.
+///
+/// The privileged helper daemon (`helpers/macos-wake-daemon`) is not built,
+/// signed, or bundled in this build, so enrollment cannot succeed and is
+/// refused honestly instead of opening Login Items or invoking `launchctl`.
 pub fn enroll_macos_wake_daemon() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        // SMAppService.daemon(plistName:).register() via `sminstall` / open deep-link.
-        // When the helper is bundled, launchctl bootstrap is the packaging path;
-        // here we open Login Items and ask the user to approve the daemon.
-        let url = login_items_deeplink();
-        let _ = std::process::Command::new("open").arg(url).status();
-        // Best-effort: try to bootstrap the launchd plist if present in the bundle.
-        let label = daemon_service_id();
-        let _ = std::process::Command::new("launchctl")
-            .args(["kickstart", "-k", &format!("system/{label}")])
-            .status();
-        Ok(
-            "Opened System Settings → Login Items. Approve “Bellman Wake Daemon”, then Re-probe."
+        Err(
+            "wake-from-sleep is not available in this macOS build (the privileged wake helper daemon is not bundled)"
                 .into(),
         )
     }

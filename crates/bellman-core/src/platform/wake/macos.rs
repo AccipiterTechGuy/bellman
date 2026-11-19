@@ -10,6 +10,7 @@ use std::sync::Mutex;
 
 const OWN_TAG: &str = "com.bellman.wake";
 
+/// macOS wake controller (XPC / root helper daemon bridge).
 pub struct MacosWake {
     state: Mutex<MacState>,
 }
@@ -21,12 +22,14 @@ struct MacState {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct ArmedWake {
     at: DateTime<Utc>,
     tag: String,
 }
 
 impl MacosWake {
+    /// Run the in-process macOS wake capability probe and build the controller.
     pub fn probe() -> Self {
         let capability = probe_live();
         Self {
@@ -75,25 +78,21 @@ fn collect_facts() -> MacosProbeFacts {
 
 #[cfg(target_os = "macos")]
 fn smapp_helper_status() -> HelperStatus {
-    // Best-effort: if the daemon socket / launchd label is absent → NotRegistered.
-    // Full SMAppService.objc binding is exercised on real macOS CI (C11).
+    // The privileged wake helper daemon (`helpers/macos-wake-daemon`) is not
+    // built, signed, or bundled in this build. Unless the daemon socket is
+    // actually present AND launchd confirms the system service is active,
+    // report NotFound so the decision tree maps to HelperNotInstalled (which
+    // reports honestly that wake-from-sleep is not available in this build).
+    if !std::path::Path::new("/var/run/bellman-wake.sock").exists() {
+        return HelperStatus::NotFound;
+    }
     let label = "com.bellman.wake-daemon";
-    // Check launchctl print for the system domain service.
     let out = std::process::Command::new("launchctl")
         .args(["print", &format!("system/{label}")])
         .output();
     match out {
         Ok(o) if o.status.success() => HelperStatus::Enabled,
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            if stderr.contains("Could not find") || stderr.contains("no such process") {
-                HelperStatus::NotRegistered
-            } else {
-                // Ambiguous — treat as awaiting approval when service exists but inactive.
-                HelperStatus::RequiresApproval
-            }
-        }
-        Err(_) => HelperStatus::NotRegistered,
+        _ => HelperStatus::NotFound,
     }
 }
 
@@ -208,11 +207,13 @@ impl MachineWake for MacosWake {
 }
 
 /// Deep-link to System Settings → Login Items (user-initiated).
+#[allow(dead_code)]
 pub fn login_items_deeplink() -> &'static str {
     "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
 }
 
 /// Launchd label / SMAppService identifier for the bundled daemon.
+#[allow(dead_code)]
 pub fn daemon_service_id() -> &'static str {
     "com.bellman.wake-daemon"
 }

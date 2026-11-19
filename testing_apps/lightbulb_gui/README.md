@@ -36,8 +36,8 @@ python3 lightbulb_gui.py --slots ~/.bellman/slots
 
 ### Finding your slots root
 
-- **CLI default**: `~/.bellman/slots` (Linux), `~/Library/Application Support/bellman/slots` (macOS), `%APPDATA%\bellman\slots` (Windows).
-- **Desktop App**: `~/.local/share/io.bellman.desktop/slots` (Linux).
+- **CLI default**: `~/.bellman/slots` (Linux and macOS), `%USERPROFILE%\.bellman\slots` (Windows).
+- **Desktop App**: `~/.local/share/io.bellman.desktop/slots` (Linux), `~/Library/Application Support/io.bellman.desktop/slots` (macOS), `%APPDATA%\io.bellman.desktop\slots` (Windows).
 
 Options:
 - `--slots DIR`: Path to the Bellman slots directory (default: `$BELLMAN_SLOTS` or `~/.bellman/slots`).

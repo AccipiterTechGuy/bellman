@@ -46,14 +46,24 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         *state.tray_pause_check.lock() = Some(pause_check.clone());
     }
 
-    let _tray = TrayIconBuilder::with_id("bellman-tray")
-        .icon(app.default_window_icon().cloned().unwrap_or_else(|| {
-            tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))
-                .expect("tray.png present")
-        }))
+    #[cfg(target_os = "macos")]
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png"))
+        .expect("tray-template.png present");
+    #[cfg(not(target_os = "macos"))]
+    let icon = app.default_window_icon().cloned().unwrap_or_else(|| {
+        tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))
+            .expect("tray.png present")
+    });
+
+    let builder = TrayIconBuilder::with_id("bellman-tray")
+        .icon(icon)
         .tooltip("Bellman")
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(false);
+    #[cfg(target_os = "macos")]
+    let builder = builder.icon_as_template(true);
+
+    let _tray = builder
         .on_tray_icon_event({
             let app2 = app.clone();
             move |_tray, event| match event {
@@ -115,5 +125,36 @@ fn show_main(app: &AppHandle) {
         let _ = win.show();
         let _ = win.unminimize();
         let _ = win.set_focus();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn macos_tray_template_icon_has_transparent_background_and_opaque_black_glyph() {
+        let img = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png"))
+            .expect("tray-template.png must decode as a valid PNG");
+        assert_eq!((img.width(), img.height()), (32, 32));
+        let rgba = img.rgba();
+        assert_eq!(rgba.len(), 32 * 32 * 4);
+
+        let mut transparent = 0usize;
+        let mut opaque = 0usize;
+        for &[r, g, b, a] in rgba.as_chunks::<4>().0 {
+            assert_eq!(
+                (r, g, b),
+                (0, 0, 0),
+                "macOS template icon pixels must be monochrome black + alpha"
+            );
+            if a == 0 {
+                transparent += 1;
+            } else {
+                opaque += 1;
+            }
+        }
+        assert!(
+            transparent > 0 && opaque > 0,
+            "template icon must have both alpha=0 background ({transparent}) and alpha>0 glyph ({opaque}) pixels"
+        );
     }
 }

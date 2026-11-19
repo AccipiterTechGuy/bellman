@@ -177,7 +177,7 @@ impl DisabledReason {
                 "this machine does not support resume timers (ERROR_NOT_SUPPORTED)".into()
             }
             Self::HelperNotInstalled => {
-                "macOS wake helper is not installed — enroll from Settings".into()
+                "wake-from-sleep is not available in this macOS build (wake helper daemon is not bundled)".into()
             }
             Self::HelperAwaitingApproval => {
                 "macOS wake helper is waiting for Login Items approval".into()
@@ -202,8 +202,11 @@ impl DisabledReason {
             Self::WakeTimersDisabledByPolicy { .. } => Some(
                 "powercfg /setacvalueindex SCHEME_CURRENT SUB_SLEEP RTCWAKE 1  (and setdcvalueindex for battery), then powercfg /setactive SCHEME_CURRENT",
             ),
-            Self::HelperNotInstalled | Self::HelperAwaitingApproval => {
-                Some("Enroll the Bellman wake daemon and approve it under System Settings → Login Items.")
+            Self::HelperNotInstalled => Some(
+                "Wake-from-sleep on macOS requires a signed privileged helper daemon, which is not bundled in this build. Timers that fall due while the Mac is asleep are handled on resume by the misfire pass.",
+            ),
+            Self::HelperAwaitingApproval => {
+                Some("Approve the Bellman wake daemon under System Settings → Login Items.")
             }
             Self::MasterDisabled => Some("Enable “Allow Bellman to wake this machine” in Settings."),
             _ => None,
@@ -215,7 +218,7 @@ impl DisabledReason {
         match self {
             Self::NoPermission { .. } => Some("linux_udev"),
             Self::WakeTimersDisabledByPolicy { .. } => Some("windows_powercfg"),
-            Self::HelperNotInstalled => Some("macos_enroll"),
+            Self::HelperNotInstalled => None,
             Self::HelperAwaitingApproval => Some("macos_login_items"),
             _ => None,
         }

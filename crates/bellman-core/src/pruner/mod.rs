@@ -478,11 +478,7 @@ pub fn is_terminal_oneshot(
         .or(timer.occurrence.valid_until())
         .unwrap_or(now);
     let grace = ChronoDuration::from_std(ack_grace).unwrap_or_else(|_| ChronoDuration::seconds(60));
-    if now < terminal_at + grace {
-        return Ok(false);
-    }
-
-    Ok(true)
+    Ok(now >= terminal_at + grace)
 }
 
 /// Startup maintenance: ensure system.prune timer, catch-up prune if due,

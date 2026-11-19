@@ -12,8 +12,20 @@ die() {
 
 is_repo_app() {
   local pid="$1"
-  local exe
-  exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+  local exe=""
+  if [ "$(uname -s)" = "Darwin" ]; then
+    exe="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
+    case "$exe" in
+      /*) ;;
+      *)
+        if [ -n "$exe" ]; then
+          exe="$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1 || true)"
+        fi
+        ;;
+    esac
+  else
+    exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+  fi
   case "$exe" in
     "$REPO/target/release/bellman-app" | \
     "$REPO/target/release/bellman-app (deleted)" | \
@@ -62,11 +74,11 @@ if ((${#repo_pids[@]} > 0)); then
   done
 fi
 
-restart_log="$(mktemp "${TMPDIR:-/tmp}/bellman-restart-XXXXXX.log")"
+restart_log="$(mktemp "${TMPDIR:-/tmp}/bellman-restart.XXXXXX")"
 nohup "$LAUNCHER" >"$restart_log" 2>&1 </dev/null &
 launched_pid=$!
 
-for _ in {1..30}; do
+for _ in {1..60}; do
   if kill -0 "$launched_pid" 2>/dev/null && is_repo_app "$launched_pid"; then
     echo "Bellman restarted: pid=$launched_pid log=$restart_log"
     exit 0
