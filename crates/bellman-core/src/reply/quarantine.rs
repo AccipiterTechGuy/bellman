@@ -359,7 +359,12 @@ fn sidecar_json(
     map.insert("schema".into(), QUARANTINE_SCHEMA_V1.into());
     map.insert("reason".into(), reason.into());
     map.insert("source_path".into(), path_string(source_path).into());
-    map.insert("quarantined_at".into(), Utc::now().to_rfc3339().into());
+    map.insert(
+        "quarantined_at".into(),
+        Utc::now()
+            .to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+            .into(),
+    );
     map.insert("content_copied".into(), content_copied.into());
     map.insert("observed_len".into(), observed_len.into());
     map.insert(
@@ -489,16 +494,21 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let bad = quarantine_dir(tmp.path());
         let source = tmp.path().join("timer-x/reply-run1.json");
-        quarantine_bytes(&bad, &source, b"{bad one", "invalid_json", Value::Null).unwrap();
-        quarantine_bytes(&bad, &source, b"{bad two", "invalid_json", Value::Null).unwrap();
-        let total: u64 = fs::read_dir(&bad)
+        let first =
+            quarantine_bytes(&bad, &source, b"{bad one", "invalid_json", Value::Null).unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+        let second =
+            quarantine_bytes(&bad, &source, b"{bad two", "invalid_json", Value::Null).unwrap();
+        // Derive the budget directly from the newer pair's actual byte size so
+        // it always fits the newer pair and forces the older pair to be pruned.
+        let one_pair = fs::metadata(second.payload_path.as_ref().unwrap())
             .unwrap()
-            .map(|e| e.unwrap().metadata().unwrap().len())
-            .sum();
-        // Budget fits exactly one pair; one artifact must go.
-        let one_pair = total / 2;
+            .len()
+            + fs::metadata(&second.sidecar_path).unwrap().len();
         let removed = prune(&bad, Duration::from_secs(86_400), one_pair, Utc::now()).unwrap();
         assert_eq!(removed, 1);
+        assert!(!first.sidecar_path.exists());
+        assert!(second.sidecar_path.exists());
         let remaining_total: u64 = fs::read_dir(&bad)
             .unwrap()
             .map(|e| e.unwrap().metadata().unwrap().len())
