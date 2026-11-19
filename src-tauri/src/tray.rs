@@ -46,14 +46,24 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         *state.tray_pause_check.lock() = Some(pause_check.clone());
     }
 
-    let _tray = TrayIconBuilder::with_id("bellman-tray")
-        .icon(app.default_window_icon().cloned().unwrap_or_else(|| {
-            tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))
-                .expect("tray.png present")
-        }))
+    #[cfg(target_os = "macos")]
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))
+        .expect("tray.png present");
+    #[cfg(not(target_os = "macos"))]
+    let icon = app.default_window_icon().cloned().unwrap_or_else(|| {
+        tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))
+            .expect("tray.png present")
+    });
+
+    let builder = TrayIconBuilder::with_id("bellman-tray")
+        .icon(icon)
         .tooltip("Bellman")
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(false);
+    #[cfg(target_os = "macos")]
+    let builder = builder.icon_as_template(true);
+
+    let _tray = builder
         .on_tray_icon_event({
             let app2 = app.clone();
             move |_tray, event| match event {
