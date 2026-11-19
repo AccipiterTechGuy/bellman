@@ -88,4 +88,32 @@ describe('Settings → Data (SHIP1-D)', () => {
     // CLI-following user does not integrate against the wrong store.
     expect(section.textContent).toContain('~/.bellman/');
   });
+
+  it('reports wake-from-sleep as unavailable on macOS without offering an enroll button', async () => {
+    const h = handlers();
+    h.wake_status = async () => ({
+      statusLine:
+        'Wake from sleep: OFF — wake-from-sleep is not available in this macOS build (wake helper daemon is not bundled)',
+      enabled: false,
+      masterEnabled: false,
+      platformEnabled: false,
+      platform: 'macos',
+      fixHint:
+        'Wake-from-sleep on macOS requires a signed privileged helper daemon, which is not bundled in this build. Timers that fall due while the Mac is asleep are handled on resume by the misfire pass.',
+      fixAction: null,
+      udevSnippet: null,
+      powercfgCommand: null,
+      loginItemsUrl: null,
+    });
+    installTauriMock(h);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    component = mount(SettingsPage, { target, props: {} });
+    await flush();
+
+    const status = target.querySelector('[data-testid="wake-status"]');
+    expect(status.textContent).toContain('not available in this macOS build');
+    const buttons = [...target.querySelectorAll('button')].map((b) => b.textContent.trim());
+    expect(buttons).not.toContain('Enroll wake helper');
+  });
 });
