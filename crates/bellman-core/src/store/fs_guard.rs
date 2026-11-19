@@ -225,12 +225,13 @@ fn detect_fs_type_macos(path: &Path) -> Option<String> {
     }
 
     extern "C" {
-        fn statfs(path: *const libc::c_char, buf: *mut Statfs) -> i32;
-    }
-
-    // libc is always present on macOS; use c_char from std via i8.
-    mod libc {
-        pub type c_char = i8;
+        // On Intel Macs the plain `statfs` symbol fills the legacy
+        // 32-bit-inode struct, not the 64-bit layout above, so
+        // `f_fstypename` reads back empty and every open fails closed.
+        // Bind the 64-bit variant explicitly, as the `libc` crate does.
+        // Apple Silicon only has the 64-bit form under the plain name.
+        #[cfg_attr(target_arch = "x86_64", link_name = "statfs$INODE64")]
+        fn statfs(path: *const std::ffi::c_char, buf: *mut Statfs) -> i32;
     }
 
     let c_path = CString::new(path.as_os_str().as_bytes()).ok()?;
@@ -240,7 +241,7 @@ fn detect_fs_type_macos(path: &Path) -> Option<String> {
         return None;
     }
     let buf = unsafe { buf.assume_init() };
-    let name = unsafe { CStr::from_ptr(buf.f_fstypename.as_ptr() as *const i8) };
+    let name = unsafe { CStr::from_ptr(buf.f_fstypename.as_ptr() as *const std::ffi::c_char) };
     let s = name.to_string_lossy().into_owned();
     if s.is_empty() {
         None
@@ -300,6 +301,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("timers.db");
         refuse_network_fs(&db).expect("local tmp must be allowed");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_detects_local_tmp_fs_type() {
+        let dir = tempfile::tempdir().unwrap();
+        let fstype = detect_fs_type(dir.path()).expect("macOS statfs must detect temp dir fs type");
+        assert!(!fstype.is_empty(), "detected fs type must be non-empty");
+        assert!(
+            !is_network_fs_type(&fstype),
+            "temp dir fs type '{fstype}' must be classified as local"
+        );
     }
 
     #[test]
