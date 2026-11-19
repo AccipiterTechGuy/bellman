@@ -212,9 +212,6 @@ impl AppState {
             }
         };
 
-        #[cfg(target_os = "macos")]
-        let login_items_url = Some(crate::wake_fixit::login_items_deeplink().to_string());
-        #[cfg(not(target_os = "macos"))]
         let login_items_url = if matches!(
             fix_action.as_deref(),
             Some("macos_enroll") | Some("macos_login_items")
@@ -243,7 +240,7 @@ impl AppState {
     /// Spawn the background scheduler thread. The thread is the only writer
     /// to its own `Store`/`ActionRunner` handles; commands mutate the shared
     /// store directly and send `Refill` so the next tick rebuilds the heap.
-    pub fn start_scheduler(&self) {
+    pub fn start_scheduler(&self) -> Result<(), String> {
         let store = self.store.lock();
         // Engine tunables from config.json (horizon, retention, concurrency…).
         let app_cfg = self.config.lock().clone();
@@ -285,21 +282,21 @@ impl AppState {
             tick: Duration::from_secs(1),
             ipc: ipc_handle.clone(),
         })
-        .expect("dispatcher spawn");
+        .map_err(|e| format!("dispatcher spawn: {e}"))?;
         *self.dispatcher.lock() = Some(dispatcher.clone());
         // Same db path: the scheduler opens its own connection on a clone.
         // (SQLite is happy with multiple readers + one writer; WAL mode is
         // enabled by `Store::open_with`.)
         let scheduler_store_path = self.data_dir.join("timers.db");
-        let sched_store =
-            bellman_core::open_store(&scheduler_store_path).expect("scheduler store open");
+        let sched_store = bellman_core::open_store(&scheduler_store_path)
+            .map_err(|e| format!("scheduler store open: {e}"))?;
         let pause_all = *self.pause_all.lock();
         let mut sched = if pause_all {
             Scheduler::new_paused(sched_store, SystemClock::new(), dispatcher, cfg)
         } else {
             Scheduler::new(sched_store, SystemClock::new(), dispatcher, cfg)
         };
-        sched.boot().expect("scheduler boot");
+        sched.boot().map_err(|e| format!("scheduler boot: {e}"))?;
         let handle = sched.control_handle();
         *self.control_handle.lock() = Some(handle.clone());
 
@@ -362,7 +359,8 @@ impl AppState {
                     log::info!("bellman: scheduler thread exited cleanly");
                 }
             })
-            .expect("scheduler thread spawn");
+            .map_err(|e| format!("scheduler thread spawn: {e}"))?;
+        Ok(())
     }
 
     /// Apply a pause-all change to the running scheduler. Sends the
