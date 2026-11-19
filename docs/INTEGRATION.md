@@ -5,10 +5,11 @@ no socket, no shared library. Publish a complete request via temp-file + atomic
 rename into `free/`; Bellman claims it into `work/`, applies the operation to
 the timer store, and writes the answer into `done/`.
 
-Slots root: `<data dir>/slots/` — the data dir is `~/.bellman/` on Linux,
-`~/Library/Application Support/bellman/` on macOS, `%APPDATA%\bellman\` on
-Windows (the desktop app uses its own app-data dir instead, Linux
-`~/.local/share/io.bellman.desktop`). Full layout in
+Slots root: `<data dir>/slots/` — the CLI default data dir is `~/.bellman/` on
+Linux and macOS, `%USERPROFILE%\.bellman\` on Windows; the desktop app uses
+its own per-OS app-data dir instead (`~/.local/share/io.bellman.desktop/` on
+Linux, `~/Library/Application Support/io.bellman.desktop/` on macOS,
+`%APPDATA%\io.bellman.desktop\` on Windows). Full layout in
 [LOCAL.md](LOCAL.md).
 
 Layout: `slots/{free,work,done,bad,fires}/` — `free`/`work`/`done`/`bad`
@@ -375,7 +376,9 @@ app (~130 lines) whose reply logic is the six-line `reply()` function) and `ligh
 
 Each owned timer has a folder under `timers/` next to the database
 (`~/.bellman/timers/<name>-<id>/` for the CLI default; the desktop app uses
-its per-OS app-data dir, `~/.local/share/io.bellman.desktop` on Linux). You
+its per-OS app-data dir: `~/.local/share/io.bellman.desktop` on Linux,
+`~/Library/Application Support/io.bellman.desktop` on macOS,
+`%APPDATA%\io.bellman.desktop` on Windows). You
 never need to construct these paths — the fire notification carries them —
 but a human browsing the folder sees:
 

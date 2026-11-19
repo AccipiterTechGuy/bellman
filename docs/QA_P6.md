@@ -13,7 +13,7 @@ behaviour), `docs/QA_P4.md` / `docs/QA_P4b.md` (GUI).
 |---|---|---|
 | Linux | `.deb` + `.AppImage` | **No Flatpak / Snap** (breaks tray, autostart, single-instance) |
 | Windows | NSIS `.exe` + WiX `.msi` | WebView2 **evergreen download bootstrapper** (`webviewInstallMode: downloadBootstrapper`) |
-| macOS | `.app` + `.dmg` | Signing + notarization **stubbed** (see CI secrets below) |
+| macOS | `.app` + `.dmg` | Universal (`x86_64` + `arm64`); signing + notarization **stubbed** (see CI secrets below) |
 
 Local (this machine):
 
@@ -102,23 +102,16 @@ Three workflow files under `.github/workflows/`:
 
 | File | Runner | What it does |
 |---|---|---|
-| `linux.yml` | `ubuntu-24.04` | stage CLI sidecar + `clippy -D warnings` + full `cargo test --workspace` + UI vitest + `cargo tauri build --bundles deb,appimage` + artefact upload (no `cargo fmt` step — pre-existing sources are not rustfmt-clean; packaging does not reformat C1–C9) |
-| `windows.yml` | `windows-latest` | workspace **compile** check (`cargo build --workspace --all-targets`) + `cargo tauri build --bundles nsis,msi --no-sign` (WebView2 evergreen bootstrapper from conf) |
-| `macos.yml` | `macos-latest` | workspace **compile** check + `cargo tauri build --bundles app,dmg --no-sign`; signing/notarization **stubbed** with named secrets |
+| `linux.yml` | `ubuntu-24.04` | stage CLI sidecar + `cargo fmt --check` + `clippy -D warnings` + full `cargo test --workspace` + UI vitest + `cargo tauri build --bundles deb,appimage` + artefact upload |
+| `windows.yml` | `windows-latest` | `cargo test --workspace --all-targets --exclude bellman-app` + workspace compile check (`cargo build --workspace --all-targets`) + `cargo tauri build --bundles nsis,msi --no-sign` (WebView2 evergreen bootstrapper from conf) |
+| `macos.yml` | `macos-latest` | full `cargo test --workspace --all-targets` + workspace compile check + `x86_64-apple-darwin` compile check + universal (`x86_64` + `arm64`) `cargo tauri build --target universal-apple-darwin --bundles app,dmg --ci --no-sign`; signing/notarization **stubbed** with named secrets |
 
-**Why only Linux runs the tests.** The card's contract for the Windows and macOS
-jobs is *compile + package unsigned artifacts on their runners*; `linux.yml` is
-the full-test gate. Building `--all-targets` still compiles every test binary, so
-a platform-specific compile break fails the job — the tests are just not
-*executed* there, because parts of the suite assume a Linux host:
-
-| Platform | Why the suite can't run as-is | Owner |
-|---|---|---|
-| macOS | `events::tests::retention_deletes_archives_past_window` shells out to GNU `touch -d @<epoch>`; BSD/macOS `touch` rejects that form | the events crate (portable fix: set the mtime from Rust, e.g. `File::set_modified`) |
-| Windows | the `bellman-app` lib unit tests exit abnormally on a headless runner | the shell crate (needs a no-GUI-session path) |
-
-Both are pre-existing cross-platform gaps that were invisible until CI first ran;
-neither is a packaging concern.
+**CI test execution across platforms.** Both `linux.yml` and `macos.yml` run
+the full `cargo test --workspace --all-targets` suite (`events::tests::retention_deletes_archives_past_window`
+sets archive mtimes portably via `std::fs::File::set_modified`, SHIP1-F).
+On Windows, `windows.yml` runs the workspace test suite excluding only the
+`bellman-app` shell-crate unit tests (which exit abnormally on a headless
+Windows runner; `cargo build --workspace --all-targets` still compiles them).
 
 ### Lint the workflows locally
 
