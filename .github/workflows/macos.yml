@@ -27,16 +27,19 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
 
 jobs:
   package:
-    name: package (macos dmg, unsigned)
+    name: package (macos universal dmg, unsigned)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust stable
+      - name: Install Rust stable (universal Apple targets)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -70,16 +73,19 @@ jobs:
       - name: Cargo build (workspace, all targets — compile check)
         run: cargo build --workspace --all-targets
 
+      - name: Cargo check (x86_64-apple-darwin — Intel macOS compile check)
+        run: cargo check --workspace --all-targets --target x86_64-apple-darwin
+
       - name: Install tauri-cli
         run: cargo install tauri-cli --locked --version "^2" --force
 
-      - name: Package dmg + app (unsigned)
+      - name: Package universal dmg + app (unsigned, x86_64 + arm64)
         # Signing/notarization stub: --no-sign keeps CI green without secrets.
         # To enable signing later, drop --no-sign and export:
         #   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY
         #   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID   (or API-key triple)
         # then run notarytool + staple (see tauri v2 macOS signing docs).
-        run: cargo tauri build --bundles app,dmg --ci --no-sign
+        run: cargo tauri build --target universal-apple-darwin --bundles app,dmg --ci --no-sign
         env:
           # TODO: set when secrets are provisioned (currently unused with --no-sign)
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -92,27 +98,33 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
 
-      - name: Assert package artifacts exist
+      - name: Assert package artifacts exist and are universal (x86_64 + arm64)
         run: |
           set -euo pipefail
-          dmg="$(find target/release/bundle/dmg -name '*.dmg' 2>/dev/null | head -1 || true)"
-          app="$(find target/release/bundle/macos -name '*.app' -type d 2>/dev/null | head -1 || true)"
+          dmg="$(find target/universal-apple-darwin/release/bundle/dmg target/release/bundle/dmg -name '*.dmg' 2>/dev/null | head -1 || true)"
+          app="$(find target/universal-apple-darwin/release/bundle/macos target/release/bundle/macos -name '*.app' -type d 2>/dev/null | head -1 || true)"
           if [[ -z "$dmg" ]]; then
-            dmg="$(find target/release/bundle -name '*.dmg' 2>/dev/null | head -1 || true)"
+            dmg="$(find target -path '*/release/bundle/*.dmg' 2>/dev/null | head -1 || true)"
           fi
           if [[ -z "$app" ]]; then
-            app="$(find target/release/bundle -name '*.app' -type d 2>/dev/null | head -1 || true)"
+            app="$(find target -path '*/release/bundle/*.app' -type d 2>/dev/null | head -1 || true)"
           fi
           echo "dmg=$dmg"
           echo "app=$app"
           test -n "$dmg" -a -f "$dmg"
           test -n "$app" -a -d "$app"
+          for bin in "$app/Contents/MacOS/bellman-app" "$app/Contents/MacOS/bellman"; do
+            test -x "$bin"
+            archs="$(lipo -archs "$bin")"
+            echo "$bin archs: $archs"
+            [[ "$archs" == *x86_64* && "$archs" == *arm64* ]]
+          done
 
       - name: Upload macOS packages
         uses: actions/upload-artifact@v4
         with:
           name: bellman-macos-packages
           path: |
-            target/release/bundle/dmg/**
-            target/release/bundle/macos/**
+            target/universal-apple-darwin/release/bundle/dmg/**
+            target/universal-apple-darwin/release/bundle/macos/**
           if-no-files-found: error
