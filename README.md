@@ -6,6 +6,17 @@ the `bellman` command line. Named after the bellmen (knocker-uppers) who woke
 people before alarm clocks existed: Bellman's job is waking *applications*.
 
 <p align="center">
+  <a href="https://buymeacoffee.com/art_tech_guy">
+    <img src=".github/buy_me_a_coffee.jpeg" alt="Buy Me a Coffee — support · inspire · create" width="640">
+  </a>
+</p>
+
+<p align="center">
+  If Bellman saves you time, you can
+  <a href="https://buymeacoffee.com/art_tech_guy"><b>buy me a coffee</b></a>.
+</p>
+
+<p align="center">
   <img src="docs/screenshots/all-timers.png" alt="Bellman — All timers list with next-fire times, density warnings, and Run now controls" width="880" />
 </p>
 
