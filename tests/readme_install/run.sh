@@ -1,14 +1,15 @@
 #!/bin/bash
-# Run README.md's install guide verbatim in a fresh container.
+# Run the Linux install guide (docs/INSTALL_LINUX.md) verbatim in a fresh
+# container.
 #
-#   tests/readme_install/run.sh ubuntu|fedora|arch [--user] [README]
+#   tests/readme_install/run.sh ubuntu|fedora|arch [--user] [GUIDE.md]
 #
 # Default: a root shell, as the images come. --user (ubuntu): an ordinary user
 # with sudo, like a desktop. Each run: install (steps 1-6) -> checks ->
 # update -> checks -> uninstall -> checks that nothing is left.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-distro=$1; mode=${2:-root}; readme=${3:-$here/../../README.md}
+distro=$1; mode=${2:-root}; readme=${3:-$here/../../docs/INSTALL_LINUX.md}
 case $distro in ubuntu) img=ubuntu:24.04;; fedora) img=fedora:latest;; arch) img=archlinux:latest;; esac
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 chmod 755 "$work"  # readable by the --user account

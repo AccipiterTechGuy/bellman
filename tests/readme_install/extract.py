@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Turn README.md's install guide into a script for one distro, verbatim.
+"""Turn the Linux install guide into a script for one distro, verbatim.
 
-    extract.py README.md DISTRO PHASE [--root]
+    extract.py GUIDE.md DISTRO PHASE [--root] [--unattended]
+
+GUIDE.md is docs/INSTALL_LINUX.md (the whole file is the guide). An older
+README.md that holds the guide under a "## Install" heading still works: then
+only that section is read. Step headings may be "## " or "### ".
 
 DISTRO is ubuntu, fedora or arch. PHASE picks what to emit:
 
-    install    every step under "## Install" up to "### Update"
-    update     the "### Update" commands, then that distro's step 4 build
+    install    every step numbered 1. to 6.
+    update     the "Update" commands, then that distro's step 4 build
                and step 5 install again, as the Update section says
-    uninstall  the "### Uninstall" commands (the data removal included)
+    uninstall  the "Uninstall" commands (the data removal included)
 
 A code block whose label line (the nearest non-blank line above it) names a
 distro is kept only for that distro; unlabelled blocks are for everyone. Two
@@ -24,10 +28,16 @@ import sys
 LABELS = {"ubuntu": "debian / ubuntu", "fedora": "fedora", "arch": "arch"}
 
 
-def install_section(readme: str) -> str:
-    start = readme.index("\n## Install")
-    end = readme.index("\n## ", start + 5)
-    return readme[start:end]
+def install_section(text: str) -> str:
+    """The guide: a README's exact "## Install" section, else the whole file.
+
+    Matches the heading line exactly, so "## Install notes" or
+    "## Install on macOS" never count as the start."""
+    start = re.search(r"(?m)^## Install[ \t]*$", text)
+    if not start:
+        return text
+    end = re.search(r"(?m)^## ", text[start.end():])
+    return text[start.start():start.end() + end.start()] if end else text[start.start():]
 
 
 def blocks(section: str):
@@ -37,8 +47,8 @@ def blocks(section: str):
     i = 0
     while i < len(lines):
         line = lines[i]
-        if line.startswith("### "):
-            heading = line[4:].strip()
+        if line.startswith(("## ", "### ")):
+            heading = line.split(" ", 1)[1].strip()
         if line.strip().startswith("```sh"):
             indent = len(line) - len(line.lstrip())
             j = i - 1
@@ -81,7 +91,7 @@ def main() -> None:
             if heading[:2] in {"4.", "5."} and label.startswith(LABELS[distro]):
                 picked.append((heading, body))
     if not picked:
-        sys.exit(f"no README blocks for {distro}/{phase}")
+        sys.exit(f"no install-guide blocks for {distro}/{phase} in {path}")
     out = ["#!/bin/bash", "set -exo pipefail", f"# README install guide: {distro} / {phase}"]
     for heading, body in picked:
         if root:

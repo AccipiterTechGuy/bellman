@@ -21,8 +21,10 @@ well-scoped fixes are welcome anyway — read this file first.
 
 ## Build and test
 
-Everything is in the README's [Install](README.md#install) section
-(system prerequisites per distro, Rust, Node 24, tauri-cli). From a checkout:
+Prerequisites (system packages, Rust, Node 24, tauri-cli) are in the install
+guides for [Linux](docs/INSTALL_LINUX.md) and [macOS](docs/INSTALL_MACOS.md);
+the dev launcher and tests are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+From a checkout:
 
 ```sh
 cargo test --workspace --all-targets   # Rust suite (full on Linux/macOS)
