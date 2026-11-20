@@ -17,7 +17,7 @@ people before alarm clocks existed: Bellman's job is waking *applications*.
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/all-timers.png" alt="Bellman — All timers list with next-fire times, density warnings, and Run now controls" width="880" />
+  <img src="docs/screenshots/all-timers.png" alt="Bellman — All timers list with next-fire times, actions and Run now controls" width="880" />
 </p>
 
 | Platform | State |
@@ -38,7 +38,7 @@ your system below.
 - **[Connect your own app](docs/INTEGRATION.md#connect-your-own-application)**: let any program be woken by Bellman and report back
 - **[Demo apps](testing_apps/README.md)**: the lightbulb examples, to copy or to watch
 - **[Your data](docs/LOCAL.md)**: where your timers and logs live (never in this repo)
-- **[Screenshots](docs/SCREENSHOTS.md)**: the timer list, week, month and run history views
+- **[Screenshots](docs/SCREENSHOTS.md)**: every screen of the app
 - **[Development](docs/DEVELOPMENT.md)**: working on Bellman itself (see also [CONTRIBUTING.md](CONTRIBUTING.md))
 
 ## License
