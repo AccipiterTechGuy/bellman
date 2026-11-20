@@ -276,7 +276,7 @@
         <th>Name</th>
         <th>Kind / Summary</th>
         <th>Action</th>
-        <th>Next fire (UTC)</th>
+        <th>Next fire (local)</th>
         <th>Density</th>
         <th>Enabled</th>
         <th class="col-controls">Controls</th>
